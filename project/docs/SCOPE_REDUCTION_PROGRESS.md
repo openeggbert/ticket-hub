@@ -20,11 +20,11 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 50 / 142
-- Decisions remaining: 92
-- KEEP_FOR_V1: 7
-- SIMPLIFY_FOR_V1: 21
-- DEFER_AFTER_V1: 11
+- Decisions completed: 60 / 142
+- Decisions remaining: 82
+- KEEP_FOR_V1: 10
+- SIMPLIFY_FOR_V1: 25
+- DEFER_AFTER_V1: 14
 - REMOVE_COMPLETELY: 6
 - ARCHITECTURE_ONLY: 0
 - ALREADY_IMPLEMENTED_AND_KEEP: 5
@@ -85,16 +85,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 47 | Accessibility | Target WCAG 2.2 AA: semantic HTML, keyboard, focus, screen reader, accessible dialogs, non-drag alternatives, contrast, automated+manual testing | Reasonable baseline accessibility (semantic HTML, keyboard operability) without committing to or tracking a formal WCAG level or dedicated audit deliverable | SIMPLIFY_FOR_V1 | Drops the formal WCAG compliance target and its audit/testing deliverable while keeping sane baseline practices during development | 8-15h | DONE |
 | 48 | Import/export | CSV import/export, complete app backup/restore, Jira migration tool with lossy-mapping report | Simple CSV export of issues (read-only); no CSV import, no Jira migration tool; backup/restore handled separately in Decisions 106-110 | REMOVE_COMPLETELY | Jira migration tool would require mapping dozens of Jira entities including many already removed (sprints, versions, custom fields, permission schemes); disproportionately expensive vs value | 40-70h | DONE |
 | 49 | Extensions | Safe external-app model via REST/webhooks/service accounts/declared UI panels; no untrusted dynamic C++ plugins | Confirmed moot; depends on public API/webhooks/service accounts removed in Decision 39 | DEFER_AFTER_V1 | External extension model has no building blocks left after Decision 39 removed API/webhooks/service accounts | 0h (already counted in Decision 39) | DONE |
-| 50 | Distribution/deployment |  |  |  |  |  | PENDING |
-| 51 | Background jobs |  |  |  |  |  | PENDING |
-| 52 | Outbound email |  |  |  |  |  | PENDING |
-| 53 | Password security |  |  |  |  |  | PENDING |
-| 54 | Web sessions versus API authentication |  |  |  |  |  | PENDING |
-| 55 | OIDC provisioning |  |  |  |  |  | PENDING |
-| 56 | User identity fields |  |  |  |  |  | PENDING |
-| 57 | User departure/duplicates |  |  |  |  |  | PENDING |
-| 58 | Project visibility |  |  |  |  |  | PENDING |
-| 59 | Anonymous access |  |  |  |  |  | PENDING |
+| 50 | Distribution/deployment | Native binaries, .deb, .rpm, official Docker image, Compose, Helm/Kubernetes, readiness/liveness, horizontal scaling with PostgreSQL+shared S3 | Docker image + Docker Compose only; no .deb/.rpm, no Helm/Kubernetes, no horizontal scaling | SIMPLIFY_FOR_V1 | One packaging path is sufficient for small self-hosted deployment; horizontal scaling already moot after S3 removal (Decision 15) | 25-40h | DONE |
+| 51 | Background jobs | Pluggable durable job queue; PostgreSQL multi-worker, SQLite single-instance worker; Redis later | No job queue infrastructure in V1; everything runs synchronously within the HTTP request | DEFER_AFTER_V1 | Original consumers (email, webhooks, automation) already removed; remaining synchronous-only work does not need a durable queue yet | 15-25h | DONE |
+| 52 | Outbound email | Pluggable outbound email backend: SMTP, sendmail, provider APIs later | Confirmed moot; superseded by Decision 14 (in-app-only notifications). Password reset email addressed separately in Decision 53. | DEFER_AFTER_V1 | No email delivery backend needed without email notifications; savings already counted in Decision 14 | 0h (already counted in Decision 14) | DONE |
+| 53 | Password security | Argon2id, strength checks, rate limiting, temporary lockout, email password reset, session invalidation after password change | Keep Argon2id/strength checks/rate limiting/lockout/session invalidation; replace email-based reset with admin-performed reset (sets temporary password), consistent with Decisions 2 and 52 | SIMPLIFY_FOR_V1 | Resolves a real conflict: original decision assumed self-service email reset, but Decisions 2/52 removed both public registration and email; security fundamentals kept intact | 1-2h | DONE |
+| 54 | Web sessions versus API authentication | Server-side cookie sessions for web; PAT/service tokens for API | Confirmed: cookie sessions for web with full HttpOnly/Secure/SameSite/CSRF/active-session management; PAT only for API (service tokens dropped per Decision 39) | KEEP_FOR_V1 | Core security pattern kept intact; only service-token half removed, already counted in Decision 39 | 0h (already counted in Decision 39) | DONE |
+| 55 | OIDC provisioning | Configurable per OIDC provider: auto-create vs pre-existing, domain restriction, default groups, group mapping | Confirmed moot; superseded by Decision 1 (OIDC removed entirely) | DEFER_AFTER_V1 | No OIDC providers exist to configure; savings already counted in Decision 1 | 0h (already counted in Decision 1) | DONE |
+| 56 | User identity fields | Immutable UUID, unique email, optional unique handle; display name not unique; internal references use UUID | Confirmed unchanged | KEEP_FOR_V1 | Core identity data model, consistent with the planned username->email/UUID/handle migration in NEXT.md | 0h | DONE |
+| 57 | User departure/duplicates | Deactivate, anonymize, and merge accounts; merge transfers ownership/references to surviving account | Deactivation only; no anonymization, no account merge | SIMPLIFY_FOR_V1 | Merge existed mainly to reconcile local+OIDC duplicate identities, but OIDC was removed in Decision 1, eliminating its main justification | 10-15h | DONE |
+| 58 | Project visibility | No separate Private/Internal/Public flag; visibility only through permission schemes | All authenticated users can view all projects; project roles (Decision 3) control who can edit, not who can see | SIMPLIFY_FOR_V1 | Replaces permission-scheme-based visibility with the simplest possible model now that fixed roles replaced schemes | 0-2h | DONE |
+| 59 | Anonymous access | Optional read-only anonymous access, disabled by default: browse project/issues, explicitly public attachments | Keep optional read-only anonymous access as originally decided, despite it being somewhat orthogonal to the admin-created-accounts model from Decision 2 | KEEP_FOR_V1 | User chose to preserve this despite the internal-tool framing; requires an anonymous Principal type in the authorization chain | 0h (kept as-is) | DONE |
 | 60 | Issue cloning |  |  |  |  |  | PENDING |
 | 61 | Issue templates |  |  |  |  |  | PENDING |
 | 62 | Checklists |  |  |  |  |  | PENDING |
