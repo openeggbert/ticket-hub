@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "ticket-hub",
+  "version-string": "0.2.0",
+  "description": "A Jira-like issue tracker built with C++, Crow and vanilla web technologies.",
+  "dependencies": [
+    "crow",
+    "libpq",
+    "sqlite3"
+  ]
+}
