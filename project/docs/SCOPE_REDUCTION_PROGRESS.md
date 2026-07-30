@@ -20,30 +20,31 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 0 / 142
-- Decisions remaining: 142
-- KEEP_FOR_V1: 0
-- SIMPLIFY_FOR_V1: 0
-- DEFER_AFTER_V1: 0
-- REMOVE_COMPLETELY: 0
+- Decisions completed: 10 / 142
+- Decisions remaining: 132
+- KEEP_FOR_V1: 2
+- SIMPLIFY_FOR_V1: 4
+- DEFER_AFTER_V1: 1
+- REMOVE_COMPLETELY: 3
 - ARCHITECTURE_ONLY: 0
 - ALREADY_IMPLEMENTED_AND_KEEP: 0
-- Cumulative estimated hours saved: 0 (range not yet meaningful)
+- Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
+
 
 ## Decision table
 
 | # | Topic | Original Decision (summary) | New Answer | Final Classification | Reason | Est. Hours Saved | Status |
 |---|---|---|---|---|---|---|---|
-| 0 | Installation/organization model |  |  |  |  |  | PENDING |
-| 1 | Authentication providers |  |  |  |  |  | PENDING |
-| 2 | Registration modes |  |  |  |  |  | PENDING |
-| 3 | Project authorization |  |  |  |  |  | PENDING |
-| 4 | Workflow model |  |  |  |  |  | PENDING |
-| 5 | Issue hierarchy direction |  |  |  |  |  | PENDING |
-| 6 | Project types |  |  |  |  |  | PENDING |
-| 7 | Board types and scope |  |  |  |  |  | PENDING |
-| 8 | Project management style |  |  |  |  |  | PENDING |
-| 9 | Custom fields and screens |  |  |  |  |  | PENDING |
+| 0 | Installation/organization model | Single-tenant self-hosted instance, no multi-tenant org table | Confirmed single-tenant; no extension point reserved | KEEP_FOR_V1 | Already the cheapest option; user chose to keep as-is without reserving a future multi-tenant hook | 0-2h | DONE |
+| 1 | Authentication providers | Local accounts plus OpenID Connect (multi-provider, JIT provisioning, group mapping) | Local accounts only; OIDC removed entirely from V1 (not even an architecture stub) | REMOVE_COMPLETELY | OIDC discovery/JWKS/account-linking/per-provider config is one of the largest Auth-phase cost centers; user chose local-only for smallest V1 | 15-30h | DONE |
+| 2 | Registration modes | Configurable per installation (public / invitation-only / admin-created); invitation-only default; OIDC JIT separately configurable | Admin-created accounts only; no public registration, no invitation flow; OIDC JIT provisioning moot (OIDC removed in Decision 1) | SIMPLIFY_FOR_V1 | Single fixed registration mode removes invitation-token flow and public-registration abuse protections while still using the same users table | 5-10h | DONE |
+| 3 | Project authorization | Jira-like configurable permission schemes assigned to projects; grants target users/groups/roles/reporter/assignee/lead/anon | Fixed small set of project roles (e.g. Admin/Member/Viewer); no configurable schemes, no reporter/assignee/anon grant targets | SIMPLIFY_FOR_V1 | Configurable permission schemes are one of the most complex Jira subsystems; fixed roles cover the vast majority of small-team needs | 30-50h | DONE |
+| 4 | Workflow model | Shared Jira-like workflow schemes: statuses, transitions, conditions, validators, ordered post-functions, draft/publish | One fixed built-in workflow for all projects; no designer, no conditions/validators/post-functions, no draft/publish. Predetermines simplification of Decisions 71-77. | SIMPLIFY_FOR_V1 | Configurable workflow engine is the single most expensive subsystem in the original scope; fixed workflow covers typical small-team usage | 60-100h | DONE |
+| 5 | Issue hierarchy direction | Jira-like base hierarchy Epic->issue->Sub-task, with documented future extensibility above Epic | Drop the future-extensibility-above-Epic note entirely; hierarchy is fixed at Epic -> Story/Task/Bug -> Sub-task only | REMOVE_COMPLETELY | Documentation-only aspiration with no implementation cost either way; user chose not to carry the speculative note forward | 0h | DONE |
+| 6 | Project types | Software projects only; Business/Service Management excluded | Confirmed unchanged | KEEP_FOR_V1 | Already minimal scope, nothing to reduce | 0h | DONE |
+| 7 | Board types and scope | Scrum and Kanban; multiple boards per project; saved-filter based; multi-project boards | Kanban only, one auto board per project, no saved-filter/multi-project boards. Predetermines simplification of Decision 30 (Scrum sprints removed). | SIMPLIFY_FOR_V1 | Scrum brings the full sprint/backlog/velocity model; Kanban alone covers most small-team needs at a fraction of the cost | 40-60h | DONE |
+| 8 | Project management style | Company-managed first; team-managed later; architecture should not block it | Drop the team-managed future note entirely; distinction is moot now that roles/workflow are fixed rather than schemed | REMOVE_COMPLETELY | With fixed roles (Decision 3) and fixed workflow (Decision 4), there is nothing left to distinguish company-managed from team-managed; the aspiration note is removed | 0h | DONE |
+| 9 | Custom fields and screens | Custom fields with project/issue-type contexts, ordering, required/hidden, show-on-create/edit/view; no screen schemes | No custom fields in V1 at all; only the fixed standard issue field set | DEFER_AFTER_V1 | Custom fields require a full dynamic field-type/context/form-rendering system even without screen schemes; deferred rather than built for a small fixed field set | 30-50h | DONE |
 | 10 | Issue searching |  |  |  |  |  | PENDING |
 | 11 | Agile reports |  |  |  |  |  | PENDING |
 | 12 | Estimation |  |  |  |  |  | PENDING |
