@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 80 / 142
-- Decisions remaining: 62
-- KEEP_FOR_V1: 14
-- SIMPLIFY_FOR_V1: 31
-- DEFER_AFTER_V1: 21
+- Decisions completed: 90 / 142
+- Decisions remaining: 52
+- KEEP_FOR_V1: 17
+- SIMPLIFY_FOR_V1: 35
+- DEFER_AFTER_V1: 22
 - REMOVE_COMPLETELY: 7
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 7
+- ALREADY_IMPLEMENTED_AND_KEEP: 9
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -115,16 +115,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 77 | Transition forms | Admin-chosen per-transition field list, order, required flags, defaults, comment field, help text | Fixed hardcoded transition forms (e.g. Done requires resolution field); no admin configuration | SIMPLIFY_FOR_V1 | Superseded by fixed workflow from Decision 4; savings already counted there | 0h (already counted in Decision 4) | DONE |
 | 78 | SLA | Not implemented; use due dates/estimates/worklogs/agile reports instead | Confirmed unchanged | REMOVE_COMPLETELY | Was already never planned for implementation | 0h | DONE |
 | 79 | Issue voting | One vote per authenticated user; visible count and voters; no automatic priority change | Keep voting as originally decided | KEEP_FOR_V1 | Cheap many-to-many table, similar cost to watchers; user chose to keep despite lower value for internal tracker use case | 0h (kept as-is) | DONE |
-| 80 | Mentions |  |  |  |  |  | PENDING |
-| 81 | Edited comment history |  |  |  |  |  | PENDING |
-| 82 | Deleted comments |  |  |  |  |  | PENDING |
-| 83 | Comment permissions |  |  |  |  |  | PENDING |
-| 84 | Emoji reactions |  |  |  |  |  | PENDING |
-| 85 | Comment threading |  |  |  |  |  | PENDING |
-| 86 | Personal notification preferences |  |  |  |  |  | PENDING |
-| 87 | Project archival |  |  |  |  |  | PENDING |
-| 88 | Permanent project deletion |  |  |  |  |  | PENDING |
-| 89 | Project recycle-bin retention |  |  |  |  |  | PENDING |
+| 80 | Mentions | User mentions in all Markdown-capable fields notify mentioned user; group/role mentions deferred | Keep mentions with @handle autocomplete and in-app notification (via Decision 14 fixed notifications) | KEEP_FOR_V1 | Consistent with the full Markdown editor kept in Decision 16 and the handle field already planned in Decision 56 | 0h (kept as-is) | DONE |
+| 81 | Edited comment history | Keep all immutable comment edit versions with author/timestamp; authorized users can view previous versions; no short edit window | Just an edited (timestamp) flag; no storage of previous comment text versions | SIMPLIFY_FOR_V1 | Full version history requires a separate comment-versions table and viewer UI; edited flag alone is much cheaper | 6-10h | DONE |
+| 82 | Deleted comments | Tombstone for users; original content retained in admin audit | Keep tombstone; content stays in DB (hidden from normal users) and is viewable by admins directly, no separate admin UI required beyond existing soft-delete columns | ALREADY_IMPLEMENTED_AND_KEEP | Existing deleted_at/deleted_by_user_id columns already cover this; no new subsystem needed | 0h | DONE |
+| 83 | Comment permissions | Separate permissions: edit own, edit all, delete own, delete all | Simplified: author can edit/delete own comment; project/global admin can edit/delete any comment; no separate 4-permission matrix | SIMPLIFY_FOR_V1 | 4-permission matrix was designed for configurable permission schemes replaced by fixed roles in Decision 3 | 2-4h | DONE |
+| 84 | Emoji reactions | Fixed reaction set on comments only; each user each reaction once per comment | Keep emoji reactions as originally decided | KEEP_FOR_V1 | Cheap many-to-many table similar to watchers/voting; user chose to keep despite being a cosmetic feature | 0h (kept as-is) | DONE |
+| 85 | Comment threading | No threads; single chronological discussion with mentions, citations, links to specific comments | Confirmed unchanged | KEEP_FOR_V1 | Already minimal, no further reduction possible | 0h | DONE |
+| 86 | Personal notification preferences | Per-event/channel controls plus digests; security/critical notices cannot be disabled | Confirmed moot; fixed notification set for everyone per Decision 14, no per-user preferences | DEFER_AFTER_V1 | Superseded by fixed in-app notifications from Decision 14; savings already counted there | 0h (already counted in Decision 14) | DONE |
+| 87 | Project archival | Read-only archive: leaves active lists, viewable, cannot be modified, restorable | Confirmed unchanged; use existing archived/archived_at columns plus write-time read-only enforcement | ALREADY_IMPLEMENTED_AND_KEEP | archived/archived_at columns already exist in prototype; only read-only write enforcement remains to add | 0-2h | DONE |
+| 88 | Permanent project deletion | Require complete verified export before entering recycle bin, then admin restore or permanent delete | Drop the mandatory-export precondition; project goes straight to recycle bin, admin may manually CSV-export first if desired but it is not enforced | SIMPLIFY_FOR_V1 | Mandatory export enforcement adds complexity not justified after Decision 48 reduced export to simple read-only CSV | 3-6h | DONE |
+| 89 | Project recycle-bin retention | Configurable retention, default 90 days; 30/90/365 or never | Fixed 90-day retention, no admin configuration; expiry checked on-demand when viewing recycle bin, no background job | SIMPLIFY_FOR_V1 | Configurable retention needs admin settings plus a background sweep job, but job infrastructure was removed in Decision 51 | 5-10h | DONE |
 | 90 | Project key while project is in bin |  |  |  |  |  | PENDING |
 | 91 | Changing active project key |  |  |  |  |  | PENDING |
 | 92 | Issue number reuse |  |  |  |  |  | PENDING |
