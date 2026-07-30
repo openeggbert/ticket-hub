@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 20 / 142
-- Decisions remaining: 122
+- Decisions completed: 30 / 142
+- Decisions remaining: 112
 - KEEP_FOR_V1: 4
-- SIMPLIFY_FOR_V1: 9
-- DEFER_AFTER_V1: 3
-- REMOVE_COMPLETELY: 3
+- SIMPLIFY_FOR_V1: 13
+- DEFER_AFTER_V1: 4
+- REMOVE_COMPLETELY: 5
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 1
+- ALREADY_IMPLEMENTED_AND_KEEP: 4
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -55,16 +55,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 17 | Issue links | Configurable bidirectional Jira-like link types defined by admins (outward/inward labels) | Fixed larger built-in set: blocks/is blocked by, relates to, duplicates/is duplicated by, clones/is cloned by; no admin editing | SIMPLIFY_FOR_V1 | Fixed catalog covers common link semantics without an admin CRUD subsystem for link-type management | 10-15h | DONE |
 | 18 | Versions and releases | Jira-like project versions/releases: multiple Fix/Affects Version, release notes, progress, release/archive/merge | No versions/releases concept in V1 at all; labels can informally track release if needed | DEFER_AFTER_V1 | Full version subsystem is mid-cost on its own and release burndown report already dropped in Decision 11, reducing its remaining value for V1 | 20-30h | DONE |
 | 19 | Components | Simple project components: name, description, lead, default assignee; at most one per issue | Keep as originally decided | KEEP_FOR_V1 | Already the cheapest reasonable form; small table plus one optional issue field | 0h (kept as-is) | DONE |
-| 20 | Watchers |  |  |  |  |  | PENDING |
-| 21 | Issue-level security |  |  |  |  |  | PENDING |
-| 22 | Issue deletion |  |  |  |  |  | PENDING |
-| 23 | Audit |  |  |  |  |  | PENDING |
-| 24 | Dashboards |  |  |  |  |  | PENDING |
-| 25 | Automation |  |  |  |  |  | PENDING |
-| 26 | Recurring issues |  |  |  |  |  | PENDING |
-| 27 | Priorities |  |  |  |  |  | PENDING |
-| 28 | Resolutions |  |  |  |  |  | PENDING |
-| 29 | Issue types |  |  |  |  |  | PENDING |
+| 20 | Watchers | Jira-like watchers: self watch/unwatch plus authorized users managing others watchers | Self watch/unwatch only; no managing other users watchers | SIMPLIFY_FOR_V1 | Removes the extra authorization check for managing other users watch state; simple many-to-many table remains | 2-4h | DONE |
+| 21 | Issue-level security | Not implemented initially; Browse Project sees all live issues | Confirmed unchanged | REMOVE_COMPLETELY | Was already never planned for implementation; correcting classification from an earlier KEEP_FOR_V1 mislabel (feature absent, not kept) | 0h | DONE |
+| 22 | Issue deletion | Recycle bin / soft deletion; restore or permanent delete by authorized admins; audited | Keep recycle bin as originally decided; build the UI on top of the existing soft-delete columns | ALREADY_IMPLEMENTED_AND_KEEP | Soft-delete schema/query filtering already exists in the prototype; only recycle-bin UI (list/restore/purge) remains to add | 0h (kept as-is) | DONE |
+| 23 | Audit | Global admin audit (config/user/security/workflow/project changes, auth events) plus issue history, export, category-based retention | Simple append-only audit log for admin/security events plus existing issue history; no categories, export, or configurable retention | SIMPLIFY_FOR_V1 | Issue history already partly exists; admin scope itself shrank a lot after removing schemes/workflow designer, reducing what needs auditing | 10-15h | DONE |
+| 24 | Dashboards | One fixed personal dashboard: assigned issues, watched issues, recent activity, active sprint, deadlines, simple stats | Keep fixed dashboard; drop the active-sprint widget since Scrum was removed in Decision 7 | SIMPLIFY_FOR_V1 | Already the cheapest option; only change is dropping the now-moot active-sprint widget | 1-2h | DONE |
+| 25 | Automation | Simple built-in automation rules: triggers, structured conditions, fixed actions | No automation in V1 at all; all actions performed manually | DEFER_AFTER_V1 | Even simple automation requires a rule model, builder UI, safe executor and loop protection; small standalone rule engine deferred entirely | 25-40h | DONE |
+| 26 | Recurring issues | Not implemented initially; manual repeating work only | Confirmed unchanged | REMOVE_COMPLETELY | Was already never planned for implementation; consistent with automation removal in Decision 25 | 0h | DONE |
+| 27 | Priorities | Fixed global priority set: Highest/High/Medium/Low/Lowest, no admin config | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Already implemented in prototype seed data; already minimal scope | 0h | DONE |
+| 28 | Resolutions | Fixed global resolution set: Fixed/Done/Wont Fix/Duplicate/Cannot Reproduce, separate from status | Keep the 5 fixed values; set manually as a plain field on transition to Done, no post-function logic (consistent with fixed workflow from Decision 4) | SIMPLIFY_FOR_V1 | Value set already minimal; setting mechanism simplified to match the fixed workflow with no post-functions | 2-4h | DONE |
+| 29 | Issue types | Fixed initial issue types: Epic, Story, Task, Bug, Sub-task; no custom types/schemes | Confirmed all 5 types unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Seed data already includes all 5 types; already minimal scope | 0h | DONE |
 | 30 | Sprints |  |  |  |  |  | PENDING |
 | 31 | Manual ordering |  |  |  |  |  | PENDING |
 | 32 | Board columns |  |  |  |  |  | PENDING |
