@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 10 / 142
-- Decisions remaining: 132
-- KEEP_FOR_V1: 2
-- SIMPLIFY_FOR_V1: 4
-- DEFER_AFTER_V1: 1
+- Decisions completed: 20 / 142
+- Decisions remaining: 122
+- KEEP_FOR_V1: 4
+- SIMPLIFY_FOR_V1: 9
+- DEFER_AFTER_V1: 3
 - REMOVE_COMPLETELY: 3
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 0
+- ALREADY_IMPLEMENTED_AND_KEEP: 1
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -45,16 +45,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 7 | Board types and scope | Scrum and Kanban; multiple boards per project; saved-filter based; multi-project boards | Kanban only, one auto board per project, no saved-filter/multi-project boards. Predetermines simplification of Decision 30 (Scrum sprints removed). | SIMPLIFY_FOR_V1 | Scrum brings the full sprint/backlog/velocity model; Kanban alone covers most small-team needs at a fraction of the cost | 40-60h | DONE |
 | 8 | Project management style | Company-managed first; team-managed later; architecture should not block it | Drop the team-managed future note entirely; distinction is moot now that roles/workflow are fixed rather than schemed | REMOVE_COMPLETELY | With fixed roles (Decision 3) and fixed workflow (Decision 4), there is nothing left to distinguish company-managed from team-managed; the aspiration note is removed | 0h | DONE |
 | 9 | Custom fields and screens | Custom fields with project/issue-type contexts, ordering, required/hidden, show-on-create/edit/view; no screen schemes | No custom fields in V1 at all; only the fixed standard issue field set | DEFER_AFTER_V1 | Custom fields require a full dynamic field-type/context/form-rendering system even without screen schemes; deferred rather than built for a small fixed field set | 30-50h | DONE |
-| 10 | Issue searching |  |  |  |  |  | PENDING |
-| 11 | Agile reports |  |  |  |  |  | PENDING |
-| 12 | Estimation |  |  |  |  |  | PENDING |
-| 13 | Worklogs |  |  |  |  |  | PENDING |
-| 14 | Notifications |  |  |  |  |  | PENDING |
-| 15 | Attachment storage |  |  |  |  |  | PENDING |
-| 16 | Rich text |  |  |  |  |  | PENDING |
-| 17 | Issue links |  |  |  |  |  | PENDING |
-| 18 | Versions and releases |  |  |  |  |  | PENDING |
-| 19 | Components |  |  |  |  |  | PENDING |
+| 10 | Issue searching | Visual/form-based saved+shared filters as source for boards/quick filters/webhooks; no JQL | Ad-hoc in-UI filters only (project/type/status/priority/assignee/labels/date); no saving, no sharing, not usable as webhook/board source | SIMPLIFY_FOR_V1 | JQL already excluded originally; saved/shared filter persistence and sharing model dropped as the next-most-expensive layer | 15-25h | DONE |
+| 11 | Agile reports | Burndown, sprint report, velocity, cumulative flow, control chart, release burndown | No agile reports in V1 at all, including CFD/control chart; burndown/sprint report/velocity already moot after Scrum removal (Decision 7) | DEFER_AFTER_V1 | Burndown/sprint-report/velocity require sprints which were removed; user chose to defer even Kanban-compatible reports rather than build a partial report layer | 25-40h | DONE |
+| 12 | Estimation | Story points and time estimates (original/remaining/logged) | Story points only (already exists in prototype); no time estimates, those are folded into the Decision 13 worklog simplification | ALREADY_IMPLEMENTED_AND_KEEP | Story points field already exists; time estimate tracking dropped alongside worklog simplification | 3-6h | DONE |
+| 13 | Worklogs | Jira-like worklogs: time spent, work date, comment, remaining-estimate adjustment, own vs others permissions | Simple worklogs: time spent + comment, no remaining-estimate linkage, no separate own-vs-others edit/delete permission split (anyone with issue access can edit) | SIMPLIFY_FOR_V1 | Time-estimate linkage removed since Decision 12 dropped time estimates; permission split dropped as a smaller simplification the user chose over full removal | 10-18h | DONE |
+| 14 | Notifications | Jira-like notification schemes mapping events to assignee/reporter/watchers/roles/groups/users; in-app+email; per-user preferences and digests | Fixed in-app notifications only (assigned-to-me, mentioned, comment on watched issue); no schemes, no email, no per-user preferences/digests | SIMPLIFY_FOR_V1 | Configurable notification schemes are a full admin subsystem like permission schemes; email delivery also requires SMTP/queue infra deferred with Decision 52 | 30-50h | DONE |
+| 15 | Attachment storage | Pluggable attachment storage; initial backends local filesystem + S3-compatible object storage; DB stores metadata/object key only | Local filesystem only, hardwired (no abstract storage port/interface); S3 not built and no extension point reserved for it in V1 | SIMPLIFY_FOR_V1 | User explicitly chose the cheaper hardwired option over reserving a storage port, prioritizing minimum V1 cost over later S3 extensibility | 15-25h | DONE |
+| 16 | Rich text | Markdown storage with visual toolbar, live preview, attachment/mention integration in editor; sanitized HTML rendering | Keep full visual toolbar + preview editor as originally planned | KEEP_FOR_V1 | User chose to preserve editor UX quality despite the extra cost; sanitization was mandatory regardless of scope | 0h (kept as-is) | DONE |
+| 17 | Issue links | Configurable bidirectional Jira-like link types defined by admins (outward/inward labels) | Fixed larger built-in set: blocks/is blocked by, relates to, duplicates/is duplicated by, clones/is cloned by; no admin editing | SIMPLIFY_FOR_V1 | Fixed catalog covers common link semantics without an admin CRUD subsystem for link-type management | 10-15h | DONE |
+| 18 | Versions and releases | Jira-like project versions/releases: multiple Fix/Affects Version, release notes, progress, release/archive/merge | No versions/releases concept in V1 at all; labels can informally track release if needed | DEFER_AFTER_V1 | Full version subsystem is mid-cost on its own and release burndown report already dropped in Decision 11, reducing its remaining value for V1 | 20-30h | DONE |
+| 19 | Components | Simple project components: name, description, lead, default assignee; at most one per issue | Keep as originally decided | KEEP_FOR_V1 | Already the cheapest reasonable form; small table plus one optional issue field | 0h (kept as-is) | DONE |
 | 20 | Watchers |  |  |  |  |  | PENDING |
 | 21 | Issue-level security |  |  |  |  |  | PENDING |
 | 22 | Issue deletion |  |  |  |  |  | PENDING |
