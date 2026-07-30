@@ -20,12 +20,12 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 70 / 142
-- Decisions remaining: 72
-- KEEP_FOR_V1: 13
-- SIMPLIFY_FOR_V1: 28
-- DEFER_AFTER_V1: 16
-- REMOVE_COMPLETELY: 6
+- Decisions completed: 80 / 142
+- Decisions remaining: 62
+- KEEP_FOR_V1: 14
+- SIMPLIFY_FOR_V1: 31
+- DEFER_AFTER_V1: 21
+- REMOVE_COMPLETELY: 7
 - ARCHITECTURE_ONLY: 0
 - ALREADY_IMPLEMENTED_AND_KEEP: 7
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
@@ -105,16 +105,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 67 | Sub-task sprint assignment | Sub-task inherits parent sprint; cannot be scheduled separately | Confirmed moot; superseded by Decision 7 (Kanban-only) | DEFER_AFTER_V1 | No sprints exist to inherit from; savings already counted in Decision 7 | 0h (already counted in Decision 7) | DONE |
 | 68 | Completing parent with unfinished sub-tasks | Controlled by workflow validator; some transitions require sub-task completion, others allow completion/cancellation regardless | Fixed hardcoded rule: parent cannot transition to Done while any sub-task is unfinished; no configurable validator | SIMPLIFY_FOR_V1 | Resolves conflict with Decision 4 (no configurable validators); fixed safe default chosen over configurability | 2-4h | DONE |
 | 69 | Reopening parent and sub-tasks | Controlled by workflow post-function; may leave, reopen all, or reopen selected-status sub-tasks | Fixed rule: reopening parent leaves sub-tasks unchanged; no configurable post-function | SIMPLIFY_FOR_V1 | Resolves conflict with Decision 4; simplest fixed default, user can manually reopen sub-tasks if needed | 2-4h | DONE |
-| 70 | Resolution on transition/reopen |  |  |  |  |  | PENDING |
-| 71 | Status categories |  |  |  |  |  | PENDING |
-| 72 | Retiring a used status |  |  |  |  |  | PENDING |
-| 73 | Workflow editing/publishing |  |  |  |  |  | PENDING |
-| 74 | Transition conditions |  |  |  |  |  | PENDING |
-| 75 | Transition validators |  |  |  |  |  | PENDING |
-| 76 | Transition post-functions |  |  |  |  |  | PENDING |
-| 77 | Transition forms |  |  |  |  |  | PENDING |
-| 78 | SLA |  |  |  |  |  | PENDING |
-| 79 | Issue voting |  |  |  |  |  | PENDING |
+| 70 | Resolution on transition/reopen | Controlled by workflow post-function: clear/preserve/set resolution on transition; reopen clears by default | Fixed rule: reopening always clears resolution; no configurable post-function | SIMPLIFY_FOR_V1 | Resolves conflict with Decision 4; consistent with manual resolution field from Decision 28 | 1-2h | DONE |
+| 71 | Status categories | Exactly To Do/In Progress/Done categories; admins create statuses but not categories | Categories exist only implicitly in the fixed workflow from Decision 4; no admin status editing | SIMPLIFY_FOR_V1 | Superseded by fixed single workflow; savings already counted in Decision 4 | 0h (already counted in Decision 4) | DONE |
+| 72 | Retiring a used status | Migration wizard: choose replacement status, review impact, confirm, audit trail | Confirmed moot; statuses are hardcoded and cannot be retired | DEFER_AFTER_V1 | No status editing exists under the fixed workflow from Decision 4; savings already counted there | 0h (already counted in Decision 4) | DONE |
+| 73 | Workflow editing/publishing | Editable draft, one published version, version history, publish-time status migration | Confirmed moot; workflow is hardcoded, no editor/draft/publish | DEFER_AFTER_V1 | Superseded by fixed workflow from Decision 4; savings already counted there | 0h (already counted in Decision 4) | DONE |
+| 74 | Transition conditions | Safe configurable conditions: roles/groups/users/assignee/reporter/lead/field values/prior status, AND/OR | Confirmed moot; anyone with project role access can perform any fixed transition | DEFER_AFTER_V1 | Superseded by fixed workflow from Decision 4; savings already counted there | 0h (already counted in Decision 4) | DONE |
+| 75 | Transition validators | Safe configurable validators: required fields, sub-task completion, assignee/Fix Version, numeric/date rules, permissions, counts, links, worklogs, related-issue status | Confirmed moot except the fixed sub-task-completion rule already set in Decision 68; no configurable validators otherwise | DEFER_AFTER_V1 | Superseded by fixed workflow from Decision 4; sub-task case already handled as a hardcoded rule in Decision 68 | 0h (already counted in Decisions 4 and 68) | DONE |
+| 76 | Transition post-functions | Ordered configurable post-function chain plus mandatory internal history step | No configurable post-function chain; only the mandatory issue_history write remains on every transition | DEFER_AFTER_V1 | Superseded by fixed workflow from Decision 4; resolution handling already fixed in Decisions 28/70 | 0h (already counted in Decisions 4, 28, 70) | DONE |
+| 77 | Transition forms | Admin-chosen per-transition field list, order, required flags, defaults, comment field, help text | Fixed hardcoded transition forms (e.g. Done requires resolution field); no admin configuration | SIMPLIFY_FOR_V1 | Superseded by fixed workflow from Decision 4; savings already counted there | 0h (already counted in Decision 4) | DONE |
+| 78 | SLA | Not implemented; use due dates/estimates/worklogs/agile reports instead | Confirmed unchanged | REMOVE_COMPLETELY | Was already never planned for implementation | 0h | DONE |
+| 79 | Issue voting | One vote per authenticated user; visible count and voters; no automatic priority change | Keep voting as originally decided | KEEP_FOR_V1 | Cheap many-to-many table, similar cost to watchers; user chose to keep despite lower value for internal tracker use case | 0h (kept as-is) | DONE |
 | 80 | Mentions |  |  |  |  |  | PENDING |
 | 81 | Edited comment history |  |  |  |  |  | PENDING |
 | 82 | Deleted comments |  |  |  |  |  | PENDING |
