@@ -1,0 +1,33 @@
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS deleted_by_user_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE issues ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1 CHECK (version > 0);
+ALTER TABLE issues ADD COLUMN IF NOT EXISTS rank_value TEXT NOT NULL DEFAULT 'm';
+ALTER TABLE issues ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE issues ADD COLUMN IF NOT EXISTS deleted_by_user_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1 CHECK (version > 0);
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_by_user_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS sha256 VARCHAR(64);
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE attachments ADD COLUMN IF NOT EXISTS deleted_by_user_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS project_key_aliases (
+    alias_key VARCHAR(12) PRIMARY KEY,
+    project_id VARCHAR(36) REFERENCES projects(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS issue_key_aliases (
+    alias_key VARCHAR(64) PRIMARY KEY,
+    issue_id VARCHAR(36) REFERENCES issues(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_issue_alias_issue ON issue_key_aliases(issue_id);
+CREATE INDEX IF NOT EXISTS idx_project_alias_project ON project_key_aliases(project_id);
+CREATE INDEX IF NOT EXISTS idx_issues_live_updated ON issues(deleted_at, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_live_issue ON comments(issue_id, deleted_at, created_at);

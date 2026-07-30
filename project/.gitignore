@@ -1,0 +1,11 @@
+/build/
+/build-*/
+/cmake-build-*/
+/.idea/
+/.vscode/
+*.db
+*.db-shm
+*.db-wal
+.env
+.DS_Store
+compile_commands.json

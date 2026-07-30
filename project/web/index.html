@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Ticket Hub — a lightweight Jira-like issue tracker written in C++ with Crow.">
+  <title>Ticket Hub</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">TH</div>
+        <div>
+          <strong>Ticket Hub</strong>
+          <span>Issue tracking</span>
+        </div>
+      </div>
+
+      <nav class="main-nav" aria-label="Main navigation">
+        <button class="nav-item active" data-view="dashboard"><span>⌂</span> Dashboard</button>
+        <button class="nav-item" data-view="board"><span>▦</span> Board</button>
+        <button class="nav-item" data-view="issues"><span>☷</span> Issues</button>
+        <button class="nav-item" data-view="projects"><span>◆</span> Projects</button>
+      </nav>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Projects</div>
+        <div id="sidebar-projects" class="project-shortcuts"></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="avatar">DU</div>
+        <div>
+          <strong>Demo User</strong>
+          <span>Local session</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="menu-button" aria-label="Open navigation">☰</button>
+        <div class="global-search">
+          <span>⌕</span>
+          <input id="global-search" type="search" placeholder="Search issues by key or summary" autocomplete="off">
+        </div>
+        <div class="topbar-actions">
+          <span id="backend-pill" class="backend-pill">connecting…</span>
+          <button class="primary-button" id="create-button">＋ Create</button>
+        </div>
+      </header>
+
+      <section id="content" class="content" aria-live="polite">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading Ticket Hub…</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-title">
+    <form class="modal" id="create-form">
+      <div class="modal-header">
+        <div>
+          <span class="eyebrow">New work item</span>
+          <h2 id="create-title">Create issue</h2>
+        </div>
+        <button type="button" class="icon-button" data-close-modal aria-label="Close">×</button>
+      </div>
+      <div class="form-grid">
+        <label>
+          Project
+          <select name="projectKey" id="create-project" required></select>
+        </label>
+        <label>
+          Issue type
+          <select name="issueTypeKey">
+            <option value="task">Task</option>
+            <option value="story">Story</option>
+            <option value="bug">Bug</option>
+            <option value="epic">Epic</option>
+          </select>
+        </label>
+        <label class="wide">
+          Summary
+          <input name="summary" maxlength="255" required placeholder="What needs to be done?">
+        </label>
+        <label class="wide">
+          Description
+          <textarea name="description" rows="6" placeholder="Add context, acceptance criteria, or reproduction steps"></textarea>
+        </label>
+        <label>
+          Priority
+          <select name="priorityKey">
+            <option value="highest">Highest</option>
+            <option value="high">High</option>
+            <option value="medium" selected>Medium</option>
+            <option value="low">Low</option>
+            <option value="lowest">Lowest</option>
+          </select>
+        </label>
+        <label>
+          Assignee
+          <select name="assigneeUsername">
+            <option value="">Unassigned</option>
+            <option value="demo">Demo User</option>
+            <option value="alex">Alex Morgan</option>
+            <option value="sam">Sam Lee</option>
+          </select>
+        </label>
+        <label>
+          Story points
+          <input name="storyPoints" type="number" min="0" max="10000" step="0.5" placeholder="e.g. 3">
+        </label>
+        <label>
+          Due date
+          <input name="dueDate" type="date">
+        </label>
+        <label class="wide">
+          Labels
+          <input name="labels" placeholder="backend, ui, documentation">
+        </label>
+      </div>
+      <div id="create-error" class="form-error hidden"></div>
+      <div class="modal-footer">
+        <button type="button" class="secondary-button" data-close-modal>Cancel</button>
+        <button type="submit" class="primary-button">Create issue</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="drawer-backdrop hidden" id="issue-drawer-backdrop"></div>
+  <aside class="issue-drawer hidden" id="issue-drawer" aria-label="Issue details"></aside>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

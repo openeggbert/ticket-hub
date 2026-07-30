@@ -1,0 +1,47 @@
+#include "domain/Validation.h"
+
+#include <cstdlib>
+#include <iostream>
+#include <string>
+
+namespace {
+
+void require(bool condition, const std::string& message) {
+    if (!condition) {
+        std::cerr << "FAILED: " << message << '\n';
+        std::exit(1);
+    }
+}
+
+} // namespace
+
+int main() {
+    using namespace TicketHub::Domain;
+
+    require(normalizeProjectKey(" ticket-hub ") == "TICKET-HUB", "project key preserves invalid punctuation for validation");
+    require(normalizeProjectKey("dx12") == "DX12", "project key normalization");
+    require(isValidProjectKey("DX12"), "letters and digits are valid");
+    require(isValidProjectKey("ABCDEFGHIJKL"), "twelve-character project key is valid");
+    require(!isValidProjectKey("TH-2"), "project key punctuation is rejected");
+    require(!isValidProjectKey("1TH"), "project key must begin with a letter");
+    require(normalizeIssueKey(" cna-123 ") == "CNA-123", "issue key normalization");
+    require(isValidIssueKey("DX12-145"), "issue key validation");
+    require(!isValidIssueKey("DX12-0"), "issue number starts at one");
+    require(normalizeLabel(" Graphics ") == "graphics", "label normalization");
+
+    CreateIssueRequest valid;
+    valid.projectKey = "TH";
+    valid.summary = "Create an issue";
+    valid.labels = {"backend"};
+    require(validateCreateIssue(valid).empty(), "valid issue request");
+
+    CreateIssueRequest invalid;
+    invalid.projectKey = "1";
+    invalid.summary = "";
+    invalid.storyPoints = -1.0;
+    const auto errors = validateCreateIssue(invalid);
+    require(errors.size() == 3, "invalid request reports all expected errors");
+
+    std::cout << "All domain validation tests passed\n";
+    return 0;
+}
