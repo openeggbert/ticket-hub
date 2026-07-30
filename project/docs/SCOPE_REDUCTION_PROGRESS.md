@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 30 / 142
-- Decisions remaining: 112
-- KEEP_FOR_V1: 4
-- SIMPLIFY_FOR_V1: 13
-- DEFER_AFTER_V1: 4
+- Decisions completed: 40 / 142
+- Decisions remaining: 102
+- KEEP_FOR_V1: 6
+- SIMPLIFY_FOR_V1: 17
+- DEFER_AFTER_V1: 7
 - REMOVE_COMPLETELY: 5
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 4
+- ALREADY_IMPLEMENTED_AND_KEEP: 5
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -65,16 +65,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 27 | Priorities | Fixed global priority set: Highest/High/Medium/Low/Lowest, no admin config | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Already implemented in prototype seed data; already minimal scope | 0h | DONE |
 | 28 | Resolutions | Fixed global resolution set: Fixed/Done/Wont Fix/Duplicate/Cannot Reproduce, separate from status | Keep the 5 fixed values; set manually as a plain field on transition to Done, no post-function logic (consistent with fixed workflow from Decision 4) | SIMPLIFY_FOR_V1 | Value set already minimal; setting mechanism simplified to match the fixed workflow with no post-functions | 2-4h | DONE |
 | 29 | Issue types | Fixed initial issue types: Epic, Story, Task, Bug, Sub-task; no custom types/schemes | Confirmed all 5 types unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Seed data already includes all 5 types; already minimal scope | 0h | DONE |
-| 30 | Sprints |  |  |  |  |  | PENDING |
-| 31 | Manual ordering |  |  |  |  |  | PENDING |
-| 32 | Board columns |  |  |  |  |  | PENDING |
-| 33 | Kanban WIP limits |  |  |  |  |  | PENDING |
-| 34 | Swimlanes |  |  |  |  |  | PENDING |
-| 35 | Quick filters |  |  |  |  |  | PENDING |
-| 36 | Bulk operations |  |  |  |  |  | PENDING |
-| 37 | Moving issues between projects |  |  |  |  |  | PENDING |
-| 38 | Old issue keys after move |  |  |  |  |  | PENDING |
-| 39 | Integration API |  |  |  |  |  | PENDING |
+| 30 | Sprints | Jira-like sprints: goal, dates, planned/active/completed states, capacity, closing behavior, scope-change history | Confirmed moot; superseded by Decision 7 (Kanban-only) | DEFER_AFTER_V1 | Sprints require Scrum boards, already removed in Decision 7; savings counted there | 0h (already counted in Decision 7) | DONE |
+| 31 | Manual ordering | Global Jira-like LexoRank-style string rank driving backlog/Scrum/Kanban ordering | Simple integer order column with renumbering on insert, instead of LexoRank string ranks | SIMPLIFY_FOR_V1 | rank_value column already exists in prototype; integer renumbering is far simpler to implement/test and sufficient for small per-project issue counts | 8-15h | DONE |
+| 32 | Board columns | One board column equals one workflow status; no multi-status columns | Confirmed unchanged; columns are simply the fixed workflow statuses from Decision 4 | KEEP_FOR_V1 | Already minimal given the fixed workflow decision, no mapping configuration needed | 0h | DONE |
+| 33 | Kanban WIP limits | Soft WIP limits per column; visually highlighted, not blocking | Keep as originally decided | KEEP_FOR_V1 | Cheap: one numeric field per column plus a display-time comparison, no blocking logic | 0h (kept as-is) | DONE |
+| 34 | Swimlanes | Configurable swimlanes by Epic/assignee/project/priority/issue type | No swimlanes in V1; board is a flat per-column list | DEFER_AFTER_V1 | Group-by rendering layer is lower priority than base board functionality for a single-board small team; by-project grouping already moot after Decision 7 | 8-12h | DONE |
+| 35 | Quick filters | Configurable quick filters using the same structured form-filter conditions as saved filters | No quick filters in V1; board uses only ad-hoc UI filtering | DEFER_AFTER_V1 | Depends on saved-filter persistence which was removed in Decision 10; savings already counted there | 0h (already counted in Decision 10) | DONE |
+| 36 | Bulk operations | Jira-like multi-step bulk operation wizard: select/operation/values/review/confirm; field updates, transitions, project moves, type changes, recycle bin | Simple bulk actions: select multiple, pick one action (status/assignee/label/recycle), confirm; no multi-step wizard, no cross-project move, no type change | SIMPLIFY_FOR_V1 | Multi-step wizard across 5 operation kinds is significant UI+backend work; simple bulk actions cover most real needs | 15-25h | DONE |
+| 37 | Moving issues between projects | Move only between compatible projects (type/workflow/field config); block and explain otherwise; no mapping wizard | Move always allowed; all projects are automatically compatible now that workflow (Decision 4) and fields (Decision 9) are fixed globally | SIMPLIFY_FOR_V1 | No compatibility check needed since every project shares the same fixed types/workflow/fields; move is just a project_id change plus new key/number | 5-10h | DONE |
+| 38 | Old issue keys after move | Permanent aliases; old keys always redirect and never reused | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | issue_key_aliases table and resolution already implemented in prototype; core data invariant | 0h | DONE |
+| 39 | Integration API | Public versioned REST API, PATs, service accounts, outbound webhooks | Minimal REST API with personal access tokens (PAT) for read/write; no webhooks, no service accounts | SIMPLIFY_FOR_V1 | Full API+token+webhook subsystem is three separate subsystems; user kept basic scripted access via PAT while dropping webhooks and service accounts | 25-40h | DONE |
 | 40 | Token security |  |  |  |  |  | PENDING |
 | 41 | Webhook filtering |  |  |  |  |  | PENDING |
 | 42 | Git integration |  |  |  |  |  | PENDING |
