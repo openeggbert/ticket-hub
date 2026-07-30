@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 90 / 142
-- Decisions remaining: 52
-- KEEP_FOR_V1: 17
-- SIMPLIFY_FOR_V1: 35
+- Decisions completed: 100 / 142
+- Decisions remaining: 42
+- KEEP_FOR_V1: 19
+- SIMPLIFY_FOR_V1: 37
 - DEFER_AFTER_V1: 22
 - REMOVE_COMPLETELY: 7
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 9
+- ALREADY_IMPLEMENTED_AND_KEEP: 15
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -125,16 +125,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 87 | Project archival | Read-only archive: leaves active lists, viewable, cannot be modified, restorable | Confirmed unchanged; use existing archived/archived_at columns plus write-time read-only enforcement | ALREADY_IMPLEMENTED_AND_KEEP | archived/archived_at columns already exist in prototype; only read-only write enforcement remains to add | 0-2h | DONE |
 | 88 | Permanent project deletion | Require complete verified export before entering recycle bin, then admin restore or permanent delete | Drop the mandatory-export precondition; project goes straight to recycle bin, admin may manually CSV-export first if desired but it is not enforced | SIMPLIFY_FOR_V1 | Mandatory export enforcement adds complexity not justified after Decision 48 reduced export to simple read-only CSV | 3-6h | DONE |
 | 89 | Project recycle-bin retention | Configurable retention, default 90 days; 30/90/365 or never | Fixed 90-day retention, no admin configuration; expiry checked on-demand when viewing recycle bin, no background job | SIMPLIFY_FOR_V1 | Configurable retention needs admin settings plus a background sweep job, but job infrastructure was removed in Decision 51 | 5-10h | DONE |
-| 90 | Project key while project is in bin |  |  |  |  |  | PENDING |
-| 91 | Changing active project key |  |  |  |  |  | PENDING |
-| 92 | Issue number reuse |  |  |  |  |  | PENDING |
-| 93 | Project key syntax |  |  |  |  |  | PENDING |
-| 94 | Case handling for keys |  |  |  |  |  | PENDING |
-| 95 | Initial issue number |  |  |  |  |  | PENDING |
-| 96 | Gaps in issue numbering |  |  |  |  |  | PENDING |
-| 97 | Labels |  |  |  |  |  | PENDING |
-| 98 | Attachment limits/security |  |  |  |  |  | PENDING |
-| 99 | Attachment previews |  |  |  |  |  | PENDING |
+| 90 | Project key while project is in bin | Key stays reserved while project in recycle bin; not reusable until permanent deletion | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Core invariant, consistent with existing project_key_aliases table | 0h | DONE |
+| 91 | Changing active project key | Allowed with permanent old issue-key aliases; numeric suffixes remain | Confirmed unchanged | KEEP_FOR_V1 | Small feature built on existing alias infrastructure from Decisions 38/90 | 0-2h | DONE |
+| 92 | Issue number reuse | Never reuse, even after permanent deletion | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Core invariant already implemented via transactional number allocation | 0h | DONE |
+| 93 | Project key syntax | Uppercase letters/digits, starts with letter, length 2-12, regex ^[A-Z][A-Z0-9]{1,11}$ | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Already implemented in prototype validation | 0h | DONE |
+| 94 | Case handling for keys | Case-insensitive input, uppercase canonical form across URLs/API/search/imports/Git | Confirmed; scope now just URL/API/UI input since imports and Git recognition were removed | ALREADY_IMPLEMENTED_AND_KEEP | Already partly implemented; import/Git surfaces moot after Decisions 42/48 | 0h | DONE |
+| 95 | Initial issue number | Admin-selectable at project creation, default 1; never lowered/reused once creation begins | Always starts at 1, no admin choice at project creation | SIMPLIFY_FOR_V1 | Value existed mainly to support migration continuity, but Jira migration was removed in Decision 48 | 1-2h | DONE |
+| 96 | Gaps in issue numbering | Gaps allowed; failed/rolled-back creation may consume a number | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Natural consequence of already-implemented transactional number allocation from Decision 92 | 0h | DONE |
+| 97 | Labels | Free-form labels, autocomplete, case-insensitive normalization | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Trim/lowercase/dedup already implemented in prototype | 0h | DONE |
+| 98 | Attachment limits/security | Configurable size/count/MIME allow-deny/extension/quota limits; no antivirus/DLP | Fixed reasonable limits (e.g. 25MB/file, 20 attachments/issue, blocked dangerous extensions), no admin configuration, no quotas | SIMPLIFY_FOR_V1 | Full admin configuration subsystem for limits/quotas not justified vs fixed sane defaults | 8-12h | DONE |
+| 99 | Attachment previews | Safe previews: images, PDF, text/source, browser-supported audio/video; others download-only | Keep all 4 preview types using native browser elements (img, embed/iframe for PDF, audio/video tags); no custom PDF.js or heavy libraries | KEEP_FOR_V1 | Most preview types map to native HTML elements rather than custom libraries, keeping cost reasonable | 0h (kept as-is) | DONE |
 | 100 | Inline images in Markdown |  |  |  |  |  | PENDING |
 | 101 | Attachment listing/deletion |  |  |  |  |  | PENDING |
 | 102 | Attachment recycle-bin retention |  |  |  |  |  | PENDING |
