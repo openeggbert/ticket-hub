@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 60 / 142
-- Decisions remaining: 82
-- KEEP_FOR_V1: 10
-- SIMPLIFY_FOR_V1: 25
-- DEFER_AFTER_V1: 14
+- Decisions completed: 70 / 142
+- Decisions remaining: 72
+- KEEP_FOR_V1: 13
+- SIMPLIFY_FOR_V1: 28
+- DEFER_AFTER_V1: 16
 - REMOVE_COMPLETELY: 6
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 5
+- ALREADY_IMPLEMENTED_AND_KEEP: 7
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -95,16 +95,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 57 | User departure/duplicates | Deactivate, anonymize, and merge accounts; merge transfers ownership/references to surviving account | Deactivation only; no anonymization, no account merge | SIMPLIFY_FOR_V1 | Merge existed mainly to reconcile local+OIDC duplicate identities, but OIDC was removed in Decision 1, eliminating its main justification | 10-15h | DONE |
 | 58 | Project visibility | No separate Private/Internal/Public flag; visibility only through permission schemes | All authenticated users can view all projects; project roles (Decision 3) control who can edit, not who can see | SIMPLIFY_FOR_V1 | Replaces permission-scheme-based visibility with the simplest possible model now that fixed roles replaced schemes | 0-2h | DONE |
 | 59 | Anonymous access | Optional read-only anonymous access, disabled by default: browse project/issues, explicitly public attachments | Keep optional read-only anonymous access as originally decided, despite it being somewhat orthogonal to the admin-created-accounts model from Decision 2 | KEEP_FOR_V1 | User chose to preserve this despite the internal-tool framing; requires an anonymous Principal type in the authorization chain | 0h (kept as-is) | DONE |
-| 60 | Issue cloning |  |  |  |  |  | PENDING |
-| 61 | Issue templates |  |  |  |  |  | PENDING |
-| 62 | Checklists |  |  |  |  |  | PENDING |
-| 63 | Project ownership of an issue |  |  |  |  |  | PENDING |
-| 64 | Sub-task model |  |  |  |  |  | PENDING |
-| 65 | Epic membership |  |  |  |  |  | PENDING |
-| 66 | Backlog issues without Epic |  |  |  |  |  | PENDING |
-| 67 | Sub-task sprint assignment |  |  |  |  |  | PENDING |
-| 68 | Completing parent with unfinished sub-tasks |  |  |  |  |  | PENDING |
-| 69 | Reopening parent and sub-tasks |  |  |  |  |  | PENDING |
+| 60 | Issue cloning | Jira-like selectable cloning: attachments, links, sub-tasks, sprint, Epic, assignee, versions, custom fields; compatible target project; creates clones link | Simple cloning: copy summary/description/type/priority/labels/component into a new issue in the same project, create clones/is cloned by link; no selection dialog, no copying attachments/sub-tasks/links | SIMPLIFY_FOR_V1 | Sprint/versions/custom fields options already gone; simple field-copy clone is cheaper than a full selection dialog | 6-10h | DONE |
+| 61 | Issue templates | Global and project issue templates; prefill fields; optionally create sub-tasks, links, checklists, watchers | No templates in V1; users fill each issue manually (or use cloning from Decision 60) | DEFER_AFTER_V1 | Separate template CRUD subsystem plus transactional structure generation is lower priority than core tracker for a small team | 15-25h | DONE |
+| 62 | Checklists | Markdown checklist syntax only; no separate entities/assignees/due dates/history | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Covered entirely by the Markdown editor from Decision 16; already minimal | 0h | DONE |
+| 63 | Project ownership of an issue | Exactly one project owns an issue; boards/filters may span projects, issues never do | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Core data invariant, already implemented in prototype | 0h | DONE |
+| 64 | Sub-task model | Sub-task must have Story/Task/Bug parent, cannot exist independently, cannot have children, stays in parents project | Confirmed unchanged | KEEP_FOR_V1 | Already minimal hierarchy model consistent with fixed issue types | 0h | DONE |
+| 65 | Epic membership | Optional, at most one Epic per Story/Task/Bug; Sub-tasks inherit via parent | Confirmed unchanged | KEEP_FOR_V1 | Already minimal: single optional FK field | 0h | DONE |
+| 66 | Backlog issues without Epic | Dedicated No Epic group; unassigned issues visible and movable in/out of Epic | Keep as originally decided | KEEP_FOR_V1 | Simple UI grouping, no new database structure needed | 0h (kept as-is) | DONE |
+| 67 | Sub-task sprint assignment | Sub-task inherits parent sprint; cannot be scheduled separately | Confirmed moot; superseded by Decision 7 (Kanban-only) | DEFER_AFTER_V1 | No sprints exist to inherit from; savings already counted in Decision 7 | 0h (already counted in Decision 7) | DONE |
+| 68 | Completing parent with unfinished sub-tasks | Controlled by workflow validator; some transitions require sub-task completion, others allow completion/cancellation regardless | Fixed hardcoded rule: parent cannot transition to Done while any sub-task is unfinished; no configurable validator | SIMPLIFY_FOR_V1 | Resolves conflict with Decision 4 (no configurable validators); fixed safe default chosen over configurability | 2-4h | DONE |
+| 69 | Reopening parent and sub-tasks | Controlled by workflow post-function; may leave, reopen all, or reopen selected-status sub-tasks | Fixed rule: reopening parent leaves sub-tasks unchanged; no configurable post-function | SIMPLIFY_FOR_V1 | Resolves conflict with Decision 4; simplest fixed default, user can manually reopen sub-tasks if needed | 2-4h | DONE |
 | 70 | Resolution on transition/reopen |  |  |  |  |  | PENDING |
 | 71 | Status categories |  |  |  |  |  | PENDING |
 | 72 | Retiring a used status |  |  |  |  |  | PENDING |
