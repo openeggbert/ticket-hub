@@ -20,12 +20,12 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 40 / 142
-- Decisions remaining: 102
-- KEEP_FOR_V1: 6
-- SIMPLIFY_FOR_V1: 17
-- DEFER_AFTER_V1: 7
-- REMOVE_COMPLETELY: 5
+- Decisions completed: 50 / 142
+- Decisions remaining: 92
+- KEEP_FOR_V1: 7
+- SIMPLIFY_FOR_V1: 21
+- DEFER_AFTER_V1: 11
+- REMOVE_COMPLETELY: 6
 - ARCHITECTURE_ONLY: 0
 - ALREADY_IMPLEMENTED_AND_KEEP: 5
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
@@ -75,16 +75,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 37 | Moving issues between projects | Move only between compatible projects (type/workflow/field config); block and explain otherwise; no mapping wizard | Move always allowed; all projects are automatically compatible now that workflow (Decision 4) and fields (Decision 9) are fixed globally | SIMPLIFY_FOR_V1 | No compatibility check needed since every project shares the same fixed types/workflow/fields; move is just a project_id change plus new key/number | 5-10h | DONE |
 | 38 | Old issue keys after move | Permanent aliases; old keys always redirect and never reused | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | issue_key_aliases table and resolution already implemented in prototype; core data invariant | 0h | DONE |
 | 39 | Integration API | Public versioned REST API, PATs, service accounts, outbound webhooks | Minimal REST API with personal access tokens (PAT) for read/write; no webhooks, no service accounts | SIMPLIFY_FOR_V1 | Full API+token+webhook subsystem is three separate subsystems; user kept basic scripted access via PAT while dropping webhooks and service accounts | 25-40h | DONE |
-| 40 | Token security |  |  |  |  |  | PENDING |
-| 41 | Webhook filtering |  |  |  |  |  | PENDING |
-| 42 | Git integration |  |  |  |  |  | PENDING |
-| 43 | Full-text search |  |  |  |  |  | PENDING |
-| 44 | Internationalization |  |  |  |  |  | PENDING |
-| 45 | Time zones and dates |  |  |  |  |  | PENDING |
-| 46 | Themes and branding |  |  |  |  |  | PENDING |
-| 47 | Accessibility |  |  |  |  |  | PENDING |
-| 48 | Import/export |  |  |  |  |  | PENDING |
-| 49 | Extensions |  |  |  |  |  | PENDING |
+| 40 | Token security | Scopes, expiration, revocation, rotation, audit, last-used tracking, admin max lifetime; token never exceeds owner permissions | Basic token security: hashed storage, expiration, revocation, last-used tracking; no scopes (token = owner permissions), no rotation, no admin-configurable max lifetime | SIMPLIFY_FOR_V1 | Scopes/rotation are an extra layer beyond hashed-storage/expiration/revocation which are non-negotiable security basics per CLAUDE.md | 5-10h | DONE |
+| 41 | Webhook filtering | Webhook filtering by project and structured visual filter | Confirmed moot; superseded by Decision 39 (no webhooks in V1) | DEFER_AFTER_V1 | Depends on webhooks which were removed in Decision 39; savings already counted there | 0h (already counted in Decision 39) | DONE |
+| 42 | Git integration | Lightweight issue-key linking for commits/branches/PRs/builds via external integrations; no full repo integration | No Git integration in V1; no mechanism for external tools to attach links without public API/webhooks | DEFER_AFTER_V1 | Depends on public API/webhooks removed in Decision 39; PAT alone does not provide a link-attachment mechanism | 0h (already counted in Decision 39) | DONE |
+| 43 | Full-text search | Native FTS per database: PostgreSQL tsvector/GIN, SQLite FTS5, behind shared interface | Simple LIKE/ILIKE text search on summary/description, identical across PostgreSQL and SQLite, no special indexes | SIMPLIFY_FOR_V1 | Avoids duplicate FTS implementation/index/tests per database; sufficient for small self-hosted issue volumes | 15-25h | DONE |
+| 44 | Internationalization | General i18n framework from the start; English default, Czech complete; resource-file extensibility; localized backend messages and email templates | English only, no i18n framework in V1; text hardcoded in UI/templates | DEFER_AFTER_V1 | i18n framework doubles maintenance cost on every UI change; email templates already moot since email was removed in Decision 14 | 20-35h | DONE |
+| 45 | Time zones and dates | UTC storage plus per-user timezone: browser auto-detect, manual override, 12/24h preference, locale date format, DST correctness; date-only stays date-only | Keep as originally decided | KEEP_FOR_V1 | Basic hygiene for a usable tool; low incremental cost on top of mandatory UTC storage | 0h (kept as-is) | DONE |
+| 46 | Themes and branding | Light, dark, high-contrast themes; installation branding (name/logo/favicon/accent/login) | Light and dark theme only; no high-contrast theme, no installation branding | SIMPLIFY_FOR_V1 | High-contrast theme requires careful WCAG contrast verification everywhere; branding is a deferred admin convenience feature | 10-15h | DONE |
+| 47 | Accessibility | Target WCAG 2.2 AA: semantic HTML, keyboard, focus, screen reader, accessible dialogs, non-drag alternatives, contrast, automated+manual testing | Reasonable baseline accessibility (semantic HTML, keyboard operability) without committing to or tracking a formal WCAG level or dedicated audit deliverable | SIMPLIFY_FOR_V1 | Drops the formal WCAG compliance target and its audit/testing deliverable while keeping sane baseline practices during development | 8-15h | DONE |
+| 48 | Import/export | CSV import/export, complete app backup/restore, Jira migration tool with lossy-mapping report | Simple CSV export of issues (read-only); no CSV import, no Jira migration tool; backup/restore handled separately in Decisions 106-110 | REMOVE_COMPLETELY | Jira migration tool would require mapping dozens of Jira entities including many already removed (sprints, versions, custom fields, permission schemes); disproportionately expensive vs value | 40-70h | DONE |
+| 49 | Extensions | Safe external-app model via REST/webhooks/service accounts/declared UI panels; no untrusted dynamic C++ plugins | Confirmed moot; depends on public API/webhooks/service accounts removed in Decision 39 | DEFER_AFTER_V1 | External extension model has no building blocks left after Decision 39 removed API/webhooks/service accounts | 0h (already counted in Decision 39) | DONE |
 | 50 | Distribution/deployment |  |  |  |  |  | PENDING |
 | 51 | Background jobs |  |  |  |  |  | PENDING |
 | 52 | Outbound email |  |  |  |  |  | PENDING |
