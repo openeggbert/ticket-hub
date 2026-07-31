@@ -935,6 +935,129 @@ VALUES (?, ?, ?, 'status', ?, ?)
     }
 }
 
+namespace {
+std::string historyText(const std::optional<std::string>& value) {
+    return value.value_or(std::string());
+}
+std::string historyText(const std::optional<double>& value) {
+    return value ? std::to_string(*value) : std::string();
+}
+} // namespace
+
+std::optional<Domain::Issue> SqliteDatabase::editIssue(const std::string& issueKey,
+                                                       const Domain::EditIssueRequest& request,
+                                                       const std::string& actorUserId,
+                                                       const std::optional<std::int64_t> expectedVersion) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        Statement current(database_, R"SQL(
+SELECT i.id, i.summary, i.description, pr.priority_key, assignee.email,
+       i.story_points, i.due_date, i.version
+FROM issues i
+JOIN priorities pr ON pr.id = i.priority_id
+LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
+WHERE i.deleted_at IS NULL
+  AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
+)SQL");
+        current.bind(1, issueKey);
+        if (current.step() != SQLITE_ROW) {
+            executeScript("ROLLBACK;");
+            return std::nullopt;
+        }
+        const std::string issueId = text(current.get(), 0);
+        const std::string oldSummary = text(current.get(), 1);
+        const std::string oldDescription = text(current.get(), 2);
+        const std::string oldPriorityKey = text(current.get(), 3);
+        const std::optional<std::string> oldAssigneeEmail = optionalText(current.get(), 4);
+        std::optional<double> oldStoryPoints;
+        if (sqlite3_column_type(current.get(), 5) != SQLITE_NULL) {
+            oldStoryPoints = sqlite3_column_double(current.get(), 5);
+        }
+        const std::optional<std::string> oldDueDate = optionalText(current.get(), 6);
+        const std::int64_t currentVersion = sqlite3_column_int64(current.get(), 7);
+        if (expectedVersion && *expectedVersion != currentVersion) {
+            throw Domain::ConcurrencyConflict("Issue was modified by another user");
+        }
+
+        const std::string priorityId = lookupId(database_, "priorities", "priority_key", request.priorityKey);
+        std::optional<std::string> assigneeId;
+        if (request.assigneeEmail.has_value() && !request.assigneeEmail->empty()) {
+            assigneeId = lookupId(database_, "users", "email", *request.assigneeEmail);
+        }
+        const std::string actorId = requireUserId(database_, actorUserId);
+
+        Statement update(database_, R"SQL(
+UPDATE issues
+SET summary = ?, description = ?, priority_id = ?, assignee_user_id = ?,
+    story_points = ?, due_date = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+)SQL");
+        update.bind(1, request.summary);
+        update.bind(2, request.description);
+        update.bind(3, priorityId);
+        assigneeId ? update.bind(4, *assigneeId) : update.bindNull(4);
+        request.storyPoints ? update.bind(5, *request.storyPoints) : update.bindNull(5);
+        request.dueDate ? update.bind(6, *request.dueDate) : update.bindNull(6);
+        update.bind(7, issueId);
+        expectDone(database_, update, "Issue edit update");
+
+        Statement clearLabels(database_, "DELETE FROM issue_labels WHERE issue_id = ?");
+        clearLabels.bind(1, issueId);
+        expectDone(database_, clearLabels, "Clear issue labels");
+        for (const auto& labelName : request.labels) {
+            const std::string labelId = Common::uuidV4();
+            Statement label(database_, "INSERT INTO labels(id, name) VALUES (?, ?) ON CONFLICT(name) DO NOTHING");
+            label.bind(1, labelId);
+            label.bind(2, labelName);
+            expectDone(database_, label, "Label insert");
+
+            Statement link(database_, "INSERT OR IGNORE INTO issue_labels(issue_id, label_id) SELECT ?, id FROM labels WHERE name = ?");
+            link.bind(1, issueId);
+            link.bind(2, labelName);
+            expectDone(database_, link, "Issue label insert");
+        }
+
+        auto recordHistory = [&](const char* field, const std::string& oldValue, const std::string& newValue) {
+            if (oldValue == newValue) {
+                return;
+            }
+            Statement history(database_, R"SQL(
+INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+VALUES (?, ?, ?, ?, ?, ?)
+)SQL");
+            history.bind(1, Common::uuidV4());
+            history.bind(2, issueId);
+            history.bind(3, actorId);
+            history.bind(4, std::string(field));
+            oldValue.empty() ? history.bindNull(5) : history.bind(5, oldValue);
+            newValue.empty() ? history.bindNull(6) : history.bind(6, newValue);
+            expectDone(database_, history, "Issue history insert");
+        };
+        recordHistory("summary", oldSummary, request.summary);
+        recordHistory("description", oldDescription, request.description);
+        recordHistory("priority", oldPriorityKey, request.priorityKey);
+        recordHistory("assignee", historyText(oldAssigneeEmail), historyText(request.assigneeEmail));
+        recordHistory("story_points", historyText(oldStoryPoints), historyText(request.storyPoints));
+        recordHistory("due_date", historyText(oldDueDate), historyText(request.dueDate));
+
+        executeScript("COMMIT;");
+        const std::string sql = std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
+        Statement read(database_, sql);
+        read.bind(1, issueId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Edited issue could not be read back");
+        }
+        return readIssue(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
 std::vector<Domain::Comment> SqliteDatabase::listComments(const std::string& issueKey) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(

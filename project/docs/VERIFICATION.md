@@ -1,5 +1,59 @@
 # Verification record
 
+## 2026-07-31 — Phase 3, partial continued (full issue edit, reduced scope)
+
+Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
+libpq 16.14, and a live local PostgreSQL 16.14 server (freshly created for this batch and dropped
+afterward, same as every prior PostgreSQL verification this session).
+
+### Core configuration
+
+```bash
+cmake -S . -B build -DTICKETHUB_BUILD_SERVER=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
+```
+
+All warnings enabled (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`); zero warnings through the
+`IDatabase::editIssue` addition (interface change forced a rebuild through `TicketService` and both
+adapters, same discipline as the `changeIssueStatus` signature change in the prior batch).
+
+### Passing tests (7/7 — same binaries, extended coverage)
+
+1. `ticket-hub-domain-tests`, `ticket-hub-migration-tests`, `ticket-hub-identity-tests`,
+   `ticket-hub-workflow-tests`, `ticket-hub-crypto-tests` — unchanged, all still passing.
+2. `ticket-hub-sqlite-integration-tests` — extended: edits every standard field on the previously-created
+   issue (summary, description, priority, assignee, story points, due date, labels), asserts the
+   optimistic-lock version increments and the resolution set by the earlier status-change test is left
+   undisturbed, asserts a stale-version edit raises `Domain::ConcurrencyConflict`, asserts the assignee
+   can be cleared, and asserts at least six `issue_history` rows were written (one per changed field).
+3. `ticket-hub-authorization-tests` — extended: a non-member cannot edit another project's issue
+   (`Domain::Forbidden`); a project member can edit a project issue; editing an unknown issue key returns
+   `std::nullopt` rather than throwing.
+
+### Additional verification beyond the automated suite
+
+- **Live PostgreSQL 16 server**: created a scratch `tickethub` database/role (the server needed
+  restarting first, as in the prior batch), ran `ticket-hub-cli migrate`/`seed-demo`, then compiled and
+  ran a standalone program (`pg_edit_smoke.cpp`, not committed) linking directly against
+  `PostgresDatabase`: created an issue, edited every field (summary, description, priority, assignee,
+  story points, due date, labels) and confirmed each was persisted and the version incremented, confirmed
+  a stale-version edit raises `ConcurrencyConflict`, confirmed the assignee can be cleared, and confirmed
+  editing an unknown issue key returns `std::nullopt`. All 11 assertions passed. The scratch database and
+  role were dropped after verification.
+- Both SQLite and PostgreSQL adapters, `ticket-hub-core`, `ticket-hub-cli`, and all seven test binaries
+  compile and link cleanly, including in the SQLite-only and PostgreSQL-only build configurations.
+
+### Environment limitations (unchanged)
+
+`src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) still
+could not be compiled -- outbound access to `github.com` remains blocked. The new
+`PATCH /api/issues/{key}` full-edit route follows the same patterns as the already-unverified Phase 1-3
+routes and carries the same caveat. While adding it, three existing routes (`POST /api/issues`,
+`PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments`) were found missing a
+`catch (const Domain::Forbidden&)` handler and fixed -- this was caught by code inspection while editing
+the surrounding code, not by compiling, since the file still cannot be built in this sandbox.
+
 ## 2026-07-31 — Phase 3, partial (fixed workflow and hierarchy, reduced scope)
 
 Verified in the same session/environment as Phases 1-2 below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,

@@ -104,6 +104,11 @@ Core columns:
 
 Ordinary list, detail and dashboard queries exclude deleted issues. Status changes increment `version`; an expected stale version raises a concurrency conflict.
 
+`IDatabase::editIssue` (Phase 3, D129) is a full-replacement edit of `summary`/`description`/
+`priority_id`/`assignee_user_id`/`story_points`/`due_date`/labels, sharing the same optimistic-locking
+contract as `changeIssueStatus`. It does not touch `issue_type_id` or `parent_issue_id` -- re-typing or
+re-parenting an issue after creation is not yet implemented.
+
 `parent_issue_id` now has application-layer meaning (Phase 3): `TicketService::createIssue` rejects a
 request that violates the fixed hierarchy (a Sub-task without a parent, a parent of the wrong type, or a
 parent in a different project) with `std::invalid_argument` before the row is ever inserted.
@@ -138,7 +143,10 @@ Ordinary comment lists exclude deleted comments. Version-history and tombstone A
 
 `id`, `issue_id`, `actor_user_id`, `field_name`, `old_value`, `new_value`, `created_at`.
 
-The prototype currently records status changes. The target replaces display-oriented strings with fully typed structured history.
+Records status changes (`field_name = 'status'`) and, since Phase 3's `editIssue`, one row per
+standard field that actually changed value on a full-field edit (`field_name` one of `summary`,
+`description`, `priority`, `assignee`, `story_points`, `due_date`) -- a field left unchanged writes no
+row. The target replaces these display-oriented strings with fully typed structured history.
 
 ### `issue_links`
 
