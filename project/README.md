@@ -330,9 +330,18 @@ a manually-added header); signing out clears both cookies and returns to the log
 reload afterward stays on the login screen rather than silently re-entering the app; a wrong password
 shows an inline error without ever revealing the app shell. Full detail is in `docs/VERIFICATION.md`.
 
-Project-management UI (create/archive/recycle-bin), hierarchy/resolution pickers, edit/link/clone/
-watch-vote/recycle-bin/bulk-action/reorder/move UI still do not exist in `web/` — only login does. Those
-routes are all live-verified via `curl` (above) but still not reachable from the demo UI.
+A follow-up batch then added an Epic/parent picker to the create-issue modal and an inline resolution
+picker to the drawer's status control — previously completing an issue via the UI always failed with 422
+since `resolution` was never sent, and there was no way to set `parentIssueKey` at all. Both were
+browser-verified the same way: creating an Epic then a Story with that Epic as parent (drawer links to
+it correctly); a parentless Sub-task showing the server's exact validation message inline; completing an
+issue showing/applying the resolution picker; reopening clearing the resolution and hiding the picker for
+that direction. A race condition in the picker's own async refresh (caught by this same browser test) was
+fixed with a request-id guard. Full detail is in `docs/VERIFICATION.md`.
+
+Project-management UI (create/archive/recycle-bin), full edit, links, clone, watch/vote, the issue
+recycle bin, bulk actions, and reorder/move UI still do not exist in `web/`. Those routes are all
+live-verified via `curl` (above) but still not reachable from the demo UI.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

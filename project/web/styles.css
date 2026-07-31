@@ -192,6 +192,9 @@ button { cursor: pointer; }
 .meta-row span, .meta-row strong { display: block; }
 .meta-row span { margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .status-select { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: white; }
+#drawer-resolution { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: white; margin-top: 6px; }
+.resolution-actions { display: flex; gap: 8px; margin-top: 8px; }
+.resolution-actions .primary-button, .resolution-actions .secondary-button { padding: 7px 12px; font-size: 12px; }
 .comment-list { display: grid; gap: 14px; }
 .comment { display: grid; grid-template-columns: 32px 1fr; gap: 10px; }
 .comment-body { padding: 10px 12px; border-radius: 8px; background: var(--surface-soft); }

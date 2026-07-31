@@ -128,34 +128,26 @@ anything from the removed/deferred list without an explicit new product conversa
   `README.md`'s "Server verification" section. This closes the one standing cross-phase verification gap
   that every prior batch's report had to caveat.
 
-## Login page: done. Immediate next step: Phase 2/3 UI
+## Login, hierarchy picker, and resolution picker: done. Immediate next step: everything else in `web/`
 
-`web/index.html`/`app.js`/`styles.css` now have a minimal login screen, this batch: on load the app
-silently probes `GET /api/auth/me`; a 401 shows a sign-in form (`POST /api/auth/login`) instead of the app
-shell; a successful login shows the app shell with the signed-in user's name/email/initials in the
-sidebar footer and a sign-out button (`POST /api/auth/logout`). `app.js`'s `api()` helper now reads the
-`th_csrf` cookie and attaches `X-CSRF-Token` automatically on every non-`GET` request, and treats any
-`401` from any API call as "session expired" and returns to the login screen. Verified end-to-end with a
-real headless browser (Playwright/Chromium), not just `curl`: fresh-load login gate, successful login
-showing every existing view, a CSRF-protected issue create and status change both succeeding through the
-browser's own `fetch`, logout clearing cookies and staying on the login screen across a reload, and a
-wrong password producing an inline error without ever revealing the app shell. Full detail in
-`docs/VERIFICATION.md`.
+`web/index.html`/`app.js`/`styles.css` now have: a minimal login screen (probes `GET /api/auth/me` on
+load, shows a sign-in form on 401, `app.js`'s `api()` attaches `X-CSRF-Token` from the `th_csrf` cookie on
+every non-`GET` request and treats any `401` as session-expired); an Epic/parent picker on issue create
+(narrows candidates and label text to the fixed hierarchy, D5/D29/D64-D66, server remains the actual
+source of truth); and an inline resolution picker in the drawer's status control (previously completing
+an issue via the UI always 422'd since `resolution` was never sent). All three verified end-to-end with a
+real headless browser (Playwright/Chromium), not just `curl` -- full detail in `docs/VERIFICATION.md`.
 
-What is still missing from `web/` -- only login exists; nothing else does yet:
+What is still missing from `web/`:
 
 1. Project-management UI: create/archive/recycle-bin (`POST /api/projects`, `PATCH .../archived`,
    `DELETE`/`POST .../restore`/`DELETE .../permanent`, `GET /api/projects/deleted`).
-2. Issue hierarchy UI: a parent/Epic picker on create (the create modal already has `issueTypeKey`, but no
-   `parentIssueKey` field yet), and a resolution picker on the status-change control when moving to a
-   Done-category status (today `PATCH .../status` is called with `resolution` always omitted, so
-   completing an issue via the UI will 422).
-3. Full edit (`PATCH /api/issues/{key}`), links (`GET`/`POST .../links`, `DELETE /api/issue-links/{id}`),
+2. Full edit (`PATCH /api/issues/{key}`), links (`GET`/`POST .../links`, `DELETE /api/issue-links/{id}`),
    clone (`POST .../clone`), watch/vote (`POST`/`DELETE .../watch`, `.../vote`, `GET .../watchers`,
    `.../voters`), the issue recycle bin (`DELETE`/`POST .../restore`/`DELETE .../permanent`,
-   `GET /api/issues/deleted`), bulk actions (`POST /api/issues/bulk/*`), and the new reorder/move actions
+   `GET /api/issues/deleted`), bulk actions (`POST /api/issues/bulk/*`), and the reorder/move actions
    (`POST .../reorder`, `POST .../move`) all only exist as API routes today.
-4. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
+3. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
    Phase 4/5 if that is prioritized instead; use judgment on ordering, but note it either way as the
    remaining "written but not reachable from the demo UI" gap.
 

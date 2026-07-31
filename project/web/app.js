@@ -8,6 +8,27 @@ const STATUSES = [
   { key: 'done', name: 'Done', category: 'done' }
 ];
 
+const RESOLUTIONS = [
+  { key: 'fixed', name: 'Fixed' },
+  { key: 'done', name: 'Done' },
+  { key: 'wont-fix', name: "Won't fix" },
+  { key: 'duplicate', name: 'Duplicate' },
+  { key: 'cannot-reproduce', name: 'Cannot reproduce' }
+];
+
+function resolutionLabel(resolutionKey) {
+  return RESOLUTIONS.find(r => r.key === resolutionKey)?.name || resolutionKey;
+}
+
+// Fixed Epic -> Story/Task/Bug -> Sub-task hierarchy (D5, D29, D64-D66):
+// 1 = Epic (no parent allowed), -1 = Sub-task (parent required, must be a
+// Story/Task/Bug), 0 = Story/Task/Bug (parent optional, must be an Epic).
+function issueTypeHierarchyLevel(issueTypeKey) {
+  if (issueTypeKey === 'epic') return 1;
+  if (issueTypeKey === 'sub-task') return -1;
+  return 0;
+}
+
 const state = {
   view: 'dashboard',
   projects: [],
@@ -342,6 +363,22 @@ function bindIssueLinks() {
   });
 }
 
+// Resolution is required exactly when moving to a Done-category status
+// (D68-D70) -- omitted (null) for every other transition, which leaves it
+// untouched, or lets the server clear it automatically when reopening.
+async function applyStatusChange(issueKey, statusKey, resolution, expectedVersion) {
+  try {
+    const payload = { statusKey, expectedVersion };
+    if (resolution) payload.resolution = resolution;
+    await api(`/api/issues/${encodeURIComponent(issueKey)}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
+    showToast(`${issueKey} status updated`);
+    await renderCurrentView();
+    await openIssue(issueKey);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function openIssue(issueKey) {
   issueDrawer.classList.remove('hidden');
   drawerBackdrop.classList.remove('hidden');
@@ -369,9 +406,19 @@ async function openIssue(issueKey) {
           </div>
           <aside class="meta-list">
             <div class="meta-row"><span>Status</span><select id="drawer-status" class="status-select">${STATUSES.map(status => `<option value="${status.key}" ${status.key === issue.status.key ? 'selected' : ''}>${status.name}</option>`).join('')}</select></div>
+            <div class="meta-row" id="drawer-resolution-row" ${STATUSES.find(status => status.key === issue.status.key)?.category === 'done' ? '' : 'hidden'}>
+              <span>Resolution</span>
+              ${issue.resolution ? `<strong>${escapeHtml(resolutionLabel(issue.resolution))}</strong>` : `
+              <select id="drawer-resolution">${RESOLUTIONS.map(resolution => `<option value="${resolution.key}">${resolution.name}</option>`).join('')}</select>
+              <div class="resolution-actions">
+                <button type="button" class="secondary-button" id="resolution-cancel">Cancel</button>
+                <button type="button" class="primary-button" id="resolution-confirm">Confirm</button>
+              </div>`}
+            </div>
             <div class="meta-row"><span>Priority</span>${priorityChip(issue)}</div>
             <div class="meta-row"><span>Assignee</span>${assigneeMarkup(issue)}</div>
             <div class="meta-row"><span>Reporter</span>${escapeHtml(issue.reporter.displayName)}</div>
+            ${issue.parentIssueKey ? `<div class="meta-row"><span>Parent</span><strong class="issue-key" id="drawer-parent-link" style="cursor:pointer">${escapeHtml(issue.parentIssueKey)}</strong></div>` : ''}
             <div class="meta-row"><span>Story points</span><strong>${issue.storyPoints ?? '—'}</strong></div>
             <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(issue.dueDate))}</strong></div>
             <div class="meta-row"><span>Labels</span><div>${labelsMarkup(issue.labels) || '—'}</div></div>
@@ -381,13 +428,26 @@ async function openIssue(issueKey) {
         </div>
       </div>`;
     document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
+    if (issue.parentIssueKey) {
+      document.querySelector('#drawer-parent-link').addEventListener('click', () => openIssue(issue.parentIssueKey));
+    }
     document.querySelector('#drawer-status').addEventListener('change', async event => {
-      try {
-        await api(`/api/issues/${encodeURIComponent(issue.key)}/status`, { method: 'PATCH', body: JSON.stringify({ statusKey: event.target.value, expectedVersion: issue.version }) });
-        showToast(`${issue.key} moved to ${event.target.selectedOptions[0].text}`);
-        await renderCurrentView();
-        await openIssue(issue.key);
-      } catch (error) { showToast(error.message); }
+      const newStatusKey = event.target.value;
+      const newStatus = STATUSES.find(status => status.key === newStatusKey);
+      if (newStatus?.category === 'done' && !issue.resolution) {
+        document.querySelector('#drawer-resolution-row').hidden = false;
+        return;
+      }
+      await applyStatusChange(issue.key, newStatusKey, null, issue.version);
+    });
+    document.querySelector('#resolution-confirm')?.addEventListener('click', async () => {
+      const resolution = document.querySelector('#drawer-resolution').value;
+      const statusKey = document.querySelector('#drawer-status').value;
+      await applyStatusChange(issue.key, statusKey, resolution, issue.version);
+    });
+    document.querySelector('#resolution-cancel')?.addEventListener('click', () => {
+      document.querySelector('#drawer-status').value = issue.status.key;
+      document.querySelector('#drawer-resolution-row').hidden = true;
     });
     document.querySelector('#comment-form').addEventListener('submit', async event => {
       event.preventDefault();
@@ -411,10 +471,49 @@ function closeDrawer() {
   state.currentIssue = null;
 }
 
+// Populates the "Epic"/"Parent" picker to match the fixed hierarchy rules
+// (D5, D29, D64-D66): an Epic may not have a parent at all; a Sub-task's
+// parent must be a Story/Task/Bug in the same project; a Story/Task/Bug's
+// optional parent must be an Epic in the same project. The server is the
+// actual source of truth for this (see TicketService::requireValidHierarchy)
+// -- this only narrows the picker's options so a valid choice is the
+// common case, not a client-side substitute for that validation.
+let createParentRequestId = 0;
+async function refreshCreateParentOptions() {
+  const requestId = ++createParentRequestId;
+  const projectKey = document.querySelector('#create-project').value;
+  const issueTypeKey = document.querySelector('#create-issue-type').value;
+  const label = document.querySelector('#create-parent-label');
+  const select = document.querySelector('#create-parent');
+  const level = issueTypeHierarchyLevel(issueTypeKey);
+
+  if (level === 1) {
+    label.classList.add('hidden');
+    select.value = '';
+    return;
+  }
+  label.classList.remove('hidden');
+  document.querySelector('#create-parent-label-text').textContent = level === -1 ? 'Parent (required)' : 'Epic (optional)';
+  select.innerHTML = '<option value="">None</option>';
+  if (!projectKey) return;
+
+  const wantedLevel = level === -1 ? 0 : 1;
+  try {
+    const result = await api(`/api/issues?project=${encodeURIComponent(projectKey)}`);
+    if (requestId !== createParentRequestId) return; // a newer call already superseded this one
+    const candidates = result.items.filter(candidate => issueTypeHierarchyLevel(candidate.type.key) === wantedLevel);
+    select.innerHTML += candidates.map(candidate => `<option value="${escapeHtml(candidate.key)}">${escapeHtml(candidate.key)} — ${escapeHtml(candidate.summary)}</option>`).join('');
+  } catch {
+    // Leave just the "None" option if the project's issues can't be loaded;
+    // the create submit itself will surface a clearer error if needed.
+  }
+}
+
 function openCreateModal() {
   document.querySelector('#create-error').classList.add('hidden');
   if (state.selectedProject) document.querySelector('#create-project').value = state.selectedProject;
   createModal.classList.remove('hidden');
+  refreshCreateParentOptions().catch(() => {});
   createModal.querySelector('input[name="summary"]').focus();
 }
 
@@ -432,6 +531,8 @@ function debounce(fn, delay) {
 
 document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', () => navigate(item.dataset.view)));
 document.querySelector('#create-button').addEventListener('click', openCreateModal);
+document.querySelector('#create-project').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
+document.querySelector('#create-issue-type').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
 document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click', closeCreateModal));
 createModal.addEventListener('click', event => { if (event.target === createModal) closeCreateModal(); });
 drawerBackdrop.addEventListener('click', closeDrawer);
@@ -463,6 +564,7 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
     description: values.description.trim(),
     priorityKey: values.priorityKey,
     assigneeEmail: values.assigneeEmail || null,
+    parentIssueKey: values.parentIssueKey || null,
     storyPoints: values.storyPoints ? Number(values.storyPoints) : null,
     dueDate: values.dueDate || null,
     labels: values.labels.split(',').map(value => value.trim()).filter(Boolean)

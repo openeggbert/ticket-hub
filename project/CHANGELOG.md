@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — Fixed two broken UI paths: completing an issue, and setting an Epic/parent on create
+
+- **Resolution picker** (`web/app.js`, drawer): completing an issue via the UI previously called
+  `PATCH .../status` without `resolution`, which the server correctly rejects with HTTP 422 (D68) --
+  there was no way to actually complete an issue from the demo UI at all. Selecting a Done-category status
+  now reveals an inline resolution picker (`fixed`/`done`/`wont-fix`/`duplicate`/`cannot-reproduce`) with
+  Confirm/Cancel, and only calls the API once a resolution is chosen. The drawer now also shows the
+  issue's current resolution (once set) and its parent issue (once linked, clickable to navigate to it).
+- **Epic/parent picker on create** (`web/index.html`/`app.js`): the create-issue modal previously had no
+  way to set `parentIssueKey` at all, and was missing "Sub-task" from the issue-type list entirely. Added
+  both. The picker narrows its candidate list and label text to match the fixed hierarchy (D5, D29,
+  D64-D66): hidden entirely for Epic (no parent allowed), "Parent (required)" filtered to Story/Task/Bug
+  issues in the selected project for Sub-task, "Epic (optional)" filtered to Epic issues in the selected
+  project otherwise. The server remains the actual source of truth for the rule; the picker only narrows
+  the common case.
+- Fixed a race condition caught while browser-testing this batch: the project and issue-type `<select>`
+  change handlers both call the same async parent-options refresh, and rapid selection changes could
+  interleave two in-flight requests and duplicate options in the list. Fixed with a monotonically
+  increasing request-id guard that discards a stale response once a newer refresh has started.
+- Verified end-to-end with a headless browser (Playwright/Chromium): creating an Epic, then a Story with
+  that Epic as parent (drawer shows and links to the parent correctly); a Sub-task submitted without a
+  parent shows the server's exact validation message inline; completing a fresh issue reveals the
+  resolution picker, applies the chosen resolution, and displays it; reopening the completed issue clears
+  the resolution and hides the picker for that direction.
+
 ## Unreleased — Minimal login screen for the demo UI
 
 - Added a login screen to `web/index.html`/`app.js`/`styles.css`: silently probes `GET /api/auth/me` on
