@@ -16,7 +16,9 @@ Implemented now:
 
 - projects and transactional project-local issue keys,
 - issue list/detail/create, status changes, labels and comments,
-- a simple demo Kanban UI (not yet identity-aware),
+- **a demo web UI covering every Phase 1-3 write route** (login, hierarchy/resolution pickers, full issue
+  edit/clone/links/watch-vote/delete, project management, both recycle bins, reorder/move/bulk actions —
+  browser-verified with Playwright/Chromium, see "Server verification" below) plus a simple Kanban board,
 - **local accounts: Argon2id password hashing, server-side sessions, minimal login-attempt lockout**
   (`AuthService` — Phase 1 of `docs/REDUCED_SCOPE_ROADMAP.md`),
 - **administrator-only account creation via `ticket-hub-cli create-user`** — there is no
@@ -364,8 +366,16 @@ the drawer's actions row, and a recycle-bin toggle in the Issues view (global-ad
 Restore/Delete-permanently per row). Browser-verified the same way, including a project-role-insufficient
 delete attempt failing with the server's exact 403 message rather than silently succeeding.
 
-Still missing from `web/`: bulk actions and reorder/move UI. Those routes are all live-verified via `curl`
-(above) but still not reachable from the demo UI.
+A sixth and final follow-up batch added manual reordering (an Order column with move-up/move-down buttons
+on the Issues table, shown only with a single project selected, since the reorder anchor must be in the
+same project), moving an issue to another project (a picker in the drawer), and simple bulk actions
+(checkboxes plus a bulk-action bar for status/assign/label/delete). Browser-verified the same way,
+including confirming the new checkboxes and reorder buttons don't also open the issue drawer despite
+living inside the same clickable table row (`event.stopPropagation()`, caught and fixed proactively during
+implementation rather than by a failing test).
+
+With this, `web/` covers every write route added across Phases 1-3 -- there is no remaining gap between
+what the API exposes and what the demo UI can reach.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
