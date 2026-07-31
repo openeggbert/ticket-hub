@@ -77,6 +77,11 @@ public:
     bool unvoteIssue(const std::string& issueKey, const std::string& userId) override;
     std::vector<Domain::UserSummary> listVoters(const std::string& issueKey) override;
 
+    bool softDeleteIssue(const std::string& issueKey, const std::string& actorUserId) override;
+    bool restoreIssue(const std::string& issueKey) override;
+    std::vector<Domain::Issue> listDeletedIssues() override;
+    bool permanentlyDeleteIssue(const std::string& issueKey) override;
+
 private:
     std::string connectionString_;
     std::string migrationsDirectory_;

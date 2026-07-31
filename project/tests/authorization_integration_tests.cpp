@@ -163,6 +163,68 @@ int main() {
         require(tickets.unvoteIssue("WEB-1", sam), "a non-member can remove their own vote");
     }
 
+    // --- Issue recycle bin: project-admin-vs-global-admin split (D22, mirrors D88) ---
+    {
+        CreateIssueRequest binRequest;
+        binRequest.projectKey = "WEB";
+        binRequest.summary = "Recycle bin test issue";
+        const auto issue = tickets.createIssue(binRequest, alex); // alex is WEB admin
+
+        require(throwsForbidden([&] { tickets.deleteIssue(issue.key, sam); }),
+               "a non-member cannot soft-delete an issue");
+        require(tickets.deleteIssue(issue.key, alex), "a project admin can soft-delete an issue");
+
+        require(throwsForbidden([&] { tickets.listDeletedIssues(alex); }),
+               "listing the issue recycle bin is global-administrator-only");
+        {
+            const auto deleted = tickets.listDeletedIssues(demo);
+            const auto match = std::find_if(deleted.begin(), deleted.end(),
+                                             [&](const auto& candidate) { return candidate.key == issue.key; });
+            require(match != deleted.end(), "the global administrator sees the deleted issue in the recycle bin");
+        }
+
+        require(throwsForbidden([&] { tickets.restoreIssue(issue.key, alex); }),
+               "restoring an issue from the recycle bin is global-administrator-only");
+        require(tickets.restoreIssue(issue.key, demo), "the global administrator can restore the issue");
+
+        require(tickets.deleteIssue(issue.key, alex), "re-deleting for the permanent-delete test");
+        require(throwsForbidden([&] { tickets.permanentlyDeleteIssue(issue.key, alex); }),
+               "permanently deleting an issue is global-administrator-only");
+        require(tickets.permanentlyDeleteIssue(issue.key, demo),
+               "the global administrator can permanently delete the issue");
+    }
+
+    // --- Simple bulk actions apply the same authorization/validation per issue (D36) ---
+    {
+        CreateIssueRequest thBulk;
+        thBulk.projectKey = "TH";
+        thBulk.summary = "Bulk 1";
+        const auto bulk1 = tickets.createIssue(thBulk, demo);
+        thBulk.summary = "Bulk 2";
+        const auto bulk2 = tickets.createIssue(thBulk, demo);
+
+        // Sam is a TH member but not a WEB member; TH-9999 does not exist.
+        const std::vector<std::string> mixedKeys = {bulk1.key, bulk2.key, "WEB-1", "TH-9999"};
+        const auto assignResult = tickets.bulkAssign(mixedKeys, std::string("alex@ticket-hub.local"), sam);
+        require(assignResult.succeeded.size() == 2, "bulk assign succeeds for the two accessible TH issues");
+        require(assignResult.failed.size() == 2, "bulk assign reports the inaccessible and unknown issues as failed");
+
+        const auto labelResult = tickets.bulkAddLabel({bulk1.key, bulk2.key}, "bulk-tested", demo);
+        require(labelResult.succeeded.size() == 2, "bulk label succeeds for both issues");
+        {
+            const auto found = tickets.findIssue(bulk1.key, demo);
+            require(found.has_value() && !found->labels.empty() && found->labels.front() == "bulk-tested",
+                   "the bulk-added label is applied");
+        }
+
+        const auto statusResult = tickets.bulkChangeStatus({bulk1.key, bulk2.key}, "in-progress", std::nullopt, demo);
+        require(statusResult.succeeded.size() == 2, "bulk status change succeeds for both issues");
+
+        const auto deleteResult = tickets.bulkDelete({bulk1.key, bulk2.key}, demo);
+        require(deleteResult.succeeded.size() == 2, "bulk delete (recycle) succeeds for both issues");
+        require(!tickets.findIssue(bulk1.key, demo).has_value(), "a bulk-deleted issue is no longer found");
+    }
+
     // --- Anonymous read-access toggle (D59, off by default) ---
     {
         const std::optional<Principal> anonymous = std::nullopt;

@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Phase 3 (partial, continued): issue recycle bin and bulk actions (reduced scope)
+
+- Added `IDatabase::softDeleteIssue`/`restoreIssue`/`listDeletedIssues`/`permanentlyDeleteIssue` in both
+  adapters (D22), mirroring the project recycle bin (Phase 2, D88/D89) exactly: fixed 90-day on-demand
+  retention purged inside `listDeletedIssues`, no background job, key stays reserved via `issue_key`'s
+  own `UNIQUE` constraint while soft-deleted. Matching `TicketService` methods: `deleteIssue` requires
+  project-Admin-or-above (mirrors `deleteProject`); `restoreIssue`/`listDeletedIssues`/
+  `permanentlyDeleteIssue` are global-administrator-only, the same split used for projects.
+- Added simple bulk actions (D36): `Domain::BulkActionResult` and `TicketService::bulkChangeStatus`/
+  `bulkAssign`/`bulkAddLabel`/`bulkDelete`. Each loops over a list of issue keys and calls the
+  corresponding single-issue operation independently per key -- identical authorization/validation/
+  workflow-rule behavior to doing each action one at a time, no cross-issue transaction. A partial
+  failure (unknown key, insufficient role, workflow violation) is reported via the result's
+  `succeeded`/`failed` key lists rather than rolling back keys that already went through. No
+  cross-project move and no type change in bulk, per D36.
+- Added `DELETE /api/issues/{key}`, `GET /api/issues/deleted`, `POST /api/issues/{key}/restore`,
+  `DELETE /api/issues/{key}/permanent`, and `POST /api/issues/bulk/{status,assign,label,delete}` to
+  `Api.cpp` (**not yet compiled** — see "Known verification limitation" in `README.md`).
+- Extended `sqlite_integration_tests` (soft-delete/restore/list-bin/permanent-delete lifecycle,
+  idempotent no-ops, comments cascade-deleting with a permanently-deleted issue) and
+  `authorization_integration_tests` (project-admin-vs-global-admin split for the recycle bin; bulk
+  actions applying the same per-issue authorization, including a mixed batch of accessible/inaccessible/
+  unknown issue keys reporting partial success).
+- Manually verified the issue recycle bin and all four bulk actions (through `TicketService`) against a
+  live local PostgreSQL 16 server.
+
 ## Unreleased — Phase 3 (partial, continued): watchers and voting (reduced scope)
 
 - Added migration `006_collaboration.sql` (both backends): `issue_watchers` and `issue_votes`, identical

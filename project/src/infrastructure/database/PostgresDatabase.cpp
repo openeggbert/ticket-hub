@@ -1265,4 +1265,51 @@ std::vector<Domain::UserSummary> PostgresDatabase::listVoters(const std::string&
     return listMembers(connection.get(), "issue_votes", issueId);
 }
 
+bool PostgresDatabase::softDeleteIssue(const std::string& issueKey, const std::string& actorUserId) {
+    auto connection = connect(connectionString_);
+    const std::string actorId = requireUserId(connection.get(), actorUserId);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE issues SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = $1, updated_at = CURRENT_TIMESTAMP
+WHERE (issue_key = $2 OR id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $2)) AND deleted_at IS NULL
+)SQL",
+                             {actorId, issueKey},
+                             "Soft delete issue");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool PostgresDatabase::restoreIssue(const std::string& issueKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE issues SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE issue_key = $1 AND deleted_at IS NOT NULL
+)SQL",
+                             {issueKey},
+                             "Restore issue");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::vector<Domain::Issue> PostgresDatabase::listDeletedIssues() {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "DELETE FROM issues WHERE deleted_at IS NOT NULL AND deleted_at <= CURRENT_TIMESTAMP - INTERVAL '90 days'",
+        "Purge expired deleted issues");
+
+    const std::string sql = std::string(IssueSelect) + R"SQL(
+WHERE i.deleted_at IS NOT NULL
+ORDER BY i.deleted_at DESC
+)SQL";
+    auto result = exec(connection.get(), sql, "List deleted issues");
+    std::vector<Domain::Issue> issues;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        issues.push_back(readIssue(result.get(), row));
+    }
+    return issues;
+}
+
+bool PostgresDatabase::permanentlyDeleteIssue(const std::string& issueKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "DELETE FROM issues WHERE issue_key = $1 AND deleted_at IS NOT NULL",
+                             {issueKey}, "Permanently delete issue");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
 } // namespace TicketHub::Infrastructure::Database

@@ -61,6 +61,15 @@ anything from the removed/deferred list without an explicit new product conversa
   writes, since watch/vote are self-referential and Jira itself gates them by "browse" access rather
   than a write-capable role; any authenticated user may watch/vote on any issue. Idempotent: watching
   twice (or unwatching a non-watch) is a no-op, reported via the return value rather than an error.
+- **Phase 3, partial continued (issue recycle bin and bulk actions), this batch:** `IDatabase::
+  softDeleteIssue`/`restoreIssue`/`listDeletedIssues`/`permanentlyDeleteIssue` in both adapters (D22),
+  mirroring the project recycle bin exactly (fixed 90-day on-demand retention, no background purge job).
+  `TicketService::deleteIssue` requires project-Admin-or-above; restore/list/permanent-delete are
+  global-administrator-only, the same split as D88. Simple bulk actions (D36): `Domain::
+  BulkActionResult` and `TicketService::bulkChangeStatus`/`bulkAssign`/`bulkAddLabel`/`bulkDelete`, each
+  looping over a list of issue keys and calling the matching single-issue operation independently per
+  key -- no new database code, no cross-issue transaction, a partial failure reported via
+  `succeeded`/`failed` key lists rather than rolled back.
 - Tested: `ctest --output-on-failure` is 7/7 green (`domain`, `migration`, `sqlite-integration`,
   `identity`, `authorization`, `workflow`, `crypto`) on SQLite, in all three build configurations (full,
   SQLite-only, PostgreSQL-only). Every Phase 2/3 core-layer addition was additionally verified manually
@@ -71,14 +80,16 @@ anything from the removed/deferred list without an explicit new product conversa
   routes and every read route resolving an optional `Principal`, Phase 3's `parentIssueKey` on issue
   creation, `resolution` on status changes, `Domain::WorkflowViolation` mapped to HTTP 422, the
   `PATCH /api/issues/{key}` full-edit route, `POST /api/issues/{key}/clone`,
-  `GET`/`POST /api/issues/{key}/links`, `DELETE /api/issue-links/{id}`, and the new
+  `GET`/`POST /api/issues/{key}/links`, `DELETE /api/issue-links/{id}`,
   `POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
-  `POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters` routes. While adding the edit
-  route (an earlier batch), fixed a real bug found by inspection: three existing routes
-  (`POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments`) were missing
-  a `catch (const Domain::Forbidden&)` handler, so a project-role authorization failure would have
-  fallen through to the generic 500 handler instead of 403. **None of `Api.cpp` has been compiled** —
-  Crow is unavailable in this sandbox (network to `github.com` blocked). See "Known verification
+  `POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters`, and the new
+  `DELETE /api/issues/{key}`, `GET /api/issues/deleted`, `POST /api/issues/{key}/restore`,
+  `DELETE /api/issues/{key}/permanent`, and `POST /api/issues/bulk/{status,assign,label,delete}` routes.
+  While adding the edit route (an earlier batch), fixed a real bug found by inspection: three existing
+  routes (`POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments`) were
+  missing a `catch (const Domain::Forbidden&)` handler, so a project-role authorization failure would
+  have fallen through to the generic 500 handler instead of 403. **None of `Api.cpp` has been compiled**
+  — Crow is unavailable in this sandbox (network to `github.com` blocked). See "Known verification
   limitation" below; this is still the actual next thing to close out, now covering three phases' worth
   of route changes.
 
@@ -112,7 +123,11 @@ for the same environment reason, not skipped:
    member of both (expect 200); `POST /api/issues/{key}/watch` and `POST /api/issues/{key}/vote` as a
    non-member of the issue's project (expect 200, not 403 -- confirming the deliberate no-project-role
    exception actually holds through the real HTTP layer) and confirm `GET .../watchers`/`.../voters`
-   reflect it.
+   reflect it; `DELETE /api/issues/{key}` as a project member (expect 403, Admin required) and as a
+   project admin (expect 200); `GET /api/issues/deleted`/`POST .../restore`/`DELETE .../permanent` each
+   as project-admin (expect 403) and global-admin (expect 200); `POST /api/issues/bulk/*` with a mixed
+   batch of accessible/inaccessible/unknown issue keys and confirm the response's `succeeded`/`failed`
+   lists match expectations exactly.
 5. Add a minimal login page (and, ideally, project-management and hierarchy/resolution UI) to `web/`
    (there isn't one yet) so the demo UI can actually authenticate and exercise the newer routes instead
    of hitting 401s/blank forms once the session check is live.
@@ -124,7 +139,10 @@ Phase 3 is only partially done. Still open, in `docs/REDUCED_SCOPE_ROADMAP.md`'s
 
 - Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation --
   `TicketService::editIssue` deliberately does not touch either field yet.
-- Simple bulk actions (D36: multi-select + one action + confirm) and always-allowed project moves (D37).
+- Always-allowed project moves (D37) -- moving an issue to a different project needs a new key/number
+  (via `issue_key_aliases`, which exists as a schema foundation but is not yet written to by any code
+  path) and a decision on what happens to a moved issue's parent/Epic link or sub-tasks, since D64-D66
+  require a parent and its children to share a project.
 - The integer rank/renumber migration (D31), which needs a **new** migration (not an edit to
   `003_product_foundation.sql`, which is already applied and immutable) to introduce the real ordering
   column and retire the unused `issues.rank_value` text column that anticipated a different (LexoRank)

@@ -28,6 +28,21 @@ void normalizeLabels(std::vector<std::string>& labels) {
     std::sort(labels.begin(), labels.end());
     labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
 }
+
+// Used by the single-field bulk actions (assign, add label): editIssue is a
+// full-replacement PUT, so a single-field bulk change still has to carry
+// every other current field forward unchanged.
+Domain::EditIssueRequest editRequestFrom(const Domain::Issue& issue) {
+    Domain::EditIssueRequest request;
+    request.summary = issue.summary;
+    request.description = issue.description;
+    request.priorityKey = issue.priority.key;
+    request.assigneeEmail = issue.assignee ? std::optional<std::string>(issue.assignee->email) : std::nullopt;
+    request.labels = issue.labels;
+    request.storyPoints = issue.storyPoints;
+    request.dueDate = issue.dueDate;
+    return request;
+}
 } // namespace
 
 TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database)
@@ -298,6 +313,121 @@ std::vector<Domain::UserSummary> TicketService::listVoters(const std::string& is
                                                             const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
     return database_->listVoters(Domain::normalizeIssueKey(issueKey));
+}
+
+bool TicketService::deleteIssue(const std::string& issueKey, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        return false;
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    return database_->softDeleteIssue(normalizedKey, actor.userId);
+}
+
+bool TicketService::restoreIssue(const std::string& issueKey, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->restoreIssue(Domain::normalizeIssueKey(issueKey));
+}
+
+std::vector<Domain::Issue> TicketService::listDeletedIssues(const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->listDeletedIssues();
+}
+
+bool TicketService::permanentlyDeleteIssue(const std::string& issueKey, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->permanentlyDeleteIssue(Domain::normalizeIssueKey(issueKey));
+}
+
+Domain::BulkActionResult TicketService::bulkChangeStatus(const std::vector<std::string>& issueKeys,
+                                                          const std::string& statusKey,
+                                                          const std::optional<std::string> resolution,
+                                                          const Domain::Principal& actor) {
+    Domain::BulkActionResult result;
+    for (const auto& key : issueKeys) {
+        try {
+            if (changeStatus(key, statusKey, actor, resolution)) {
+                result.succeeded.push_back(key);
+            } else {
+                result.failed.push_back(key);
+            }
+        } catch (...) {
+            result.failed.push_back(key);
+        }
+    }
+    return result;
+}
+
+Domain::BulkActionResult TicketService::bulkAssign(const std::vector<std::string>& issueKeys,
+                                                    const std::optional<std::string> assigneeEmail,
+                                                    const Domain::Principal& actor) {
+    Domain::BulkActionResult result;
+    for (const auto& key : issueKeys) {
+        try {
+            const std::string normalizedKey = Domain::normalizeIssueKey(key);
+            const auto issue = database_->findIssueByKey(normalizedKey);
+            if (!issue) {
+                result.failed.push_back(key);
+                continue;
+            }
+            auto edit = editRequestFrom(*issue);
+            edit.assigneeEmail = assigneeEmail;
+            if (editIssue(normalizedKey, edit, actor).has_value()) {
+                result.succeeded.push_back(key);
+            } else {
+                result.failed.push_back(key);
+            }
+        } catch (...) {
+            result.failed.push_back(key);
+        }
+    }
+    return result;
+}
+
+Domain::BulkActionResult TicketService::bulkAddLabel(const std::vector<std::string>& issueKeys,
+                                                      const std::string& label,
+                                                      const Domain::Principal& actor) {
+    Domain::BulkActionResult result;
+    const std::string normalizedLabel = Domain::normalizeLabel(label);
+    for (const auto& key : issueKeys) {
+        try {
+            const std::string normalizedKey = Domain::normalizeIssueKey(key);
+            const auto issue = database_->findIssueByKey(normalizedKey);
+            if (!issue) {
+                result.failed.push_back(key);
+                continue;
+            }
+            auto edit = editRequestFrom(*issue);
+            if (std::find(edit.labels.begin(), edit.labels.end(), normalizedLabel) == edit.labels.end()) {
+                edit.labels.push_back(normalizedLabel);
+            }
+            if (editIssue(normalizedKey, edit, actor).has_value()) {
+                result.succeeded.push_back(key);
+            } else {
+                result.failed.push_back(key);
+            }
+        } catch (...) {
+            result.failed.push_back(key);
+        }
+    }
+    return result;
+}
+
+Domain::BulkActionResult TicketService::bulkDelete(const std::vector<std::string>& issueKeys, const Domain::Principal& actor) {
+    Domain::BulkActionResult result;
+    for (const auto& key : issueKeys) {
+        try {
+            if (deleteIssue(key, actor)) {
+                result.succeeded.push_back(key);
+            } else {
+                result.failed.push_back(key);
+            }
+        } catch (...) {
+            result.failed.push_back(key);
+        }
+    }
+    return result;
 }
 
 Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Principal>& actor) {

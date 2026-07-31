@@ -46,6 +46,11 @@ Implemented now:
 - **self-service watching and voting** (D20/D79): any authenticated user may watch or vote on any issue
   — the one write with no project-role requirement — idempotent on repeat, with a visible watcher/voter
   list,
+- **issue recycle bin** (D22): soft delete (project admin), restore/list/permanent delete (global admin
+  only), fixed 90-day on-demand retention — mirrors the project recycle bin exactly,
+- **simple bulk actions** (D36): status/assignee/label/recycle applied to a list of issue keys, each
+  through the same single-issue operation and authorization as doing it one at a time; a partial failure
+  is reported, not rolled back,
 - every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
@@ -220,6 +225,19 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `POST`/`DELETE` | `/api/issues/{key}/watch` | session + CSRF | watch/unwatch (no project role required) |
 | `GET` | `/api/issues/{key}/voters` | session, or anon if enabled | current voters |
 | `POST`/`DELETE` | `/api/issues/{key}/vote` | session + CSRF | vote/unvote (no project role required) |
+| `DELETE` | `/api/issues/{key}` | session + CSRF, project admin | move issue to recycle bin |
+| `GET` | `/api/issues/deleted` | session, global admin | list issue recycle bin |
+| `POST` | `/api/issues/{key}/restore` | session + CSRF, global admin | restore issue from recycle bin |
+| `DELETE` | `/api/issues/{key}/permanent` | session + CSRF, global admin | permanently delete issue |
+| `POST` | `/api/issues/bulk/status` | session + CSRF, project member per issue | `{issueKeys[], statusKey, resolution?}` |
+| `POST` | `/api/issues/bulk/assign` | session + CSRF, project member per issue | `{issueKeys[], assigneeEmail?}` |
+| `POST` | `/api/issues/bulk/label` | session + CSRF, project member per issue | `{issueKeys[], label}` |
+| `POST` | `/api/issues/bulk/delete` | session + CSRF, project admin per issue | `{issueKeys[]}` |
+
+Every `POST /api/issues/bulk/*` route returns `{succeeded: [...], failed: [...]}` — issue keys, not a
+single status code — since each key is authorized and processed independently and a partial failure
+(unknown key, insufficient role for that particular issue, a workflow-rule violation) does not roll back
+the keys that already succeeded.
 
 `PATCH /api/issues/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
 priorityKey, assigneeEmail?, storyPoints?, dueDate?, labels?, expectedVersion?}`. Every editable field
@@ -267,18 +285,22 @@ What **was** compiled and tested in this environment, with all warnings enabled
 - `ticket-hub-core` (domain, application, infrastructure/database — including the identity/session code,
   fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
   hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, simple cloning,
-  and self-service watching/voting, in both database adapters),
+  self-service watching/voting, the issue recycle bin, and simple bulk actions, in both database
+  adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the
   stale-version conflict, one `issue_history` row per changed field; issue links: create, list from both
   ends, duplicate/self-link rejection, find-by-id, delete; watch/vote: idempotency, listing,
-  unknown-issue rejection), `identity_integration_tests` (create-user, login success/failure,
-  generic-error anti-enumeration check, minimal lockout, session validate/expire/logout),
-  `authorization_integration_tests` (project-role gating on issue writes/edits/cloning/links,
-  not-found semantics under authorization, the anonymous-read-access toggle, the full project lifecycle:
-  create/archive/soft-delete/restore/permanently-delete against both project-admin and
-  global-administrator paths, and confirming watch/vote require no project role unlike everything else),
+  unknown-issue rejection; issue recycle bin: soft-delete/restore/list/permanent-delete lifecycle,
+  idempotent no-ops, comment cascade on permanent delete), `identity_integration_tests` (create-user,
+  login success/failure, generic-error anti-enumeration check, minimal lockout, session
+  validate/expire/logout), `authorization_integration_tests` (project-role gating on issue
+  writes/edits/cloning/links, not-found semantics under authorization, the anonymous-read-access toggle,
+  the full project lifecycle: create/archive/soft-delete/restore/permanently-delete against both
+  project-admin and global-administrator paths, confirming watch/vote require no project role unlike
+  everything else, the issue recycle bin's project-admin-vs-global-admin split, and bulk actions applying
+  the same per-issue authorization on a mixed batch of accessible/inaccessible/unknown keys),
   `workflow_integration_tests` (every Epic/Sub-task hierarchy rejection case, resolution
   required/rejected-if-unknown on completion, resolution cleared on reopen, the sub-task-completion gate,
   reopening leaving a sub-task's status untouched, clone field-copy correctness, the
@@ -287,11 +309,12 @@ What **was** compiled and tested in this environment, with all warnings enabled
   were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite) in
   Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code
   (`createProject`, `setProjectArchived`, `softDeleteProject`, `listDeletedProjects`, `restoreProject`,
-  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it four times, for
+  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it five times, for
   `createIssue`/`changeIssueStatus` (hierarchy, resolution, sub-task gate), `editIssue` (every field,
   label replacement, assignee clearing, stale-version conflict), issue links/cloning (create/list/
   duplicate-and-self-link rejection/find/delete, plus `cloneIssue` including the sub-task special case),
-  and watch/vote (idempotency, listing, unwatch/unvote, unknown-issue rejection) — all passing.
+  watch/vote (idempotency, listing, unwatch/unvote, unknown-issue rejection), and the issue recycle bin
+  plus all four bulk actions (through `TicketService`) — all passing.
 
 What was **not** compiled or tested: `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the
 `ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, the Phase 2 project-CRUD and
@@ -299,10 +322,12 @@ anonymous-read-toggle routes, the Phase 3 `parentIssueKey`/`resolution` request 
 `PATCH /api/issues/{key}` full-edit route, the HTTP 422 mapping for `Domain::WorkflowViolation`, and the
 new `POST /api/issues/{key}/clone`, `GET`/`POST /api/issues/{key}/links`,
 `POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
-`POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters`, and
-`DELETE /api/issue-links/{id}` routes, follow the exact patterns already used by the surrounding
-(previously-verified) route handlers, but none of it has been built or exercised against a real HTTP
-client. (While adding the edit route, three existing routes -- `POST /api/issues`,
+`POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters`,
+`DELETE /api/issue-links/{id}`, `DELETE /api/issues/{key}`, `GET /api/issues/deleted`,
+`POST /api/issues/{key}/restore`, `DELETE /api/issues/{key}/permanent`, and
+`POST /api/issues/bulk/{status,assign,label,delete}` routes, follow the exact patterns already used by
+the surrounding (previously-verified) route handlers, but none of it has been built or exercised against
+a real HTTP client. (While adding the edit route, three existing routes -- `POST /api/issues`,
 `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments` -- were found to be missing a
 `catch (const Domain::Forbidden&)` handler,
 which would have surfaced a project-role authorization failure as HTTP 500 instead of 403; fixed

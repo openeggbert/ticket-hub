@@ -1315,4 +1315,55 @@ std::vector<Domain::UserSummary> SqliteDatabase::listVoters(const std::string& i
     return listMembers(database_, "issue_votes", issueId);
 }
 
+bool SqliteDatabase::softDeleteIssue(const std::string& issueKey, const std::string& actorUserId) {
+    std::scoped_lock lock(mutex_);
+    const std::string actorId = requireUserId(database_, actorUserId);
+    Statement statement(database_, R"SQL(
+UPDATE issues SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE (issue_key = ?2 OR id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?2)) AND deleted_at IS NULL
+)SQL");
+    statement.bind(1, actorId);
+    statement.bind(2, issueKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+bool SqliteDatabase::restoreIssue(const std::string& issueKey) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE issues SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE issue_key = ? AND deleted_at IS NOT NULL
+)SQL");
+    statement.bind(1, issueKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+std::vector<Domain::Issue> SqliteDatabase::listDeletedIssues() {
+    std::scoped_lock lock(mutex_);
+    // Fixed 90-day retention, checked on demand -- there is no background
+    // job to purge proactively (D89-analog for issues, D51).
+    executeScript("DELETE FROM issues WHERE deleted_at IS NOT NULL AND deleted_at <= datetime('now', '-90 days');");
+
+    const std::string sql = std::string(IssueSelect) + R"SQL(
+WHERE i.deleted_at IS NOT NULL
+GROUP BY i.id
+ORDER BY i.deleted_at DESC
+)SQL";
+    Statement statement(database_, sql);
+    std::vector<Domain::Issue> issues;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        issues.push_back(readIssue(statement.get()));
+    }
+    return issues;
+}
+
+bool SqliteDatabase::permanentlyDeleteIssue(const std::string& issueKey) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "DELETE FROM issues WHERE issue_key = ? AND deleted_at IS NOT NULL");
+    statement.bind(1, issueKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
 } // namespace TicketHub::Infrastructure::Database

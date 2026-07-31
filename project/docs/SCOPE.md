@@ -38,8 +38,11 @@ remain as the long-term aspirational baseline only — do not build against them
   labels, one `issue_history` row per changed field; the fixed issue-link catalog (D17) --
   `blocks`/`relates_to`/`duplicates`/`clones`, visible from both ends, requiring project-Member-or-above
   on both linked issues' projects; simple field-copy cloning (D60) with an automatic `clones` link;
-  self-service watching (D20) and voting (D79), the one issue write with no project-role check. See
-  "Not yet built" below for the rest of Phase 3.
+  self-service watching (D20) and voting (D79), the one issue write with no project-role check; the
+  issue recycle bin (D22, mirrors the project one) -- soft delete by project admin, restore/list/
+  permanent-delete by global admin only; simple bulk actions (D36) -- status/assignee/label/recycle
+  applied to a list of issue keys, each through the same single-issue operation, reporting partial
+  success rather than rolling back. See "Not yet built" below for the rest of Phase 3.
 - Domain, migration, crypto, identity, SQLite integration, authorization, and workflow tests (7/7
   passing; see `docs/VERIFICATION.md`).
 
@@ -47,12 +50,13 @@ remain as the long-term aspirational baseline only — do not build against them
 
 - The session-cookie/CSRF wiring and the Phase 2/3 route additions in `src/web/Api.cpp` have not been
   compiled or smoke-tested (Crow is unavailable in this sandbox); there is also no login page,
-  project-management UI, or hierarchy/resolution/edit/link/clone/watch/vote UI in `web/` yet.
+  project-management UI, or hierarchy/resolution/edit/link/clone/watch/vote/recycle-bin/bulk-action UI
+  in `web/` yet.
 - Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
-  `issueTypeKey`/`parentIssueKey`), simple bulk actions (D36), always-allowed project moves (D37), and
-  the integer rank/renumber migration (D31) that replaces the unused `issues.rank_value` text column.
+  `issueTypeKey`/`parentIssueKey`), always-allowed project moves (D37), and the integer rank/renumber
+  migration (D31) that replaces the unused `issues.rank_value` text column.
 - Comments/mentions/reactions, attachments, and the Kanban board are not implemented (Phase 4-5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).

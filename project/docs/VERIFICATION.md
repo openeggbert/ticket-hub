@@ -1,5 +1,61 @@
 # Verification record
 
+## 2026-07-31 — Phase 3, partial continued (issue recycle bin and bulk actions, reduced scope)
+
+Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
+libpq 16.14, and a live local PostgreSQL 16.14 server (the server needed restarting first, as in every
+prior batch this session; freshly created scratch database/role, dropped afterward).
+
+### Core configuration
+
+```bash
+cmake -S . -B build -DTICKETHUB_BUILD_SERVER=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
+```
+
+All warnings enabled (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`); zero warnings, including through
+the four new `IDatabase` methods (`softDeleteIssue`/`restoreIssue`/`listDeletedIssues`/
+`permanentlyDeleteIssue`) forcing a rebuild through both adapters and `TicketService`. Bulk actions added
+no new `IDatabase` methods at all -- they compose the existing single-issue operations.
+
+### Passing tests (7/7 — same binaries, extended coverage)
+
+1. `ticket-hub-domain-tests`, `ticket-hub-migration-tests`, `ticket-hub-identity-tests`,
+   `ticket-hub-workflow-tests`, `ticket-hub-crypto-tests` — unchanged, all still passing.
+2. `ticket-hub-sqlite-integration-tests` — extended: soft-deletes the previously-created issue, asserts
+   it disappears from ordinary lookup, asserts soft-deleting it again is a no-op, asserts it appears in
+   `listDeletedIssues`, asserts it can be restored and found again, re-deletes it, permanently deletes
+   it, asserts a repeat permanent delete returns `false`, and asserts its comments are gone from the
+   `comments` table afterward (direct `COUNT(*)` query, confirming the `ON DELETE CASCADE` foreign key
+   actually fires, not just that the issue itself can no longer be looked up).
+3. `ticket-hub-authorization-tests` — extended: a non-member cannot soft-delete an issue; a project admin
+   (not global admin) can; listing/restoring/permanently-deleting are rejected for the project admin and
+   permitted for the global administrator, mirroring the project recycle bin's D88 split exactly. Bulk
+   actions: `bulkAssign` on a mixed batch of two accessible TH issues, one inaccessible WEB issue, and one
+   unknown key reports 2 succeeded / 2 failed; `bulkAddLabel` and `bulkChangeStatus` succeed for an
+   accessible batch; `bulkDelete` soft-deletes a batch and the deleted issues are confirmed gone from
+   ordinary lookup afterward.
+
+### Additional verification beyond the automated suite
+
+- **Live PostgreSQL 16 server**: ran `ticket-hub-cli migrate`/`seed-demo`, then compiled and ran a
+  standalone program (`pg_recycle_bulk_smoke.cpp`, not committed) exercising `PostgresDatabase::
+  softDeleteIssue`/`restoreIssue`/`listDeletedIssues`/`permanentlyDeleteIssue` directly, then wrapping
+  the same `PostgresDatabase` in a `TicketService` to exercise `bulkAssign` (including the unknown-key
+  partial-failure case), `bulkAddLabel`, `bulkChangeStatus`, and `bulkDelete`. All 15 assertions passed.
+  The scratch database and role were dropped after verification.
+- Both SQLite and PostgreSQL adapters, `ticket-hub-core`, `ticket-hub-cli`, and all seven test binaries
+  compile and link cleanly, including in the SQLite-only and PostgreSQL-only build configurations.
+
+### Environment limitations (unchanged)
+
+`src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) still
+could not be compiled -- outbound access to `github.com` remains blocked. The new
+`DELETE /api/issues/{key}`, `GET /api/issues/deleted`, `POST /api/issues/{key}/restore`,
+`DELETE /api/issues/{key}/permanent`, and `POST /api/issues/bulk/{status,assign,label,delete}` routes
+follow the same patterns as the already-unverified Phase 1-3 routes and carry the same caveat.
+
 ## 2026-07-31 — Phase 3, partial continued (watchers and voting, reduced scope)
 
 Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,

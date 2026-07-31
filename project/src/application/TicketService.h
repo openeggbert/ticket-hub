@@ -105,6 +105,34 @@ public:
     std::vector<Domain::UserSummary> listVoters(const std::string& issueKey,
                                                  const std::optional<Domain::Principal>& actor);
 
+    // --- Issue recycle bin (Phase 3, D22) ---
+    // Mirrors the project recycle bin (Phase 2): soft-delete requires
+    // project-Admin-or-above (like deleteProject); restoring, listing, and
+    // permanently deleting are global-administrator-only, the same
+    // "admin restore or permanent delete" split used for projects (D88).
+    bool deleteIssue(const std::string& issueKey, const Domain::Principal& actor);
+    bool restoreIssue(const std::string& issueKey, const Domain::Principal& actor);
+    std::vector<Domain::Issue> listDeletedIssues(const Domain::Principal& actor);
+    bool permanentlyDeleteIssue(const std::string& issueKey, const Domain::Principal& actor);
+
+    // --- Simple bulk actions (Phase 3, D36) ---
+    // Each issue key is processed independently through the corresponding
+    // single-issue operation above -- same authorization, same validation,
+    // same workflow rules -- so a bulk call is exactly as safe as doing each
+    // action one at a time. No cross-project move and no type change in
+    // bulk (D36 explicitly excludes both).
+    Domain::BulkActionResult bulkChangeStatus(const std::vector<std::string>& issueKeys,
+                                              const std::string& statusKey,
+                                              std::optional<std::string> resolution,
+                                              const Domain::Principal& actor);
+    Domain::BulkActionResult bulkAssign(const std::vector<std::string>& issueKeys,
+                                        std::optional<std::string> assigneeEmail,
+                                        const Domain::Principal& actor);
+    Domain::BulkActionResult bulkAddLabel(const std::vector<std::string>& issueKeys,
+                                          const std::string& label,
+                                          const Domain::Principal& actor);
+    Domain::BulkActionResult bulkDelete(const std::vector<std::string>& issueKeys, const Domain::Principal& actor);
+
     // --- Project lifecycle (Phase 2, D3/D87/D88/D89) ---
     // Creation requires global administrator: there is no project to hold a
     // project-admin membership row over until it exists, matching the
