@@ -51,7 +51,11 @@ function initialState() {
     search: '',
     status: '',
     currentIssue: null,
-    principal: null
+    principal: null,
+    // Cached user directory (D80) -- powers @mention autocomplete. Fetched
+    // once per session in loadBaseData(); the demo app is small enough that
+    // per-comment or per-keystroke fetching would be unnecessary overhead.
+    users: []
   };
 }
 
@@ -247,11 +251,131 @@ function pageHeader(title, subtitle, eyebrow = 'Ticket Hub') {
 }
 
 async function loadBaseData() {
-  const [health, projects] = await Promise.all([api('/api/health'), api('/api/projects')]);
+  const [health, projects, users] = await Promise.all([api('/api/health'), api('/api/projects'), api('/api/users')]);
   state.projects = projects.items;
   state.selectedProject ||= state.projects[0]?.key || null;
+  state.users = users.items;
   document.querySelector('#backend-pill').textContent = health.database;
   renderProjectSelectors();
+  await refreshNotificationBadge();
+}
+
+// --- Fixed in-app notifications (D14) ---
+
+async function refreshNotificationBadge() {
+  const { count } = await api('/api/notifications/unread-count');
+  const badge = document.querySelector('#notification-badge');
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.classList.toggle('hidden', count === 0);
+}
+
+function notificationSummary(notification) {
+  const issueRef = notification.issueKey
+    ? `${notification.issueKey}${notification.issueSummary ? ` — ${notification.issueSummary}` : ''}`
+    : 'an issue';
+  if (notification.type === 'assigned') return `You were assigned ${issueRef}`;
+  if (notification.type === 'mentioned') return `You were mentioned on ${issueRef}`;
+  if (notification.type === 'watched_comment') return `New comment on ${issueRef}`;
+  return issueRef;
+}
+
+async function renderNotificationPanel() {
+  const panel = document.querySelector('#notification-panel');
+  panel.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  const { items } = await api('/api/notifications');
+  panel.innerHTML = `
+    <div class="notification-panel-header">
+      <strong>Notifications</strong>
+      <button type="button" class="ghost-button" id="notification-mark-all-read">Mark all read</button>
+    </div>
+    ${items.length
+      ? items.map(notification => `
+        <button type="button" class="notification-item ${notification.readAt ? '' : 'unread'}" data-notification-id="${escapeHtml(notification.id)}" data-issue-key="${escapeHtml(notification.issueKey || '')}">
+          <span class="notification-type">${escapeHtml(notification.type.replace('_', ' '))}</span>
+          <span class="notification-summary">${escapeHtml(notificationSummary(notification))}</span>
+          <span class="notification-time">${escapeHtml(relativeDate(notification.createdAt))}</span>
+        </button>`).join('')
+      : '<div class="empty-state">No notifications yet.</div>'}`;
+
+  panel.querySelector('#notification-mark-all-read')?.addEventListener('click', async () => {
+    await api('/api/notifications/read-all', { method: 'POST' });
+    await refreshNotificationBadge();
+    await renderNotificationPanel();
+  });
+  panel.querySelectorAll('[data-notification-id]').forEach(item => item.addEventListener('click', async () => {
+    await api(`/api/notifications/${encodeURIComponent(item.dataset.notificationId)}/read`, { method: 'POST' });
+    panel.classList.add('hidden');
+    await refreshNotificationBadge();
+    if (item.dataset.issueKey) {
+      await openIssue(item.dataset.issueKey);
+    }
+  }));
+}
+
+document.querySelector('#notification-bell').addEventListener('click', async event => {
+  event.stopPropagation();
+  const panel = document.querySelector('#notification-panel');
+  const opening = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden');
+  if (opening) {
+    await renderNotificationPanel();
+  }
+});
+document.addEventListener('click', event => {
+  const panel = document.querySelector('#notification-panel');
+  if (!panel.classList.contains('hidden') && !panel.contains(event.target) && event.target.id !== 'notification-bell') {
+    panel.classList.add('hidden');
+  }
+});
+
+// --- @mention autocomplete (D80) ---
+// Deliberately simple: a dropdown anchored below the textarea (not
+// cursor-positioned) listing up to 5 handle matches for the "@partial"
+// token immediately before the caret. Works against the already-cached
+// state.users directory -- no per-keystroke network request.
+function attachMentionAutocomplete(textarea) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'mention-autocomplete-list hidden';
+  textarea.insertAdjacentElement('afterend', wrapper);
+
+  function currentToken() {
+    const caret = textarea.selectionStart;
+    const before = textarea.value.slice(0, caret);
+    const match = before.match(/@([a-zA-Z0-9_]{1,32})$/);
+    return match ? match[1].toLowerCase() : null;
+  }
+
+  function renderMatches() {
+    const token = currentToken();
+    if (token === null) {
+      wrapper.classList.add('hidden');
+      wrapper.innerHTML = '';
+      return;
+    }
+    const matches = state.users
+      .filter(user => user.handle && user.handle.startsWith(token))
+      .slice(0, 5);
+    if (!matches.length) {
+      wrapper.classList.add('hidden');
+      wrapper.innerHTML = '';
+      return;
+    }
+    wrapper.innerHTML = matches.map(user =>
+      `<button type="button" class="mention-autocomplete-item" data-handle="${escapeHtml(user.handle)}">@${escapeHtml(user.handle)} — ${escapeHtml(user.displayName)}</button>`
+    ).join('');
+    wrapper.classList.remove('hidden');
+    wrapper.querySelectorAll('[data-handle]').forEach(button => button.addEventListener('mousedown', event => {
+      event.preventDefault(); // keep textarea focus/selection valid through the click
+      const caret = textarea.selectionStart;
+      const before = textarea.value.slice(0, caret).replace(/@([a-zA-Z0-9_]{1,32})$/, `@${button.dataset.handle} `);
+      textarea.value = before + textarea.value.slice(caret);
+      textarea.focus();
+      wrapper.classList.add('hidden');
+    }));
+  }
+
+  textarea.addEventListener('input', renderMatches);
+  textarea.addEventListener('blur', () => window.setTimeout(() => wrapper.classList.add('hidden'), 150));
 }
 
 function renderProjectSelectors() {
@@ -889,6 +1013,7 @@ async function openIssue(issueKey) {
         document.querySelector('#drawer-status').value = issue.status.key;
         document.querySelector('#drawer-resolution-row').hidden = true;
       });
+      attachMentionAutocomplete(document.querySelector('#comment-form textarea[name=body]'));
       document.querySelector('#comment-form').addEventListener('submit', async event => {
         event.preventDefault();
         const body = new FormData(event.currentTarget).get('body').trim();
@@ -926,6 +1051,7 @@ async function openIssue(issueKey) {
             <button type="button" class="secondary-button" id="comment-edit-cancel">Cancel</button>
             <button type="button" class="primary-button" id="comment-edit-save">Save</button>
           </div>`;
+        attachMentionAutocomplete(article.querySelector('.comment-edit-textarea'));
         article.querySelector('#comment-edit-cancel').addEventListener('click', () => openIssue(issue.key));
         article.querySelector('#comment-edit-save').addEventListener('click', async () => {
           const newBody = article.querySelector('.comment-edit-textarea').value.trim();

@@ -1,5 +1,104 @@
 # Verification record
 
+## 2026-07-31 — @mention handles and the fixed in-app notification set (D56/D80/D14)
+
+Third Phase 4 (Collaboration) slice: users can now have an optional, unique @mention handle; comments are
+scanned for `@handle` mentions at creation; and three fixed notification types (assigned, mentioned,
+comment on a watched issue) are created as a side effect of existing writes and surfaced through a new
+notification bell in the UI.
+
+### What changed
+
+- Migration `010_mentions_and_notifications.sql` (both backends) adds `users.handle` (nullable, unique
+  via a partial index -- SQLite's `ALTER TABLE ADD COLUMN` cannot itself carry a `UNIQUE` constraint) and
+  `notifications` (`id`, `user_id`, `type` CHECK-constrained to `assigned`/`mentioned`/`watched_comment`,
+  `issue_id` nullable `ON DELETE CASCADE`, `read_at` nullable, `created_at`) -- the exact minimal shape
+  documented in `docs/REDUCED_SCOPE_DATA_MODEL.md`.
+- `Domain::User`/`CreateUserRequest` gained `handle`; `Domain::Notification` and the three fixed
+  `NotificationType*` constants; `Domain::normalizeHandle`/`isValidHandle` (lowercase, 1-32
+  letters/digits/underscores, same normalization style as email).
+- `IDatabase` gained `findUserByHandle` and `createNotification`/`listNotifications`/
+  `countUnreadNotifications`/`markNotificationRead`/`markAllNotificationsRead`, implemented in both
+  adapters. `listNotifications`/`createNotification` resolve `issueKey`/`issueSummary` at read time via a
+  `LEFT JOIN` on `issues`, since there is no stored message string.
+- `AuthService::createUser` normalizes and pre-checks handle uniqueness the same way it already does for
+  email (not relying on the database constraint's error message); `ticket-hub-cli create-user` gained
+  `--handle=<handle>`. The three seeded demo users (`002_seed_demo.sql`, both backends) now have handles
+  `demo`/`alex`/`sam`.
+- `TicketService::createIssue`/`editIssue` compare the issue's assignee before and after the write and
+  notify a newly-set or changed assignee -- skipping self-assignment and a no-op re-save with the same
+  assignee. `TicketService::addComment` extracts every distinct `@handle` token from the comment body
+  with a plain regex (once, at creation -- `editComment` does not re-scan, to avoid re-notifying on every
+  save of an already-mentioning comment), resolves each against `findUserByHandle`, and notifies each
+  resolved user (other than the comment's own author) plus every current watcher of the issue (other than
+  the author) -- deduplicated so a recipient who is both mentioned and watching the same comment gets
+  exactly one notification, "mentioned" winning over the generic "watched_comment".
+- `Api.cpp`: new `GET /api/users` (a slim directory listing -- id/displayName/email/handle only --
+  requiring a session even when anonymous read is on, since the user directory is more sensitive than
+  issue data) and `GET /api/notifications[?unread=true]`, `GET /api/notifications/unread-count`,
+  `POST /api/notifications/{id}/read`, `POST /api/notifications/read-all`, all scoped to the caller's own
+  notifications. Also removed a stale "this file could not be compiled" comment at the top of `Api.cpp`
+  left over from before the server target was first built and verified this session -- no longer
+  accurate and actively misleading.
+- `web/`: a notification bell with an unread-count badge in the top bar (`loadBaseData()` fetches the
+  count once per login/init); clicking it opens a panel listing every notification (`renderNotificationPanel`),
+  each clickable to mark it read and open the related issue, plus a "mark all read" button. An @mention
+  autocomplete dropdown (`attachMentionAutocomplete`) is attached to both the add-comment textarea and the
+  edit-comment textarea: typing `@partial` shows up to 5 matching handles from the cached `/api/users`
+  directory (fetched once in `loadBaseData()`, no per-keystroke network request), and clicking a
+  suggestion replaces the partial token with the full `@handle `.
+
+### A design correction caught while writing the authorization test
+
+The first draft of the notification authorization test accumulated state on a single shared issue across
+sub-tests (assign, then reassign, then comment-mention, then watch, then comment-again), asserting
+absolute unread counts at each step. This broke as soon as a later sub-test's comment triggered a
+`watched_comment` notification for a user still watching from an earlier sub-test -- an interaction the
+absolute-count assertions hadn't accounted for. Caught immediately by a failing assertion, not by
+production behavior being wrong. Fixed by giving each notification type (`assigned`, `mentioned`,
+`watched_comment`, and the mentioned-wins-over-watched dedupe) its own dedicated issue and calling
+`markAllNotificationsRead` as an explicit reset between sub-tests, so no sub-test's side effects can leak
+into the next one's assertions.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green, including new assertions in `sqlite_integration_tests`
+   (`findUserByHandle` resolving/rejecting, `createNotification` resolving the issue key, `listNotifications`/
+   `countUnreadNotifications` with the `unreadOnly` filter, `markNotificationRead`/`markAllNotificationsRead`
+   idempotency and per-user scoping), `identity_integration_tests` (handle lowercased on create, a
+   duplicate handle rejected even with different casing, an invalid handle format rejected, the handle
+   remaining optional), and `authorization_integration_tests` (assigned/self-assigned/unchanged-reassign,
+   mentioned/unknown-handle/self-mention, watched-comment/self-watch-self-comment, the
+   mentioned-wins-over-watched dedupe, `listUsers` returning the seeded handles, and per-user scoping of
+   mark-read/mark-all-read).
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: `ticket-hub-cli create-user ... --handle=extra_user` against a local
+   PostgreSQL 16 server, followed by a standalone smoke-test program (not committed) exercising
+   `findUserByHandle` and all five notification methods directly against `PostgresDatabase` -- all passed.
+5. Standalone Playwright/Chromium script, against a locally running server, SQLite, demo-seeded: logged in
+   as `demo`, created an issue assigned to `alex` (auto-opens its drawer), typed `@sa` in the comment box
+   and confirmed a "@sam — Sam Lee" autocomplete suggestion appeared and, on click, inserted `@sam ` into
+   the textarea; posted the comment. Logged out, logged in as `alex`: unread badge read "1"; opened the
+   notification panel, confirmed the single item's type was "assigned"; clicking it opened the issue
+   drawer and marked it read (badge went to hidden/0). Logged out, logged in as `sam`: unread badge read
+   "1"; the notification's type was "mentioned" and its summary referenced the correct issue key;
+   "mark all read" cleared the badge. Re-ran with a second, isolated instance of the same script against a
+   freshly reset database to rule out cross-run state contamination, confirming identical results.
+6. Re-ran the eighth batch's reaction browser test and the seventh batch's comment-editing browser test
+   against the same build to confirm no regression from the new notification-bell markup and mention
+   autocomplete wrapper elements -- both still pass unchanged.
+
+All checks passed. No committed test scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+The rest of Phase 4 remains unimplemented: the full Markdown editor/toolbar/preview (D16), simplified
+worklogs (D13), and the append-only admin/security audit log (D23). Phase 5 (attachments and the Kanban
+board) is untouched. There is still no self-service profile editing -- a handle can only be set at
+account creation via the CLI, not changed afterward.
+
 ## 2026-07-31 — Fixed emoji reactions on comments (D84)
 
 Second Phase 4 (Collaboration) slice: comments can now receive a fixed set of emoji reactions, mirroring

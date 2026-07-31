@@ -64,8 +64,16 @@ remain as the long-term aspirational baseline only — do not build against them
 - **Fixed emoji reactions on comments (Phase 4, partial, D84):** a `comment_reactions` many-to-many table
   (mirroring `issue_watchers`/`issue_votes`) with a fixed eight-key reaction set (GitHub's own set,
   chosen as a conservative default since the decision register does not enumerate one); self-service,
-  no project-role check, same reasoning as watch/vote (D20/D79); idempotent add/remove. See "Not yet
-  built" below for the rest of Phase 4.
+  no project-role check, same reasoning as watch/vote (D20/D79); idempotent add/remove.
+- **@mention handles and the fixed in-app notification set (Phase 4, partial, D56/D80/D14):** an optional,
+  unique `users.handle` (admin-set at account creation, no self-service profile editing yet); comments
+  are scanned once, at creation, for `@handle` tokens, notifying each resolved user; three fixed
+  notification types only -- assigned, mentioned, comment on a watched issue -- no email, no
+  admin-configurable schemes, no per-user preferences/digests; a recipient who is both mentioned and
+  watching the same comment gets one notification, not two. `GET /api/users` backs @mention autocomplete
+  in the comment textarea; a notification bell with an unread badge in the UI opens a panel that marks
+  notifications read on click and navigates to the related issue. See "Not yet built" below for the rest
+  of Phase 4.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -73,9 +81,8 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Rest of Phase 4: the full Markdown editor/toolbar/preview (D16), `@handle` mentions with autocomplete
-  (D80, needs a new `users.handle` column, D56), the fixed in-app notification set (D14), simplified
-  worklogs (D13), and the append-only admin/security audit log (D23) are not implemented yet.
+- Rest of Phase 4: the full Markdown editor/toolbar/preview (D16), simplified worklogs (D13), and the
+  append-only admin/security audit log (D23) are not implemented yet.
 - Attachments and the Kanban board are not implemented (Phase 5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).

@@ -4,6 +4,8 @@
 #include "domain/Validation.h"
 
 #include <algorithm>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -36,6 +38,19 @@ void validateCommentBody(const std::string& body) {
     if (body.size() > 100000) {
         throw std::invalid_argument("comment body must not exceed 100000 characters");
     }
+}
+
+// @mentions (D80): every distinct `@handle` token in the body, lowercased
+// (handles are always stored lowercase, D56), deduplicated. Deliberately
+// simple -- no escaping/code-fence awareness, since the comment body isn't
+// rendered as Markdown anywhere yet either (D16 is not implemented).
+std::set<std::string> extractMentionedHandles(const std::string& body) {
+    static const std::regex pattern("@([a-zA-Z0-9_]{1,32})");
+    std::set<std::string> handles;
+    for (auto it = std::sregex_iterator(body.begin(), body.end(), pattern); it != std::sregex_iterator(); ++it) {
+        handles.insert(Domain::normalizeHandle((*it)[1].str()));
+    }
+    return handles;
 }
 
 // Used by the single-field bulk actions (assign, add label): editIssue is a
@@ -168,7 +183,9 @@ Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, con
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
     }
-    return database_->createIssue(request, actor.userId);
+    const auto created = database_->createIssue(request, actor.userId);
+    dispatchAssignmentNotification(created, std::nullopt, actor);
+    return created;
 }
 
 bool TicketService::changeStatus(const std::string& issueKey,
@@ -206,7 +223,12 @@ std::optional<Domain::Issue> TicketService::editIssue(const std::string& issueKe
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
     }
-    return database_->editIssue(normalizedKey, request, actor.userId, expectedVersion);
+    const auto assigneeBefore = issue->assignee;
+    const auto edited = database_->editIssue(normalizedKey, request, actor.userId, expectedVersion);
+    if (edited) {
+        dispatchAssignmentNotification(*edited, assigneeBefore, actor);
+    }
+    return edited;
 }
 
 std::vector<Domain::Comment> TicketService::listComments(const std::string& issueKey,
@@ -223,7 +245,9 @@ Domain::Comment TicketService::addComment(const std::string& issueKey, const std
         throw std::invalid_argument("Unknown issue key: " + normalizedKey);
     }
     requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
-    return database_->addComment(Domain::AddCommentRequest{normalizedKey, body}, actor.userId);
+    const auto comment = database_->addComment(Domain::AddCommentRequest{normalizedKey, body}, actor.userId);
+    dispatchCommentNotifications(*issue, comment, actor);
+    return comment;
 }
 
 std::optional<Domain::Comment> TicketService::editComment(const std::string& issueKey,
@@ -582,6 +606,60 @@ std::vector<Domain::Project> TicketService::listDeletedProjects(const Domain::Pr
 bool TicketService::permanentlyDeleteProject(const std::string& projectKey, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
     return database_->permanentlyDeleteProject(Domain::normalizeProjectKey(projectKey));
+}
+
+std::vector<Domain::User> TicketService::listUsers(const Domain::Principal& /*actor*/) {
+    return database_->listUsers();
+}
+
+std::vector<Domain::Notification> TicketService::listNotifications(const Domain::Principal& actor, const bool unreadOnly) {
+    return database_->listNotifications(actor.userId, unreadOnly);
+}
+
+int TicketService::countUnreadNotifications(const Domain::Principal& actor) {
+    return database_->countUnreadNotifications(actor.userId);
+}
+
+bool TicketService::markNotificationRead(const std::string& notificationId, const Domain::Principal& actor) {
+    return database_->markNotificationRead(notificationId, actor.userId);
+}
+
+bool TicketService::markAllNotificationsRead(const Domain::Principal& actor) {
+    return database_->markAllNotificationsRead(actor.userId);
+}
+
+void TicketService::dispatchAssignmentNotification(const Domain::Issue& issueAfter,
+                                                    const std::optional<Domain::UserSummary>& assigneeBefore,
+                                                    const Domain::Principal& actor) {
+    if (!issueAfter.assignee) {
+        return;
+    }
+    if (issueAfter.assignee->id == actor.userId) {
+        return; // Assigning to yourself needs no notification.
+    }
+    if (assigneeBefore && assigneeBefore->id == issueAfter.assignee->id) {
+        return; // Unchanged assignee (e.g. re-saving an edit) -- not a new assignment.
+    }
+    database_->createNotification(issueAfter.assignee->id, Domain::NotificationTypeAssigned, issueAfter.id);
+}
+
+void TicketService::dispatchCommentNotifications(const Domain::Issue& issue,
+                                                  const Domain::Comment& comment,
+                                                  const Domain::Principal& actor) {
+    std::set<std::string> notified;
+
+    for (const auto& handle : extractMentionedHandles(comment.body)) {
+        const auto mentioned = database_->findUserByHandle(handle);
+        if (mentioned && mentioned->id != actor.userId && notified.insert(mentioned->id).second) {
+            database_->createNotification(mentioned->id, Domain::NotificationTypeMentioned, issue.id);
+        }
+    }
+
+    for (const auto& watcher : database_->listWatchers(issue.key)) {
+        if (watcher.id != actor.userId && notified.insert(watcher.id).second) {
+            database_->createNotification(watcher.id, Domain::NotificationTypeWatchedComment, issue.id);
+        }
+    }
 }
 
 } // namespace TicketHub::Application

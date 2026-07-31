@@ -99,16 +99,17 @@ Domain::User readUser(sqlite3_stmt* statement) {
     user.id = text(statement, 0);
     user.email = text(statement, 1);
     user.displayName = text(statement, 2);
-    user.timeZone = text(statement, 3);
-    user.clockFormat = text(statement, 4);
-    user.active = boolColumn(statement, 5);
-    user.isAdmin = boolColumn(statement, 6);
-    user.createdAt = text(statement, 7);
+    user.handle = optionalText(statement, 3);
+    user.timeZone = text(statement, 4);
+    user.clockFormat = text(statement, 5);
+    user.active = boolColumn(statement, 6);
+    user.isAdmin = boolColumn(statement, 7);
+    user.createdAt = text(statement, 8);
     return user;
 }
 
 constexpr const char* UserSelect =
-    "SELECT id, email, display_name, time_zone, clock_format, active, is_admin, created_at FROM users";
+    "SELECT id, email, display_name, handle, time_zone, clock_format, active, is_admin, created_at FROM users";
 
 Domain::Issue readIssue(sqlite3_stmt* statement) {
     Domain::Issue issue;
@@ -348,15 +349,23 @@ Domain::User SqliteDatabase::createUser(const Domain::CreateUserRequest& request
     try {
         const std::string userId = Common::uuidV4();
         Statement insertUser(database_, R"SQL(
-INSERT INTO users(id, email, display_name, is_admin, created_at, updated_at)
-VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+INSERT INTO users(id, email, display_name, handle, is_admin, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL");
         insertUser.bind(1, userId);
         insertUser.bind(2, request.email);
         insertUser.bind(3, request.displayName);
-        insertUser.bind(4, static_cast<std::int64_t>(request.isAdmin ? 1 : 0));
+        if (request.handle) {
+            insertUser.bind(4, *request.handle);
+        } else {
+            insertUser.bindNull(4);
+        }
+        insertUser.bind(5, static_cast<std::int64_t>(request.isAdmin ? 1 : 0));
         if (insertUser.step() != SQLITE_DONE) {
-            throw std::invalid_argument("Email is already in use: " + request.email);
+            // Email is pre-checked by AuthService; a handle collision is the
+            // only other realistic cause of this constraint failure here.
+            throw std::invalid_argument(
+                request.handle ? "Email or handle is already in use" : "Email is already in use: " + request.email);
         }
 
         Statement insertCredentials(database_, R"SQL(
@@ -398,6 +407,16 @@ std::optional<Domain::User> SqliteDatabase::findUserById(const std::string& user
     std::scoped_lock lock(mutex_);
     Statement statement(database_, std::string(UserSelect) + " WHERE id = ?");
     statement.bind(1, userId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readUser(statement.get());
+}
+
+std::optional<Domain::User> SqliteDatabase::findUserByHandle(const std::string& handle) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(UserSelect) + " WHERE handle = ?");
+    statement.bind(1, handle);
     if (statement.step() != SQLITE_ROW) {
         return std::nullopt;
     }
@@ -1422,6 +1441,92 @@ ORDER BY r.reaction_key, u.display_name
         reactions.push_back(std::move(reaction));
     }
     return reactions;
+}
+
+namespace {
+Domain::Notification readNotification(sqlite3_stmt* statement) {
+    Domain::Notification notification;
+    notification.id = text(statement, 0);
+    notification.type = text(statement, 1);
+    notification.issueKey = optionalText(statement, 2);
+    notification.issueSummary = optionalText(statement, 3);
+    notification.readAt = optionalText(statement, 4);
+    notification.createdAt = text(statement, 5);
+    return notification;
+}
+
+constexpr const char* NotificationSelect = R"SQL(
+SELECT n.id, n.type, i.issue_key, i.summary, n.read_at, n.created_at
+FROM notifications n
+LEFT JOIN issues i ON i.id = n.issue_id
+)SQL";
+} // namespace
+
+Domain::Notification SqliteDatabase::createNotification(const std::string& userId,
+                                                         const std::string& type,
+                                                         const std::string& issueId) {
+    std::scoped_lock lock(mutex_);
+    const std::string notificationId = Common::uuidV4();
+    Statement insert(database_, R"SQL(
+INSERT INTO notifications(id, user_id, type, issue_id, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+)SQL");
+    insert.bind(1, notificationId);
+    insert.bind(2, userId);
+    insert.bind(3, type);
+    insert.bind(4, issueId);
+    expectDone(database_, insert, "Insert notification");
+
+    Statement read(database_, std::string(NotificationSelect) + "WHERE n.id = ?");
+    read.bind(1, notificationId);
+    if (read.step() != SQLITE_ROW) {
+        throw std::runtime_error("Created notification could not be read back");
+    }
+    return readNotification(read.get());
+}
+
+std::vector<Domain::Notification> SqliteDatabase::listNotifications(const std::string& userId, const bool unreadOnly) {
+    std::scoped_lock lock(mutex_);
+    std::string sql = std::string(NotificationSelect) + "WHERE n.user_id = ?";
+    if (unreadOnly) {
+        sql += " AND n.read_at IS NULL";
+    }
+    sql += " ORDER BY n.created_at DESC";
+    Statement statement(database_, sql);
+    statement.bind(1, userId);
+    std::vector<Domain::Notification> notifications;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        notifications.push_back(readNotification(statement.get()));
+    }
+    return notifications;
+}
+
+int SqliteDatabase::countUnreadNotifications(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL");
+    statement.bind(1, userId);
+    if (statement.step() != SQLITE_ROW) {
+        return 0;
+    }
+    return sqlite3_column_int(statement.get(), 0);
+}
+
+bool SqliteDatabase::markNotificationRead(const std::string& notificationId, const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND read_at IS NULL
+)SQL");
+    statement.bind(1, notificationId);
+    statement.bind(2, userId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+bool SqliteDatabase::markAllNotificationsRead(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE user_id = ? AND read_at IS NULL");
+    statement.bind(1, userId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
 }
 
 Domain::DashboardStats SqliteDatabase::dashboardStats() {

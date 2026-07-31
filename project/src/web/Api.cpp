@@ -10,19 +10,6 @@
 #include <utility>
 #include <vector>
 
-// NOTE ON VERIFICATION STATUS: this file could not be compiled in the
-// authoring sandbox because outbound access to github.com (needed to fetch
-// Crow via CMake FetchContent) was blocked by the sandbox's egress policy --
-// the same limitation recorded in handoff/IMPLEMENTATION_STATE.md and
-// docs/VERIFICATION.md for the original prototype. Everything in this file
-// follows the exact patterns already used elsewhere in this file (unchanged
-// helper functions, unchanged route registration style) and the session/CSRF
-// design is unit-testable independently of Crow (see
-// tests/identity_integration_tests.cpp for the AuthService coverage that
-// backs the /api/auth/* routes below). Compile and smoke-test this file
-// against a real Crow checkout before trusting it in production, per
-// CLAUDE.md's build-and-test discipline.
-
 namespace TicketHub::Web {
 namespace {
 
@@ -128,6 +115,30 @@ crow::json::wvalue commentReactionJson(const Domain::CommentReaction& reaction) 
     crow::json::wvalue json;
     json["reactionKey"] = reaction.reactionKey;
     json["user"] = userJson(reaction.user);
+    return json;
+}
+
+// Deliberately narrower than the full Domain::User (no isAdmin/active/
+// timeZone/clockFormat) -- this is a directory listing for @mention
+// autocomplete and assignee pickers, not an admin user-management view.
+crow::json::wvalue userDirectoryJson(const Domain::User& user) {
+    crow::json::wvalue json;
+    json["id"] = user.id;
+    json["displayName"] = user.displayName;
+    json["email"] = user.email;
+    json["handle"] = user.handle ? crow::json::wvalue(*user.handle) : crow::json::wvalue(nullptr);
+    return json;
+}
+
+crow::json::wvalue notificationJson(const Domain::Notification& notification) {
+    crow::json::wvalue json;
+    json["id"] = notification.id;
+    json["type"] = notification.type;
+    json["issueKey"] = notification.issueKey ? crow::json::wvalue(*notification.issueKey) : crow::json::wvalue(nullptr);
+    json["issueSummary"] =
+        notification.issueSummary ? crow::json::wvalue(*notification.issueSummary) : crow::json::wvalue(nullptr);
+    json["readAt"] = notification.readAt ? crow::json::wvalue(*notification.readAt) : crow::json::wvalue(nullptr);
+    json["createdAt"] = notification.createdAt;
     return json;
 }
 
@@ -1351,6 +1362,99 @@ void registerApiRoutes(crow::SimpleApp& app,
             return jsonResponse(200, std::move(body));
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // User directory (D80): backs @mention autocomplete. Requires a session
+    // -- unlike issue reads, this is never available to an anonymous caller
+    // even when the installation-wide anonymous-read toggle is on.
+    CROW_ROUTE(app, "/api/users")([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& user : service->listUsers(*principal)) {
+                items.emplace_back(userDirectoryJson(user));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Fixed in-app notifications (D14): always scoped to the caller's own
+    // notifications, never another user's.
+    CROW_ROUTE(app, "/api/notifications")([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            const auto unreadParam = queryParameter(request, "unread");
+            const bool unreadOnly = unreadParam.has_value() && *unreadParam == "true";
+            crow::json::wvalue::list items;
+            for (const auto& notification : service->listNotifications(*principal, unreadOnly)) {
+                items.emplace_back(notificationJson(notification));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/notifications/unread-count")([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue body;
+            body["count"] = service->countUnreadNotifications(*principal);
+            return jsonResponse(200, std::move(body));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/notifications/<string>/read")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& notificationId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            crow::json::wvalue body;
+            body["ok"] = service->markNotificationRead(notificationId, *principal);
+            return jsonResponse(200, std::move(body));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/notifications/read-all")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            crow::json::wvalue body;
+            body["ok"] = service->markAllNotificationsRead(*principal);
+            return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

@@ -1,7 +1,8 @@
 # Ticket Hub next work
 
 Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, and UI; Phase 4
-(Collaboration) started with comment editing/tombstone delete and fixed emoji reactions — see below)
+(Collaboration) in progress -- comment editing/tombstone delete, fixed emoji reactions, and @mention
+handles/the fixed in-app notification set are done — see below)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -169,8 +170,41 @@ anything from the removed/deferred list without an explicit new product conversa
   second distinct reaction key can coexist, and -- switching users -- the count is shared while each
   user's own "active" highlight is independently correct (explicitly asserted, not assumed). New
   SQLite-integration, authorization-integration, and live-PostgreSQL test coverage. Full detail in
-  `docs/VERIFICATION.md`. Rest of Phase 4 (D16, D80/D56, D14, D13, D23) is not yet implemented -- see
-  "Not yet built" in `docs/SCOPE.md`.
+  `docs/VERIFICATION.md`.
+- **Phase 4 continued (@mention handles and the fixed in-app notification set, D56/D80/D14), this
+  batch:** migration `010_mentions_and_notifications.sql` adds `users.handle` (nullable, unique via a
+  partial index -- SQLite's `ALTER TABLE ADD COLUMN` cannot itself carry `UNIQUE`) and `notifications`
+  (`user_id`, `type` fixed to `assigned`/`mentioned`/`watched_comment`, `issue_id` nullable, `read_at` --
+  the exact minimal shape in `docs/REDUCED_SCOPE_DATA_MODEL.md`). `ticket-hub-cli create-user` gained
+  `--handle=<handle>`, validated/normalized the same way as email (lowercase, pre-checked for uniqueness
+  in `AuthService::createUser` rather than relying on the DB constraint's error message); the three
+  seeded demo users now have handles (`demo`/`alex`/`sam`). `IDatabase::findUserByHandle` and
+  `createNotification`/`listNotifications`/`countUnreadNotifications`/`markNotificationRead`/
+  `markAllNotificationsRead` in both adapters -- `listNotifications` resolves `issueKey`/`issueSummary`
+  at read time via a join, since there is no stored message string. `TicketService::createIssue`/
+  `editIssue` notify a newly-set or changed assignee (skipping self-assignment and a no-op re-save with
+  the same assignee); `addComment` extracts every `@handle` token from the body once, at creation (not
+  on every edit, to avoid re-notifying on every save of an already-mentioning comment), notifies each
+  resolved user, and notifies every watcher of the issue except the comment's own author -- a recipient
+  who is both mentioned and watching the same comment gets exactly one notification, the more specific
+  reason (mentioned) winning over the generic one (watched), a deliberate simplification rather than a
+  stored dedupe key. New `GET /api/users` (directory listing for @mention autocomplete, session-required
+  even when anonymous read is on) and `GET /api/notifications[?unread=true]`,
+  `GET /api/notifications/unread-count`, `POST /api/notifications/{id}/read`,
+  `POST /api/notifications/read-all` routes. `web/` gained a notification bell with an unread-count badge
+  in the top bar (opens a panel listing notifications, click-to-mark-read-and-open-issue, a "mark all
+  read" button) and an @mention autocomplete dropdown under the comment textarea (both add and edit),
+  backed by the cached `/api/users` directory fetched once in `loadBaseData()`. Browser-verified:
+  assigning an issue to a second user shows them exactly one unread notification; typing `@sa` in the
+  comment box shows a matching suggestion that inserts the full handle; mentioning a user in a comment
+  notifies them with the correct issue reference; the notification panel/badge/mark-read/mark-all-read
+  flow all work through the real HTTP layer; a full regression re-run of the reaction and comment-editing
+  browser tests still pass unchanged. New SQLite-integration, authorization-integration (each notification
+  type isolated in its own issue with an explicit `markAllNotificationsRead` reset between sub-tests, so
+  no sub-test's leftover watcher state contaminates the next one's assertions), identity-integration
+  (handle normalization/uniqueness/format validation), and live-PostgreSQL test coverage. Full detail in
+  `docs/VERIFICATION.md`. Rest of Phase 4 (D16, D13, D23) is not yet implemented -- see "Not yet built"
+  in `docs/SCOPE.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) has started. Immediate next step: continue Phase 4
 
@@ -191,15 +225,13 @@ where the new checkboxes/reorder buttons live inside the same table row that alr
 drawer on click.
 
 There is no remaining gap between what the API exposes (for Phases 1-3) and what the demo UI can reach.
-Comment editing/tombstone delete (D81/D82/D83) and fixed emoji reactions (D84) are the first two Phase 4
-slices, and both are also already fully covered in the UI. What's left is the rest of Phase 4, Phase 5,
-or optional UX polish:
+Comment editing/tombstone delete (D81/D82/D83), fixed emoji reactions (D84), and @mention handles/the
+fixed in-app notification set (D56/D80/D14) are the first three Phase 4 slices, and all three are also
+already fully covered in the UI. What's left is the rest of Phase 4, Phase 5, or optional UX polish:
 
 1. Continue Phase 4 (Collaboration) per `docs/REDUCED_SCOPE_ROADMAP.md`: D16 (full Markdown
-   editor/toolbar/preview), D80/D56 (`@handle` mentions with autocomplete, needs a new `users.handle`
-   column -- the next most self-contained slice), D14 (the fixed in-app notification set, depends on
-   D80's mention-parsing for one of its three notification types), D13 (simplified worklogs), and D23
-   (the append-only admin/security audit log). Then Phase 5 (Attachments and Kanban board).
+   editor/toolbar/preview -- the next most self-contained slice), D13 (simplified worklogs), and D23 (the
+   append-only admin/security audit log). Then Phase 5 (Attachments and Kanban board).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (today's board is read-only, clicking a card just opens the drawer; the Issues table's
    up/down buttons are the only reorder UI); a friendlier bulk-status picker that also supports
@@ -225,22 +257,27 @@ later-phase features early, and do not implement anything from `docs/REMOVED_AND
 
 Core, CLI, all seven test binaries, and the `ticket-hub` server target itself all compile and pass/run
 cleanly on both SQLite and PostgreSQL, in every supported build configuration, including a live HTTP
-smoke test of essentially every route across all three completed phases and, across eight batches, a
+smoke test of essentially every route across all three completed phases and, across nine batches, a
 real-browser (Playwright/Chromium) test of every write route the demo UI now exposes: login/logout,
 hierarchy/resolution pickers, full edit/clone/links/watch-vote/delete in the issue drawer, project
 management, the issue recycle bin, reorder/move/bulk actions, comment editing/tombstone delete
 (add/edit/cancel/delete as the author, plus a cross-user check that a non-author, non-admin user cannot
-see Edit/Delete on someone else's comment), and now fixed emoji reactions (react/un-react toggling with a
+see Edit/Delete on someone else's comment), fixed emoji reactions (react/un-react toggling with a
 live count, a second distinct reaction key coexisting with the first, and a cross-user check that counts
-are shared while each user's own "active" highlight is independently correct). The long-standing "server
-target unverified because `github.com` is unreachable" limitation recorded in every prior session no
-longer applies in this environment, and there is no longer a gap between what the API exposes for
-Phases 1-3 (plus the comment-editing and reactions slices of Phase 4) and what the demo UI can reach.
+are shared while each user's own "active" highlight is independently correct), and now @mention handles
+and the fixed in-app notification set (assigning notifies the assignee, @mention autocomplete inserts a
+matching handle and notifies the mentioned user, and the notification panel/badge/mark-read/mark-all-read
+flow). The long-standing "server target unverified because `github.com` is unreachable" limitation
+recorded in every prior session no longer applies in this environment, and there is no longer a gap
+between what the API exposes for Phases 1-3 (plus the comment-editing, reactions, and mentions/
+notifications slices of Phase 4) and what the demo UI can reach.
 `findCommentById`/`editComment`/`deleteComment` gained dedicated SQLite-integration coverage (success,
 version-increment, `edited_at` set, stale-version conflict, unknown-comment no-op) and
 authorization-integration coverage (non-author-non-admin Forbidden, self-edit succeeds, global-admin can
 edit/delete any comment); `addCommentReaction`/`removeCommentReaction`/`listCommentReactions` gained the
 same three-layer coverage (SQLite-integration idempotency/listing, authorization-integration no-project-
-role/unknown-key/unknown-comment rejection, and a live-PostgreSQL smoke test). Full detail, including
-exactly what was exercised (and the several real bugs this browser testing caught and fixed along the
+role/unknown-key/unknown-comment rejection, and a live-PostgreSQL smoke test); `findUserByHandle` and the
+five `notifications` methods gained the same three-layer coverage plus identity-integration coverage for
+handle normalization/uniqueness/format validation on `create-user`. Full detail, including exactly what
+was exercised (and the several real bugs this browser testing and test-writing caught and fixed along the
 way), is in `docs/VERIFICATION.md`.

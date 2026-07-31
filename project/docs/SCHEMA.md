@@ -32,8 +32,12 @@ Current schema migrations:
   `REDUCED_SCOPE_ROADMAP.md`, D84). Adds `comment_reactions`, a three-column composite-primary-key
   many-to-many table (`comment_id`, `user_id`, `reaction_key`) mirroring `issue_watchers`/`issue_votes`,
   with `reaction_key` constrained to a fixed eight-value set.
+- `010_mentions_and_notifications.sql` — @mention handles and the fixed in-app notification set (Phase 4
+  of `REDUCED_SCOPE_ROADMAP.md`, D56/D80/D14). Adds `users.handle` (nullable, unique via a partial index
+  since SQLite's `ALTER TABLE ADD COLUMN` cannot itself carry a `UNIQUE` constraint) and the `notifications`
+  table.
 
-`002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, and an explicit `rank_order` (equal to `issue_number`) for each seeded issue.
+`002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, an explicit `rank_order` (equal to `issue_number`) for each seeded issue, and (since `010_mentions_and_notifications.sql`, which `seed-demo` always applies first) a `handle` for each of the three demo users.
 
 ## Current tables
 
@@ -43,7 +47,12 @@ Current schema migrations:
 
 ### `users`
 
-`id`, `display_name`, `email` (unique), `avatar_url`, `active`, `time_zone`, `clock_format`, `is_admin`, `created_at`, `updated_at`.
+`id`, `display_name`, `email` (unique), `handle` (nullable, unique via a partial index -- migration
+`010_mentions_and_notifications.sql`, D56), `avatar_url`, `active`, `time_zone`, `clock_format`,
+`is_admin`, `created_at`, `updated_at`. `handle` is set only at account creation
+(`ticket-hub-cli create-user ... --handle=<handle>`); there is no self-service profile-editing flow yet
+to change it afterward. Always stored lowercase (`Domain::normalizeHandle`), same normalization style as
+email.
 
 The prototype's temporary `username` column was removed in `004_identity.sql`. There is no `handle` column yet — it is added in a later phase together with @mentions, the first feature that actually needs one (`docs/REMOVED_AND_DEFERRED_FEATURES.md`).
 
@@ -209,6 +218,39 @@ mechanism this decision calls for. `TicketService::editComment`/`deleteComment` 
 permissions: the comment's own author may always edit/delete it; otherwise the actor needs
 project-Admin-or-above (or global admin) on the comment's issue's project -- no separate
 edit-own/edit-all/delete-own/delete-all permission matrix.
+
+There is no `comments.body` full-text scan beyond @mention parsing (D80): `TicketService::addComment`
+extracts every distinct `@handle` token from the body with a plain regex, resolves each against
+`users.handle` (`IDatabase::findUserByHandle`), and creates a `mentioned` notification for each resolved
+user other than the comment's own author. This only happens on creation, not on every `editComment` save,
+to avoid re-notifying on every edit of an already-mentioning comment. An unresolvable handle (typo, or a
+user with no handle set) is silently ignored, not an error.
+
+### `notifications`
+
+`id`, `user_id`, `type` (`CHECK` constrained to `assigned`/`mentioned`/`watched_comment`), `issue_id`
+(nullable, `ON DELETE CASCADE`), `read_at` (nullable), `created_at` -- migration
+`010_mentions_and_notifications.sql` (Phase 4, D14). This is the fixed in-app notification set: no
+delivery-channel column (in-app only, no email), no admin-configurable schemes, no per-user
+preferences/digests -- matches the minimal shape in `docs/REDUCED_SCOPE_DATA_MODEL.md` exactly. There is
+no stored message string; `IDatabase::listNotifications`/`createNotification` resolve `issueKey`/
+`issueSummary` at read time via a `LEFT JOIN` on `issues`, and the API/UI build display text from `type` +
+the resolved issue.
+
+All three types are created as a side effect of an existing write, never directly by an API caller:
+
+- `assigned`: `TicketService::createIssue`/`editIssue` compare the issue's assignee before and after the
+  write; a newly-set or changed assignee is notified, but assigning to yourself, or an edit that leaves
+  the assignee unchanged, notifies nobody.
+- `mentioned`: see the Comments section above.
+- `watched_comment`: `TicketService::addComment` notifies every current watcher of the issue
+  (`IDatabase::listWatchers`) except the comment's own author.
+
+A recipient who would receive both `mentioned` and `watched_comment` from the same comment (mentioned
+*and* already watching) gets only `mentioned` -- one notification per comment per recipient, the more
+specific reason wins; this is a deliberate simplification, not a stored dedupe key.
+`markNotificationRead`/`markAllNotificationsRead` are always scoped to the caller's own `user_id`; there
+is no cross-user notification management.
 
 ### `issue_history`
 

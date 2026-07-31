@@ -134,6 +134,19 @@ bool isValidEmail(const std::string& value) {
     return normalized.size() <= 320 && std::regex_match(normalized, pattern);
 }
 
+std::string normalizeHandle(const std::string& value) {
+    std::string result = trim(value);
+    std::transform(result.begin(), result.end(), result.begin(), [](const unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return result;
+}
+
+bool isValidHandle(const std::string& value) {
+    static const std::regex pattern("^[a-z0-9_]{1,32}$");
+    return std::regex_match(normalizeHandle(value), pattern);
+}
+
 std::vector<std::string> validatePassword(const std::string& password,
                                           const std::string& email,
                                           const std::string& displayName) {
@@ -166,6 +179,9 @@ std::vector<std::string> validateCreateUser(const CreateUserRequest& request) {
     }
     const auto passwordErrors = validatePassword(request.password, request.email, request.displayName);
     errors.insert(errors.end(), passwordErrors.begin(), passwordErrors.end());
+    if (request.handle && !isValidHandle(*request.handle)) {
+        errors.emplace_back("handle must be 1-32 lowercase letters, digits, or underscores");
+    }
     return errors;
 }
 

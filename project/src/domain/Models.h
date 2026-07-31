@@ -13,13 +13,15 @@ struct UserSummary {
     std::string email;
 };
 
-// Full identity record for a local account. There is no `handle` field yet --
-// it is introduced in a later phase together with @mentions, which is the
-// first feature that actually needs one.
+// Full identity record for a local account.
 struct User {
     std::string id;
     std::string email;
     std::string displayName;
+    // Optional, unique, lowercase (D56); the @mention target (D80). No
+    // self-service profile editing exists yet -- an admin sets it via
+    // `ticket-hub-cli create-user ... --handle=<handle>` at creation time.
+    std::optional<std::string> handle;
     std::string timeZone{"UTC"};
     std::string clockFormat{"24h"};
     bool active{true};
@@ -46,6 +48,7 @@ struct CreateUserRequest {
     std::string displayName;
     std::string password;
     bool isAdmin{false};
+    std::optional<std::string> handle;
 };
 
 struct LoginRequest {
@@ -272,6 +275,31 @@ inline bool isValidCommentReactionKey(const std::string& reactionKey) {
 struct CommentReaction {
     std::string reactionKey;
     UserSummary user;
+};
+
+// Fixed in-app notification set (D14): exactly these three types, no
+// admin-configurable schemes, no email, no per-user preferences/digests.
+// "mentioned" comes from @handle tokens parsed out of a comment body at
+// creation time (D80); description/other Markdown fields are not scanned
+// for mentions in V1, since none of them have the autocomplete affordance
+// that makes a mention discoverable while typing.
+constexpr const char* NotificationTypeAssigned = "assigned";
+constexpr const char* NotificationTypeMentioned = "mentioned";
+constexpr const char* NotificationTypeWatchedComment = "watched_comment";
+
+// `issueKey`/`issueSummary` are resolved at read time from the stored
+// `issue_id` (nullable in principle, but every current notification type
+// always has one) -- there is no stored message string, matching the
+// minimal `user_id, type, issue_id, read_at` shape in
+// docs/REDUCED_SCOPE_DATA_MODEL.md; the UI builds display text from
+// `type` + the resolved issue.
+struct Notification {
+    std::string id;
+    std::string type;
+    std::optional<std::string> issueKey;
+    std::optional<std::string> issueSummary;
+    std::optional<std::string> readAt;
+    std::string createdAt;
 };
 
 struct Issue {

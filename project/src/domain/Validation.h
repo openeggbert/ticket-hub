@@ -17,6 +17,9 @@ std::vector<std::string> validateEditIssue(const EditIssueRequest& request);
 
 std::string normalizeEmail(const std::string& value);
 bool isValidEmail(const std::string& value);
+// D56/D80: lowercase, 1-32 characters, letters/digits/underscore only.
+std::string normalizeHandle(const std::string& value);
+bool isValidHandle(const std::string& value);
 // Baseline strength check only (minimum length, not identical to the
 // account's own email/display name). Full lockout/rate-limiting policy is a
 // later phase; see docs/REDUCED_SCOPE_ROADMAP.md Phase 1/6.

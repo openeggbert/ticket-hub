@@ -24,6 +24,7 @@ public:
                             const std::string& passwordHash) override;
     std::optional<Domain::User> findUserByEmail(const std::string& email) override;
     std::optional<Domain::User> findUserById(const std::string& userId) override;
+    std::optional<Domain::User> findUserByHandle(const std::string& handle) override;
     std::vector<Domain::User> listUsers() override;
     std::optional<std::string> findPasswordHash(const std::string& userId) override;
     void recordFailedLogin(const std::string& userId) override;
@@ -78,6 +79,15 @@ public:
     bool removeCommentReaction(const std::string& commentId, const std::string& userId,
                                const std::string& reactionKey) override;
     std::vector<Domain::CommentReaction> listCommentReactions(const std::string& commentId) override;
+
+    Domain::Notification createNotification(const std::string& userId,
+                                             const std::string& type,
+                                             const std::string& issueId) override;
+    std::vector<Domain::Notification> listNotifications(const std::string& userId, bool unreadOnly) override;
+    int countUnreadNotifications(const std::string& userId) override;
+    bool markNotificationRead(const std::string& notificationId, const std::string& userId) override;
+    bool markAllNotificationsRead(const std::string& userId) override;
+
     Domain::DashboardStats dashboardStats() override;
 
     Domain::Issue reorderIssue(const std::string& issueKey, std::optional<std::string> beforeIssueKey) override;

@@ -24,6 +24,10 @@ public:
                                     const std::string& passwordHash) = 0;
     virtual std::optional<Domain::User> findUserByEmail(const std::string& email) = 0;
     virtual std::optional<Domain::User> findUserById(const std::string& userId) = 0;
+    // D56/D80: used for @mention resolution and the handle-uniqueness
+    // pre-check in AuthService::createUser. `handle` is already normalized
+    // (lowercase) by the caller.
+    virtual std::optional<Domain::User> findUserByHandle(const std::string& handle) = 0;
     virtual std::vector<Domain::User> listUsers() = 0;
     // Returns nullopt if the user has no local credentials at all (should not
     // happen in V1 -- there is no OIDC -- but keeps the port honest).
@@ -141,6 +145,23 @@ public:
     virtual bool removeCommentReaction(const std::string& commentId, const std::string& userId,
                                        const std::string& reactionKey) = 0;
     virtual std::vector<Domain::CommentReaction> listCommentReactions(const std::string& commentId) = 0;
+
+    // --- Fixed in-app notifications (Phase 4, D14/D80) ---
+    // `issueId` is the internal issue id, not the display key -- callers
+    // already have it from a just-fetched Domain::Issue. There is no
+    // dedicated "read" fetch: notifications are always listed for a single
+    // user, never looked up individually across users.
+    virtual Domain::Notification createNotification(const std::string& userId,
+                                                     const std::string& type,
+                                                     const std::string& issueId) = 0;
+    virtual std::vector<Domain::Notification> listNotifications(const std::string& userId, bool unreadOnly) = 0;
+    virtual int countUnreadNotifications(const std::string& userId) = 0;
+    // Both return true only if a matching row existed (and, for markRead,
+    // was not already read); scoped to `userId` so one user can never mark
+    // another's notification read even by guessing an id.
+    virtual bool markNotificationRead(const std::string& notificationId, const std::string& userId) = 0;
+    virtual bool markAllNotificationsRead(const std::string& userId) = 0;
+
     virtual Domain::DashboardStats dashboardStats() = 0;
 
     // --- Manual ordering (Phase 3, D31) ---
