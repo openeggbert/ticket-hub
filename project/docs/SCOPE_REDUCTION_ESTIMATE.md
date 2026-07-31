@@ -1,6 +1,9 @@
 # Scope Reduction — Effort Estimate
 
-Status: skeleton, will fill in as the questionnaire in `SCOPE_REDUCTION_PROGRESS.md` proceeds.
+Status: **finalized**. The questionnaire in `SCOPE_REDUCTION_PROGRESS.md` is complete (142/142
+decisions). This file preserves the incremental-tracking history from the questionnaire; the polished,
+final version of everything below now lives in **`docs/IMPLEMENTATION_ESTIMATE.md`** — read that file
+first. This file is kept for provenance and is not updated further.
 
 ## How to read these numbers
 
@@ -18,39 +21,36 @@ Status: skeleton, will fill in as the questionnaire in `SCOPE_REDUCTION_PROGRESS
 - Nothing here is final until the questionnaire in `SCOPE_REDUCTION_PROGRESS.md` is
   complete and the final consistency audit has run.
 
-## Running totals
+## Running totals (final)
 
-_(Populated incrementally. Each entry below corresponds to one or more decisions in
-SCOPE_REDUCTION_PROGRESS.md and captures only the **delta** — hours saved relative to
-building the original full-scope feature.)_
+Every one of the 142 decisions in `SCOPE_REDUCTION_PROGRESS.md` carries its own "Est. Hours Saved"
+value in that file's table — that is the authoritative per-decision record. Summed:
 
-| Decision(s) | Feature | Optimistic saved (h) | Realistic saved (h) | Conservative saved (h) | Notes |
-|---|---|---|---|---|---|
-| _none yet_ | | | | | |
+- **Optimistic (low-bound) sum: ~807h saved** vs. the original full-scope plan.
+- **Conservative (high-bound) sum: ~1,346h saved** vs. the original full-scope plan.
 
-**Cumulative hours saved so far:** optimistic 0h / realistic 0h / conservative 0h.
+See `docs/IMPLEMENTATION_ESTIMATE.md` for the full V1 effort estimate (milestones + category
+breakdown) built from this number, plus the implied original-scope/reduction-percentage cross-check.
 
 ## Milestone estimates
 
-Not yet computed — depends on the full set of classifications. Will be filled in during
-the "Final outputs" phase, structured as:
+Final version is in `docs/IMPLEMENTATION_ESTIMATE.md` — Milestone 1 (Minimal usable tracker),
+Milestone 2 (Daily personal/team use), Milestone 3 (Public beta), Milestone 4 (Production hardening),
+each with optimistic/realistic/conservative Claude Code hour ranges and a
+implementation/tests/debugging/documentation/packaging/security category breakdown.
 
-- Milestone 1 — Minimal usable tracker
-- Milestone 2 — Daily personal/team use
-- Milestone 3 — Public beta
-- Milestone 4 — Production hardening
+## Known major uncertainty drivers — resolved
 
-Each milestone will carry optimistic/realistic/conservative Claude Code hour ranges,
-broken down by implementation/tests/debugging/documentation/packaging/security.
+The four drivers originally flagged here were resolved during the questionnaire:
 
-## Known major uncertainty drivers
+- **SQLite parity: kept** (D137) — the user chose to preserve full dual-database feature parity despite
+  it being the single largest recurring cost multiplier across dozens of other decisions.
+- **OIDC: removed entirely** (D1) — local accounts only, not even an architecture stub.
+- **Workflow engine: replaced with one fixed hardcoded workflow** (D4) — this remains, as predicted, the
+  single biggest cost reduction in the whole pass (est. 60-100h on that decision alone).
+- **Attachment storage: local filesystem only, hardwired** (D15); **email: removed entirely**, both
+  outbound and inbound (D14, D52, D115-D123) — together these were the next two largest cost centers,
+  exactly as predicted.
 
-- Whether SQLite parity is dropped or kept materially changes adapter/testing effort
-  across almost every phase.
-- Whether OIDC is kept at all is a large swing item (provider metadata, JWKS, account
-  linking, JIT provisioning).
-- The workflow engine (conditions/validators/post-functions/drafts/publishing) is the
-  single most expensive subsystem in the original plan; its final classification will
-  dominate the total estimate more than any other decision.
-- Attachment storage (filesystem + S3, previews, integrity audits) and notifications/email
-  (in-app + SMTP + inbound IMAP) are the next two largest cost centers.
+See `docs/IMPLEMENTATION_ESTIMATE.md` §"Major uncertainty drivers" for what remains uncertain going
+forward.

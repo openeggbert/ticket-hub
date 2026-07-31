@@ -1,5 +1,15 @@
 # Handoff notes for the next coding agent
 
+> **2026-07-31 scope-reduction amendment:** the product owner re-reviewed all 142 decisions in
+> `PRODUCT_DECISIONS_COMPLETE.md` and produced a smaller V1 target. Read
+> `../REDUCED_SCOPE_SPECIFICATION.md`, `REDUCED_SCOPE_DECISIONS.md`, and `REDUCED_SCOPE_ROADMAP.md`
+> first — they now take precedence over this file and over `SPECIFICATION.md` for what to build.
+> In particular, the "Immediate implementation advice" below is superseded where it conflicts:
+> **OIDC, invitations, and groups are permanently removed for V1**, not deferred to "follow as separate
+> vertical slices" as originally written — see `REMOVED_AND_DEFERRED_FEATURES.md`. PATs still exist but
+> without scopes/rotation/service accounts (D39, D40). Permission schemes are replaced by fixed project
+> roles (D3), not deferred.
+
 ## Original request
 
 Build a self-hosted Jira-like tracker named **Ticket Hub** in C++ using Crow and vanilla HTML/CSS/JavaScript. The primary namespace is `TicketHub`. PostgreSQL is the primary database, with SQLite optional through an architecture that permits different database implementations.
