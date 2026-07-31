@@ -64,11 +64,13 @@ creation is not implemented — `TicketService::editIssue` does not touch either
 See `NEXT.md` for the exact detail. The Crow-based `ticket-hub` server target, previously blocked by
 network access to `github.com`, now builds and has been live-verified end-to-end (every route across all
 three phases exercised via `curl` against a running instance; zero bugs found) — see "Server
-verification" in `README.md` and `docs/VERIFICATION.md`. `web/` now has a minimal login screen
-(browser-verified with Playwright/Chromium: login/logout, CSRF-protected writes, session-expiry
-redirect), but still no UI for anything else — project management, issue hierarchy/resolution pickers,
-full edit, links, clone, watch/vote, the recycle bin, bulk actions, and reorder/move all only exist as
-API routes today. That is the immediate next step.
+verification" in `README.md` and `docs/VERIFICATION.md`. `web/` now covers every one of those routes with
+a working, browser-verified (Playwright/Chromium) control: login, hierarchy/resolution pickers, full
+edit/clone/links/watch-vote/delete in the issue drawer, project management, both recycle bins, and
+reorder/move/bulk actions. There is no remaining gap between the API surface and the demo UI for Phases
+1-3. The immediate next step is continuing the roadmap into Phase 4 (Collaboration) / Phase 5
+(Attachments and Kanban board), or optional UX polish (e.g. drag-and-drop reordering on the Board view) —
+see `NEXT.md`.
 
 Phase 1/2/3 scope, for reference:
 

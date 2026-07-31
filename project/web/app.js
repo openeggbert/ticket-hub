@@ -175,18 +175,29 @@ function labelsMarkup(labels = []) {
   return labels.slice(0, 3).map(label => `<span class="label-chip">${escapeHtml(label)}</span>`).join('');
 }
 
-function issueRows(issues) {
+// `orderable` adds an Order column with move-up/move-down buttons (D31);
+// only meaningful when `issues` is a single project's full, rank-sorted
+// list, since reorderIssue's `beforeIssueKey` anchor must be in the same
+// project as the issue being moved. `selectable` adds a checkbox column for
+// bulk actions (D36).
+function issueRows(issues, { orderable = false, selectable = false } = {}) {
+  const extraColumns = (orderable ? 1 : 0) + (selectable ? 1 : 0);
   if (!issues.length) {
-    return `<tr><td colspan="6"><div class="empty-state"><strong>No issues found</strong>Adjust the filters or create a new issue.</div></td></tr>`;
+    return `<tr><td colspan="${6 + extraColumns}"><div class="empty-state"><strong>No issues found</strong>Adjust the filters or create a new issue.</div></td></tr>`;
   }
-  return issues.map(issue => `
+  return issues.map((issue, index) => `
     <tr data-issue-key="${escapeHtml(issue.key)}">
+      ${selectable ? `<td class="select-column"><input type="checkbox" class="issue-select" value="${escapeHtml(issue.key)}"></td>` : ''}
       <td><span class="issue-type" title="${escapeHtml(issue.type.name)}"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)}</span></td>
       <td><span class="issue-key">${escapeHtml(issue.key)}</span></td>
       <td class="issue-summary">${escapeHtml(issue.summary)}</td>
       <td>${statusChip(issue)}</td>
       <td>${priorityChip(issue)}</td>
       <td>${assigneeMarkup(issue)}</td>
+      ${orderable ? `<td class="order-cell">
+        <button type="button" class="icon-button" data-move-up="${escapeHtml(issue.key)}" ${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+        <button type="button" class="icon-button" data-move-down="${escapeHtml(issue.key)}" ${index === issues.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+      </td>` : ''}
     </tr>`).join('');
 }
 
@@ -276,6 +287,12 @@ async function renderIssues() {
 // Mirrors renderProjectsView's active/recycle-bin toggle: `showingDeleted`
 // swaps the filter bar and normal issue table for the recycle bin (D22,
 // global-administrator-only to view/restore/purge, same split as projects).
+// The active view also adds: manual reordering (D31, only meaningful and
+// only enabled with a single project selected, since reorderIssue's anchor
+// must be in the same project -- the table is sorted by rankOrder in that
+// case so up/down visibly matches the stored order) and simple bulk actions
+// (D36, always available since each key is authorized/processed
+// independently regardless of project).
 async function renderIssuesView(showingDeleted) {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   let issues;
@@ -289,10 +306,15 @@ async function renderIssuesView(showingDeleted) {
   } else {
     await fetchIssues();
     issues = state.issues;
+    if (state.selectedProject) {
+      issues = [...issues].sort((a, b) => a.rankOrder - b.rankOrder);
+    }
   }
+  const orderable = !showingDeleted && Boolean(state.selectedProject);
   const isAdmin = Boolean(state.principal?.isAdmin);
   const projectOptions = state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('');
   const statusOptions = STATUSES.map(status => `<option value="${status.key}" ${status.key === state.status ? 'selected' : ''}>${status.name}</option>`).join('');
+  const bulkStatusOptions = STATUSES.filter(status => status.category !== 'done').map(status => `<option value="${status.key}">${status.name}</option>`).join('');
   content.innerHTML = `
     <div class="page-header">
       <div>
@@ -311,11 +333,32 @@ async function renderIssuesView(showingDeleted) {
         <select id="issue-status-filter"><option value="">All statuses</option>${statusOptions}</select>
         <input id="issue-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key or summary">
         <button class="secondary-button" id="clear-filters">Clear</button>
+      </div>
+      <div class="bulk-bar hidden" id="bulk-bar">
+        <span id="bulk-count">0 selected</span>
+        <select id="bulk-status-select" title="Done-category statuses need a resolution and aren't offered here">${bulkStatusOptions}</select>
+        <button type="button" class="secondary-button" id="bulk-status-apply">Set status</button>
+        <select id="bulk-assignee-select">
+          <option value="">Unassigned</option>
+          <option value="demo@ticket-hub.local">Demo User</option>
+          <option value="alex@ticket-hub.local">Alex Morgan</option>
+          <option value="sam@ticket-hub.local">Sam Lee</option>
+        </select>
+        <button type="button" class="secondary-button" id="bulk-assign-apply">Assign</button>
+        <input id="bulk-label-input" placeholder="label" style="width:120px">
+        <button type="button" class="secondary-button" id="bulk-label-apply">Add label</button>
+        <button type="button" class="secondary-button" id="bulk-delete-apply">Delete</button>
+        <button type="button" class="ghost-button" id="bulk-clear">Clear</button>
       </div>`}
       <div style="overflow-x:auto">
         <table class="issue-table">
-          <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th>${showingDeleted ? '<th>Actions</th>' : ''}</tr></thead>
-          <tbody>${showingDeleted ? deletedIssueRows(issues) : issueRows(issues)}</tbody>
+          <thead><tr>
+            ${showingDeleted ? '' : '<th class="select-column"></th>'}
+            <th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th>
+            ${showingDeleted ? '<th>Actions</th>' : ''}
+            ${orderable ? '<th>Order</th>' : ''}
+          </tr></thead>
+          <tbody>${showingDeleted ? deletedIssueRows(issues) : issueRows(issues, { orderable, selectable: true })}</tbody>
         </table>
       </div>
     </div>`;
@@ -360,6 +403,64 @@ async function renderIssuesView(showingDeleted) {
     state.selectedProject = null;
     renderIssues().catch(showError);
   });
+
+  if (orderable) {
+    document.querySelectorAll('[data-move-up]').forEach(button => button.addEventListener('click', async event => {
+      event.stopPropagation();
+      const key = button.dataset.moveUp;
+      const index = issues.findIndex(candidate => candidate.key === key);
+      if (index <= 0) return;
+      try {
+        await api(`/api/issues/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeIssueKey: issues[index - 1].key }) });
+        await renderIssuesView(false);
+      } catch (error) { showToast(error.message); }
+    }));
+    document.querySelectorAll('[data-move-down]').forEach(button => button.addEventListener('click', async event => {
+      event.stopPropagation();
+      const key = button.dataset.moveDown;
+      const index = issues.findIndex(candidate => candidate.key === key);
+      if (index === -1 || index >= issues.length - 1) return;
+      const beforeIssueKey = index + 2 < issues.length ? issues[index + 2].key : null;
+      try {
+        await api(`/api/issues/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeIssueKey }) });
+        await renderIssuesView(false);
+      } catch (error) { showToast(error.message); }
+    }));
+  }
+
+  const bulkBar = document.querySelector('#bulk-bar');
+  const selectedKeys = () => [...document.querySelectorAll('.issue-select:checked')].map(box => box.value);
+  const refreshBulkBar = () => {
+    const count = selectedKeys().length;
+    document.querySelector('#bulk-count').textContent = `${count} selected`;
+    bulkBar.classList.toggle('hidden', count === 0);
+  };
+  document.querySelectorAll('.issue-select').forEach(box => {
+    box.addEventListener('click', event => event.stopPropagation());
+    box.addEventListener('change', refreshBulkBar);
+  });
+  document.querySelector('#bulk-clear')?.addEventListener('click', () => {
+    document.querySelectorAll('.issue-select:checked').forEach(box => { box.checked = false; });
+    refreshBulkBar();
+  });
+  const runBulk = async (path, extraPayload, verb) => {
+    const issueKeys = selectedKeys();
+    if (!issueKeys.length) return;
+    try {
+      const result = await api(path, { method: 'POST', body: JSON.stringify({ issueKeys, ...extraPayload }) });
+      showToast(`${verb}: ${result.succeeded.length} succeeded, ${result.failed.length} failed`);
+      await renderIssuesView(false);
+    } catch (error) { showToast(error.message); }
+  };
+  document.querySelector('#bulk-status-apply')?.addEventListener('click', () => runBulk('/api/issues/bulk/status', { statusKey: document.querySelector('#bulk-status-select').value }, 'Bulk status change'));
+  document.querySelector('#bulk-assign-apply')?.addEventListener('click', () => runBulk('/api/issues/bulk/assign', { assigneeEmail: document.querySelector('#bulk-assignee-select').value || null }, 'Bulk assign'));
+  document.querySelector('#bulk-label-apply')?.addEventListener('click', () => {
+    const label = document.querySelector('#bulk-label-input').value.trim();
+    if (!label) return;
+    runBulk('/api/issues/bulk/label', { label }, 'Bulk add label');
+  });
+  document.querySelector('#bulk-delete-apply')?.addEventListener('click', () => runBulk('/api/issues/bulk/delete', {}, 'Bulk delete'));
+
   bindIssueLinks();
 }
 
@@ -636,6 +737,14 @@ async function openIssue(issueKey) {
               <div class="meta-row"><span>Assignee</span>${assigneeMarkup(issue)}</div>`}
               <div class="meta-row"><span>Reporter</span>${escapeHtml(issue.reporter.displayName)}</div>
               ${issue.parentIssueKey ? `<div class="meta-row"><span>Parent</span><strong class="issue-key" id="drawer-parent-link" style="cursor:pointer">${escapeHtml(issue.parentIssueKey)}</strong></div>` : ''}
+              ${editing || state.projects.filter(project => project.key !== issue.projectKey).length === 0 ? '' : `
+              <div class="meta-row">
+                <span>Move to project</span>
+                <div style="display:flex;gap:6px">
+                  <select id="move-target-project" class="status-select">${state.projects.filter(project => project.key !== issue.projectKey).map(project => `<option value="${escapeHtml(project.key)}">${escapeHtml(project.key)}</option>`).join('')}</select>
+                  <button type="button" class="secondary-button" id="move-issue-button">Move</button>
+                </div>
+              </div>`}
               ${editing ? '' : `
               <div class="meta-row"><span>Story points</span><strong>${issue.storyPoints ?? '—'}</strong></div>
               <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(issue.dueDate))}</strong></div>
@@ -650,6 +759,16 @@ async function openIssue(issueKey) {
       if (issue.parentIssueKey) {
         document.querySelector('#drawer-parent-link').addEventListener('click', () => openIssue(issue.parentIssueKey));
       }
+      document.querySelector('#move-issue-button')?.addEventListener('click', async () => {
+        const targetProjectKey = document.querySelector('#move-target-project').value;
+        try {
+          const moved = await api(`/api/issues/${encodeURIComponent(issue.key)}/move`, { method: 'POST', body: JSON.stringify({ targetProjectKey }) });
+          showToast(`${issue.key} moved to ${moved.key}`);
+          await loadBaseData();
+          await renderCurrentView();
+          await openIssue(moved.key);
+        } catch (error) { showToast(error.message); }
+      });
       document.querySelectorAll('.link-row [data-issue-key]').forEach(element => {
         element.addEventListener('click', () => openIssue(element.dataset.issueKey));
       });

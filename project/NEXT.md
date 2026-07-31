@@ -1,7 +1,7 @@
 # Ticket Hub next work
 
-Current version: 0.2.0 (Phase 3 complete at the core/CLI/test layer; server target now built and
-live-verified — see "Server target verified" below)
+Current version: 0.2.0 (Phase 3 complete at the core/CLI/test layer; server target built and
+live-verified; `web/` demo UI now covers every Phase 1-3 route — see below)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -128,30 +128,37 @@ anything from the removed/deferred list without an explicit new product conversa
   `README.md`'s "Server verification" section. This closes the one standing cross-phase verification gap
   that every prior batch's report had to caveat.
 
-## Login, hierarchy/resolution pickers, issue drawer, project management, and issue recycle bin: done. Immediate next step: bulk actions and reorder/move
+## `web/` UI now covers every Phase 1-3 route. Immediate next step: continue the roadmap (Phase 4/5) or add UX polish
 
-`web/` now covers: a minimal login screen; an Epic/parent picker on create; an inline resolution picker on
-status change; full edit/clone/links/watch-vote and a Delete action in the issue drawer; project management
-(create, archive/unarchive, recycle bin); and, this batch, the issue recycle bin (symmetric to the project
-one) -- all gated the same way the server gates them, with a non-admin's attempt surfacing the resulting
-403 rather than being hidden client-side except where hiding a control entirely is itself the intended UX
-(the recycle-bin toggles). Every one of these was verified end-to-end with a real headless browser
-(Playwright/Chromium), not just `curl` -- full detail in `docs/VERIFICATION.md`. That testing has caught
-and fixed real bugs along the way: a CSS layout bug (a link row overflowing into the drawer's sidebar and
-blocking clicks) and a state-management bug (`state.view`/`selectedProject`/filters were never reset on
-logout, so a second user in the same browser tab could land on a project they can't access or one the
-first user just archived/deleted).
+Across six batches, `web/` grew from a read-only demo (no auth, no writes reachable except create-issue
+and status-change) into full coverage of every route the API exposes: login; an Epic/parent picker on
+create; an inline resolution picker on status change; full edit/clone/links/watch-vote and delete in the
+issue drawer; project management (create, archive/unarchive, recycle bin); the issue recycle bin
+(symmetric to the project one); and, this final batch, manual reordering (an Order column with up/down
+buttons, shown only with a single project selected), moving an issue to another project (a picker in the
+drawer), and simple bulk actions (checkboxes plus a bulk-action bar for status/assign/label/delete).
+Every one of these was verified end-to-end with a real headless browser (Playwright/Chromium), not just
+`curl` -- full detail in `docs/VERIFICATION.md`. That testing caught and fixed several real bugs along the
+way: a CSS layout bug (a link row overflowing into the drawer's sidebar and blocking clicks), a
+state-management bug (`state` was never reset on logout, so a second user in the same browser tab could
+land on a project they can't access or one the first user just archived/deleted), and -- caught
+proactively during implementation, before it could surface as a failing test -- a click-bubbling issue
+where the new checkboxes/reorder buttons live inside the same table row that already opens the issue
+drawer on click.
 
-What is still missing from `web/`:
+There is no remaining gap between what the API exposes (for Phases 1-3) and what the demo UI can reach.
+What's left is roadmap continuation or optional UX polish, not missing functionality:
 
-1. Bulk actions (`POST /api/issues/bulk/*`) -- would need multi-select on the Issues table view, which
-   doesn't exist yet (rows are single-click-to-open only).
-2. The reorder/move actions (`POST /api/issues/{key}/reorder`, `POST /api/issues/{key}/move`) -- reorder
-   naturally wants drag-and-drop on the Board view (not yet interactive; today's board is read-only,
-   clicking a card just opens the drawer) and/or a manual "move before/after" picker; move wants a
-   project picker somewhere in the drawer.
-3. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
-   Phase 4/5 if that is prioritized instead; use judgment on ordering.
+1. Continue the roadmap into Phase 4 (Collaboration) / Phase 5 (Attachments and Kanban board) per
+   `docs/REDUCED_SCOPE_ROADMAP.md` -- the natural next step now that Phase 1-3 is complete end-to-end
+   (core, tests, server, and UI).
+2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
+   the Board view (today's board is read-only, clicking a card just opens the drawer; the Issues table's
+   up/down buttons are the only reorder UI); a friendlier bulk-status picker that also supports
+   Done-category statuses by prompting for a shared resolution; keyboard-driven multi-select.
+3. Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation is still
+   deliberately unimplemented at the application/database layer (see "Finish Phase 3" above) -- no UI
+   would have anywhere to call into for this even if it existed.
 
 ## Finish Phase 3, then continue the roadmap
 
@@ -170,9 +177,11 @@ later-phase features early, and do not implement anything from `docs/REMOVED_AND
 
 Core, CLI, all seven test binaries, and the `ticket-hub` server target itself all compile and pass/run
 cleanly on both SQLite and PostgreSQL, in every supported build configuration, including a live HTTP
-smoke test of essentially every route across all three completed phases and a real-browser
-(Playwright/Chromium) test of the new login flow. The long-standing "server target unverified because
-`github.com` is unreachable" limitation recorded in every prior session no longer applies in this
-environment. Full detail, including exactly what was exercised, is in `docs/VERIFICATION.md`. The
-remaining gap is UI, not verification: only the login screen exists in `web/` so far -- no Phase 2/3
-project/issue-management UI yet (see "Immediate next step" above).
+smoke test of essentially every route across all three completed phases and, across six batches, a
+real-browser (Playwright/Chromium) test of every write route the demo UI now exposes: login/logout,
+hierarchy/resolution pickers, full edit/clone/links/watch-vote/delete in the issue drawer, project
+management, the issue recycle bin, and reorder/move/bulk actions. The long-standing "server target
+unverified because `github.com` is unreachable" limitation recorded in every prior session no longer
+applies in this environment, and there is no longer a gap between what the API exposes for Phases 1-3
+and what the demo UI can reach. Full detail, including exactly what was exercised (and the several real
+bugs this browser testing caught and fixed along the way), is in `docs/VERIFICATION.md`.

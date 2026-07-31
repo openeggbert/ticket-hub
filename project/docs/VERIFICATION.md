@@ -1,5 +1,64 @@
 # Verification record
 
+## 2026-07-31 — Reorder, move, and bulk-action UI: `web/` now covers every Phase 1-3 route
+
+Added the last three missing pieces identified in `NEXT.md`: manual ordering (D31), moving an issue
+between projects (D37), and simple bulk actions (D36). With this batch, every write route added across
+Phases 1-3 has a reachable control somewhere in the demo UI.
+
+### What changed
+
+- `web/app.js`: `issueRows()` gained `orderable` (adds an Order column with move-up/move-down buttons,
+  disabled at the ends) and `selectable` (adds a checkbox column) options. `renderIssuesView()` now sorts
+  the fetched issues by `rankOrder` and passes `orderable: true` whenever exactly one project is selected
+  (reordering is inherently project-scoped -- `reorderIssue`'s `beforeIssueKey` anchor must be in the same
+  project); always passes `selectable: true` in the active (non-recycle-bin) view and renders a bulk-action
+  bar that appears once at least one checkbox is checked.
+- The issue drawer gained a "Move to project" control (target-project `<select>` + button, omitted
+  entirely when there is nowhere else to move to) calling `POST /api/issues/{key}/move`; on success it
+  reopens the drawer under the issue's new key.
+- `deletedIssueRows()` (from the previous batch) is unaffected -- reorder/select only apply to the active
+  view, matching that soft-deleted issues can't be reordered or bulk-acted-on anyway.
+
+### A bug caught and fixed before it could surface in testing
+
+The new checkboxes and move-up/move-down buttons render inside the same `<tr>` that `bindIssueLinks()`
+already binds a click-to-open-drawer handler to (unchanged from every prior batch). Recognized during
+implementation, before running the browser test, that clicking a checkbox or a reorder button would
+therefore *also* open the issue drawer via the bubbled click event -- fixed proactively by calling
+`event.stopPropagation()` in both the checkbox and the move-up/move-down click handlers, then confirmed
+with an explicit assertion in the browser test (`drawer NOT opened by checkbox click: true`) rather than
+just trusting the fix.
+
+### Verification
+
+Standalone Playwright/Chromium scripts (same approach as prior UI batches), against a locally running
+server, SQLite, demo-seeded:
+
+1. Filtering the Issues table to project `TH` shows an Order column; filtering back to "All projects"
+   hides it (count 0).
+2. Moving the second row up swaps it with the first row exactly (`[TH-2, TH-1, TH-3, ...]`); moving the
+   (now-first) row back down restores the original order (`[TH-1, TH-2, TH-3, ...]`) -- confirms the
+   move-up/move-down anchor math is correct in both directions, not just one.
+3. Opening `TH-4`'s drawer shows the "Move to project" control; moving it to `WEB` reopens the drawer
+   showing `WEB-3` (the newly allocated key).
+4. The bulk-action bar is hidden with zero rows checked; checking two rows shows "2 selected" and does
+   *not* open the drawer (the proactive fix, explicitly asserted); bulk-adding a label to both reports "2
+   succeeded, 0 failed" as a toast.
+5. Re-ran every prior UI batch's browser test (login, hierarchy/resolution pickers, edit/links/clone/
+   watch-vote, project management, issue recycle bin) against the same build to confirm no regression --
+   all five still pass unchanged.
+
+All checks passed on the first full run (the checkbox/click-bubbling issue was caught by reasoning through
+the DOM structure during implementation and fixed before ever running the test, not found by a failing
+test). No committed test files or screenshots (scratchpad only).
+
+### What is still not built
+
+Nothing from the Phase 1-3 API surface is missing UI coverage anymore. `web/` still has no UI for
+anything beyond that surface (e.g. no drag-and-drop on the Board, no keyboard-driven bulk selection) --
+those were never part of the reduced-scope V1 target's write-route list, just possible UX refinements.
+
 ## 2026-07-31 — Issue recycle bin UI added
 
 Added the symmetric counterpart to last batch's project recycle bin: a Delete action in the issue drawer

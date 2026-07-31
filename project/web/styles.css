@@ -140,6 +140,14 @@ button { cursor: pointer; }
 .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: #fafbfc; }
 .filter-bar select, .filter-bar input { min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: white; color: var(--text); }
 .filter-bar input { min-width: 260px; }
+.bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: #e9f2ff; }
+.bulk-bar select, .bulk-bar input { min-height: 32px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px; background: white; }
+.bulk-bar #bulk-count { font-size: 12px; font-weight: 700; color: #0055cc; margin-right: 4px; }
+.bulk-bar .secondary-button, .bulk-bar .ghost-button { padding: 6px 10px; font-size: 12px; }
+.issue-table th.select-column, .issue-table td.select-column { width: 1%; padding-right: 0; }
+.order-cell { white-space: nowrap; }
+.order-cell .icon-button { width: 24px; height: 24px; font-size: 14px; }
+.order-cell .icon-button:disabled { opacity: .3; cursor: default; }
 
 .board { display: grid; grid-template-columns: repeat(5, minmax(250px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 10px; }
 .board-column { min-height: 520px; padding: 10px; border-radius: 10px; background: #ebecf0; }

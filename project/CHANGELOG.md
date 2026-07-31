@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased — Reorder, move, and bulk-action UI: the demo UI now covers every Phase 1-3 route
+
+- **Reorder (D31)**: filtering the Issues table to a single project now sorts it by `rankOrder` and adds
+  an Order column with move-up/move-down buttons per row, calling `POST /api/issues/{key}/reorder` with
+  the correct adjacent-issue anchor for a one-position swap. Only shown with a single project selected,
+  since `reorderIssue`'s anchor must be in the same project as the issue being moved. Filtering back to
+  "All projects" hides the column.
+- **Move (D37)**: the issue drawer now has a "Move to project" control (target-project select + button,
+  hidden when there's nowhere to move to) calling `POST /api/issues/{key}/move`; on success the drawer
+  reopens showing the issue under its new key.
+- **Bulk actions (D36)**: the Issues table now has a checkbox per row and a bulk-action bar (shown once at
+  least one row is checked) offering set-status, assign, add-label, and delete, each calling the matching
+  `POST /api/issues/bulk/*` route and reporting `succeeded`/`failed` counts as a toast. Done-category
+  statuses are deliberately excluded from the bulk status picker, since bulk status change can't supply a
+  per-issue `resolution` and every one of those calls would otherwise 422.
+- Found and fixed a real bug proactively (before it could surface in testing): the new row checkboxes and
+  reorder buttons live inside the same `<tr>` that already has a click-to-open-drawer handler
+  (`bindIssueLinks()`), so a naive implementation would have both opened the issue drawer *and* performed
+  the intended action on every click. Fixed by calling `event.stopPropagation()` in the checkbox and
+  move-up/move-down click handlers.
+- Verified end-to-end with a headless browser (Playwright/Chromium): the Order column appears only with a
+  single project selected and disappears when cleared; moving a row up swaps it with its neighbor and
+  moving back down restores the original order; moving an issue to another project navigates the drawer to
+  its new key; clicking a row checkbox does *not* open the drawer; bulk-adding a label to two selected
+  issues reports "2 succeeded, 0 failed". Re-ran every prior UI batch's browser test to confirm no
+  regression -- all still pass unchanged.
+- This closes out `web/`'s coverage of every route added across Phases 1-3 of
+  `docs/REDUCED_SCOPE_ROADMAP.md`: every write the API exposes now has a reachable control in the demo UI.
+
 ## Unreleased — Issue recycle bin UI
 
 - Added a Delete button (🗑) to the issue drawer's actions row (`DELETE /api/issues/{key}`), closing the
