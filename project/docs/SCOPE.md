@@ -57,9 +57,9 @@ remain as the long-term aspirational baseline only — do not build against them
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
 - `web/` now covers the full single-issue lifecycle (login, hierarchy/resolution pickers, full edit,
-  clone, links, watch/vote) and project management (create, archive, recycle bin). Still no issue
-  recycle-bin UI, bulk-action UI, or reorder/move UI -- the routes themselves are built and live-verified
-  (see above), but nothing in the demo UI calls those write routes yet.
+  clone, links, watch/vote, delete/recycle-bin) and project management (create, archive, recycle bin).
+  Still no bulk-action UI or reorder/move UI -- the routes themselves are built and live-verified (see
+  above), but nothing in the demo UI calls those write routes yet.
 - Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch

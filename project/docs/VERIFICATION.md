@@ -1,5 +1,46 @@
 # Verification record
 
+## 2026-07-31 — Issue recycle bin UI added
+
+Added the symmetric counterpart to last batch's project recycle bin: a Delete action in the issue drawer
+and a recycle-bin view in the Issues list, both gated the same way (global-administrator-only to view the
+bin/restore/purge; project-Admin-or-above to soft-delete, matching D22's mirror of D88/D89).
+
+### What changed
+
+- `web/app.js`: a Delete button in the drawer's actions row (`DELETE /api/issues/{key}`); `renderIssues()`
+  now delegates to `renderIssuesView(showingDeleted)` exactly mirroring `renderProjectsView`'s shape --
+  active view keeps the existing filter bar, recycle-bin view replaces it with Restore/Delete-permanently
+  buttons per row from `GET /api/issues/deleted`, and a toggle button visible only to global admins swaps
+  between the two.
+- Deleted-issue rows are deliberately not given a click-to-open-drawer handler, since a soft-deleted issue
+  is excluded from ordinary `GET /api/issues/{key}` lookup (would 404).
+
+### Verification
+
+Standalone Playwright/Chromium scripts (same approach as prior UI batches), against a locally running
+server, SQLite, demo-seeded:
+
+1. As the global-admin `demo` user: deleting `TH-1` via the drawer's Delete button closes the drawer and
+   removes the row from the active Issues table; the recycle-bin toggle shows it in the bin; Restore
+   returns it to the active table; deleting it again and clicking Delete-permanently removes it from the
+   bin entirely.
+2. As `sam` (a TH project member, not a project admin): the recycle-bin toggle is entirely absent from the
+   Issues view; attempting to delete `TH-2` via the drawer fails with the server's exact message ("Actor
+   lacks the required role on project TH") shown as a toast, and the drawer stays open since the delete
+   never actually happened -- confirming the client doesn't fake success or crash on a 403.
+3. Re-ran all four prior UI batches' browser tests (login, hierarchy/resolution pickers, edit/links/clone/
+   watch-vote, project management) against the same build to confirm no regression -- all still pass
+   unchanged.
+
+All checks passed on the first implementation attempt (after fixing one ambiguous test locator, not an
+app bug -- an `h1` selector matched both the recycle-bin page heading and the still-in-DOM, merely hidden,
+issue drawer's own `<h1>`). No committed test files or screenshots (scratchpad only).
+
+### What is still not built
+
+Bulk actions and reorder/move still have no UI in `web/` -- see `NEXT.md`.
+
 ## 2026-07-31 — Project-management UI added: create, archive, recycle bin
 
 Added the next missing `web/` area: project lifecycle management. Previously the Projects view was purely
