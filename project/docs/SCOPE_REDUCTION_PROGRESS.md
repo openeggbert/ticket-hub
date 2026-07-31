@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 100 / 142
-- Decisions remaining: 42
-- KEEP_FOR_V1: 19
-- SIMPLIFY_FOR_V1: 37
+- Decisions completed: 110 / 142
+- Decisions remaining: 32
+- KEEP_FOR_V1: 22
+- SIMPLIFY_FOR_V1: 42
 - DEFER_AFTER_V1: 22
 - REMOVE_COMPLETELY: 7
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 15
+- ALREADY_IMPLEMENTED_AND_KEEP: 17
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -135,16 +135,16 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 97 | Labels | Free-form labels, autocomplete, case-insensitive normalization | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Trim/lowercase/dedup already implemented in prototype | 0h | DONE |
 | 98 | Attachment limits/security | Configurable size/count/MIME allow-deny/extension/quota limits; no antivirus/DLP | Fixed reasonable limits (e.g. 25MB/file, 20 attachments/issue, blocked dangerous extensions), no admin configuration, no quotas | SIMPLIFY_FOR_V1 | Full admin configuration subsystem for limits/quotas not justified vs fixed sane defaults | 8-12h | DONE |
 | 99 | Attachment previews | Safe previews: images, PDF, text/source, browser-supported audio/video; others download-only | Keep all 4 preview types using native browser elements (img, embed/iframe for PDF, audio/video tags); no custom PDF.js or heavy libraries | KEEP_FOR_V1 | Most preview types map to native HTML elements rather than custom libraries, keeping cost reasonable | 0h (kept as-is) | DONE |
-| 100 | Inline images in Markdown |  |  |  |  |  | PENDING |
-| 101 | Attachment listing/deletion |  |  |  |  |  | PENDING |
-| 102 | Attachment recycle-bin retention |  |  |  |  |  | PENDING |
-| 103 | Duplicate attachment filename |  |  |  |  |  | PENDING |
-| 104 | Physical attachment deduplication |  |  |  |  |  | PENDING |
-| 105 | Attachment integrity |  |  |  |  |  | PENDING |
-| 106 | Backup layout for attachments |  |  |  |  |  | PENDING |
-| 107 | Backup consistency mode |  |  |  |  |  | PENDING |
-| 108 | Restore safety |  |  |  |  |  | PENDING |
-| 109 | Backup version direction |  |  |  |  |  | PENDING |
+| 100 | Inline images in Markdown | Ordinary attachments referenced via attachment://UUID; upload, drag/drop, clipboard paste; no unrestricted external embedding | Keep full upload + drag/drop + paste support in the Markdown editor | KEEP_FOR_V1 | Natural extension of the full Markdown editor (Decision 16) and local attachment storage (Decision 15) | 0h (kept as-is) | DONE |
+| 101 | Attachment listing/deletion | Sortable list (name/size/date/author/type) plus recycle bin; deletion leaves removed marker in Markdown; admin restore/purge | Keep sortable list and recycle bin for attachments | KEEP_FOR_V1 | Consistent with the same soft-delete pattern already used for issues/comments/projects | 0h (kept as-is) | DONE |
+| 102 | Attachment recycle-bin retention | Configurable retention, default 90 days; verify no valid reference before purge | Fixed 90-day retention, on-demand check, no admin config, no background job (consistent with Decision 89) | SIMPLIFY_FOR_V1 | Same pattern as project recycle-bin retention in Decision 89, consistent with job infrastructure removal in Decision 51 | 3-5h | DONE |
+| 103 | Duplicate attachment filename | Create independent immutable attachment; same filename allowed multiple times | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Already implemented via attachments table design | 0h | DONE |
+| 104 | Physical attachment deduplication | None initially; every upload stores independent physical object even if identical | Confirmed unchanged | KEEP_FOR_V1 | Already the cheapest option; deduplication would add reference-counting complexity | 0h | DONE |
+| 105 | Attachment integrity | Verify at upload and via periodic background audits; report missing/altered/corrupt objects | Upload-time SHA-256/size verification only; no periodic audit mechanism at all | SIMPLIFY_FOR_V1 | Periodic background audits require job infrastructure removed in Decision 51; user chose to drop this entirely rather than add a CLI-triggered variant | 5-8h | DONE |
+| 106 | Backup layout for attachments | Database/config and attachment objects separate, joined by checksummed manifest for scalable consistent restore | Simple approach: copy attachment directory plus a DB dump; no separate checksum manifest file | SIMPLIFY_FOR_V1 | Attachments are local-filesystem-only now (Decision 15), making manifest-based reconciliation unnecessary overhead | 5-8h | DONE |
+| 107 | Backup consistency mode | Both offline/read-only and online snapshot; PostgreSQL defaults to online, SQLite short read-only window | Offline/maintenance-window backup only for both databases; no online consistent snapshot logic | SIMPLIFY_FOR_V1 | Online consistent snapshot requires nontrivial transaction/replication-slot handling; simpler maintenance-window approach sufficient for small deployments | 10-15h | DONE |
+| 108 | Restore safety | Restore into isolated temporary environment, verify manifest/checksums/schema/integrity, then atomic switch, keep old data for rollback | Direct restore into target database via ticket-hub restore command with a confirmation warning; admin responsible for their own pre-restore backup; no isolated staging environment | SIMPLIFY_FOR_V1 | Isolated-environment restore orchestration is nontrivial; direct restore with a clear warning is acceptable for small self-hosted deployments | 15-25h | DONE |
+| 109 | Backup version direction | Forward migrate older supported backups; reject newer backups in older app; no downgrade | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Natural consequence of the existing ordered checksummed migration system | 0-2h | DONE |
 | 110 | Very old backup compatibility |  |  |  |  |  | PENDING |
 | 111 | Application upgrades |  |  |  |  |  | PENDING |
 | 112 | Automatic application updates |  |  |  |  |  | PENDING |
