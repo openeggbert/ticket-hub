@@ -63,6 +63,19 @@ public:
                                            std::optional<std::int64_t> expectedVersion = std::nullopt);
     Domain::Comment addComment(const std::string& issueKey, const std::string& body, const Domain::Principal& actor);
 
+    // --- Comment editing and tombstone delete (Phase 4, D81/D82/D83) ---
+    // Simplified permissions (D83): the comment's own author may always edit
+    // or delete it; otherwise the actor needs project-Admin-or-above on the
+    // comment's issue's project (or global admin) -- there is no separate
+    // edit-own/edit-all/delete-own/delete-all permission matrix. Returns
+    // nullopt/false if the comment (or its issue) does not exist.
+    std::optional<Domain::Comment> editComment(const std::string& issueKey,
+                                               const std::string& commentId,
+                                               const std::string& body,
+                                               const Domain::Principal& actor,
+                                               std::optional<std::int64_t> expectedVersion = std::nullopt);
+    bool deleteComment(const std::string& issueKey, const std::string& commentId, const Domain::Principal& actor);
+
     // Simple field-copy clone (D60): summary/description/type/priority/labels
     // into a new issue in the same project, plus a `clones`/`is cloned by`
     // link back to the original. Assignee, story points, due date, and

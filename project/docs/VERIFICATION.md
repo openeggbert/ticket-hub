@@ -1,5 +1,72 @@
 # Verification record
 
+## 2026-07-31 — Comment editing and tombstone delete (D81/D82/D83): Phase 4 started
+
+First Phase 4 (Collaboration) slice: comments can now be edited (with an `edited_at` marker, D81) and
+tombstone-deleted (soft delete via the same columns issues/projects already use, D82), with simplified
+author-or-project-admin permissions (D83).
+
+### What changed
+
+- Migration `008_comment_editing.sql` (both backends) adds `comments.edited_at` (`TEXT` on SQLite,
+  `TIMESTAMPTZ` on PostgreSQL).
+- `Domain::Comment` gained `editedAt` (`std::optional<std::string>`).
+- `IDatabase` gained `findCommentById`, `editComment` (same optimistic-locking contract as `editIssue`:
+  a mismatched `expectedVersion` throws `Domain::ConcurrencyConflict`; sets `edited_at` and bumps
+  `version` on success), and `deleteComment` (tombstone soft-delete, mirrors `softDeleteIssue` exactly).
+  Implemented in both `SqliteDatabase` and `PostgresDatabase`, sharing a `readComment`/`CommentSelect`
+  helper with the existing `listComments`/`addComment` (which were rewritten to use it instead of
+  duplicating the column list).
+- `TicketService` gained `editComment`/`deleteComment`: the comment's own author may always act on it;
+  otherwise the actor needs project-Admin-or-above on the comment's issue's project (checked via the
+  existing `requireProjectRole`, which already bypasses for global admins -- no separate check needed).
+- `Api.cpp`: `commentJson` now includes `version`/`editedAt`; new `PATCH`/
+  `DELETE /api/issues/{key}/comments/{id}` routes follow the established auth/CSRF/error-mapping pattern
+  (`Domain::ConcurrencyConflict` -> 409, `Domain::Forbidden` -> 403, `std::invalid_argument` -> 400).
+- `web/app.js`: comment list rendering gained `data-comment-id`, an `(edited)` marker, and conditional
+  Edit/Delete buttons (`canModerate = comment.author.id === state.principal?.userId ||
+  state.principal?.isAdmin` -- a client-side simplification, not the security boundary, since the client
+  never loads per-project role information anywhere else in the app either; the server enforces D83
+  independently). Edit toggles an in-place textarea (Save sends `PATCH` with `expectedVersion:
+  comment.version`; Cancel discards by re-fetching the issue). Delete sends `DELETE` and refreshes.
+  `web/styles.css` gained `.comment-actions`/`.comment-edit-textarea`/`.comment-edit-actions`.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files (Crow's headers still emit their own expected `-Wconversion` noise).
+2. `ctest --output-on-failure`: 7/7 green, including new assertions in `sqlite_integration_tests`
+   (`findCommentById`, `editComment` success/version-increment/`edited_at`-set/stale-conflict/
+   unknown-returns-nullopt, `deleteComment` soft-delete/excluded-from-listing/not-found/no-op-on-repeat/
+   row-still-physically-present) and `authorization_integration_tests` (non-author-non-admin Forbidden
+   for edit and delete, self-edit succeeds, global-admin can edit/delete any comment, unknown-comment
+   returns nullopt/false).
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile and pass cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised
+   `findCommentById`/`editComment`/`deleteComment` directly against `PostgresDatabase` and a local
+   PostgreSQL server (created and dropped for this check), confirming the same behavior as the SQLite
+   integration tests.
+5. Standalone Playwright/Chromium script (same approach as every prior UI batch), against a locally
+   running server, SQLite, demo-seeded: logged in as `demo`, added a comment, confirmed the Edit button
+   is visible for the author's own comment, edited it and confirmed the new body and an `(edited)`
+   marker appear, clicked Edit again and Cancel and confirmed the change was discarded, then deleted the
+   comment and confirmed the comment count dropped by one. Logged out, logged in as `alex`, added a
+   second comment; logged out, logged in as `sam` (neither the author nor a global admin), opened the
+   same issue, and confirmed `sam` sees zero Edit buttons on `alex`'s comment (client-side hiding,
+   backed by the server-side authorization tests above).
+6. Re-ran every prior UI batch's browser test (login, hierarchy/resolution pickers, edit/links/clone/
+   watch-vote, project management, both recycle bins, reorder/move/bulk actions) against the same build
+   to confirm no regression -- all still pass unchanged.
+
+All checks passed. No committed test scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+The rest of Phase 4 remains unimplemented: the full Markdown editor/toolbar/preview (D16), fixed emoji
+reactions on comments (D84), `@handle` mentions with autocomplete (D80, needs a new `users.handle`
+column, D56), the fixed in-app notification set (D14), simplified worklogs (D13), and the append-only
+admin/security audit log (D23). Phase 5 (attachments and the Kanban board) is untouched.
+
 ## 2026-07-31 — Reorder, move, and bulk-action UI: `web/` now covers every Phase 1-3 route
 
 Added the last three missing pieces identified in `NEXT.md`: manual ordering (D31), moving an issue

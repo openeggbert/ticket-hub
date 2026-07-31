@@ -202,6 +202,25 @@ void expectDone(sqlite3* database, Statement& statement, const std::string& acti
     }
 }
 
+Domain::Comment readComment(sqlite3_stmt* statement) {
+    Domain::Comment comment;
+    comment.id = text(statement, 0);
+    comment.issueId = text(statement, 1);
+    comment.author = readUserSummary(statement, 2);
+    comment.body = text(statement, 5);
+    comment.createdAt = text(statement, 6);
+    comment.updatedAt = text(statement, 7);
+    comment.version = sqlite3_column_int64(statement, 8);
+    comment.editedAt = optionalText(statement, 9);
+    return comment;
+}
+
+constexpr const char* CommentSelect = R"SQL(
+SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
+       c.body, c.created_at, c.updated_at, c.version, c.edited_at
+FROM comments c JOIN users u ON u.id = c.author_user_id
+)SQL";
+
 } // namespace
 
 SqliteDatabase::SqliteDatabase(std::string databasePath, std::string migrationsDirectory, std::string seedPath)
@@ -1246,27 +1265,18 @@ VALUES (?, ?, ?, 'project', ?, ?)
 
 std::vector<Domain::Comment> SqliteDatabase::listComments(const std::string& issueKey) {
     std::scoped_lock lock(mutex_);
-    Statement statement(database_, R"SQL(
-SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
-       c.body, c.created_at, c.updated_at
-FROM comments c
+    const std::string sql = std::string(CommentSelect) + R"SQL(
 JOIN issues i ON i.id = c.issue_id
-JOIN users u ON u.id = c.author_user_id
 WHERE c.deleted_at IS NULL
   AND i.deleted_at IS NULL
   AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
 ORDER BY c.created_at
-)SQL");
+)SQL";
+    Statement statement(database_, sql);
     statement.bind(1, issueKey);
     std::vector<Domain::Comment> comments;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
-        comments.push_back(Domain::Comment{
-            text(statement.get(), 0),
-            text(statement.get(), 1),
-            readUserSummary(statement.get(), 2),
-            text(statement.get(), 5),
-            text(statement.get(), 6),
-            text(statement.get(), 7)});
+        comments.push_back(readComment(statement.get()));
     }
     return comments;
 }
@@ -1288,19 +1298,84 @@ VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     insert.bind(4, request.body);
     expectDone(database_, insert, "Comment insert");
 
-    Statement read(database_, R"SQL(
-SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
-       c.body, c.created_at, c.updated_at
-FROM comments c JOIN users u ON u.id = c.author_user_id
-WHERE c.id = ?
-)SQL");
+    const std::string sql = std::string(CommentSelect) + "WHERE c.id = ?";
+    Statement read(database_, sql);
     read.bind(1, commentId);
     if (read.step() != SQLITE_ROW) {
         throw std::runtime_error("Created comment could not be read back");
     }
-    return Domain::Comment{
-        text(read.get(), 0), text(read.get(), 1), readUserSummary(read.get(), 2), text(read.get(), 5),
-        text(read.get(), 6), text(read.get(), 7)};
+    return readComment(read.get());
+}
+
+std::optional<Domain::Comment> SqliteDatabase::findCommentById(const std::string& commentId) {
+    std::scoped_lock lock(mutex_);
+    const std::string sql = std::string(CommentSelect) + "WHERE c.id = ? AND c.deleted_at IS NULL";
+    Statement statement(database_, sql);
+    statement.bind(1, commentId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readComment(statement.get());
+}
+
+// `actorUserId` is unused: D81's simplified edited-flag schema has no
+// per-edit actor column (unlike issue_history) -- only `edited_at` is
+// tracked. Kept in the signature for symmetry with editIssue and in case a
+// future decision adds an `edited_by_user_id` column.
+std::optional<Domain::Comment> SqliteDatabase::editComment(const std::string& commentId,
+                                                            const std::string& body,
+                                                            const std::string& /*actorUserId*/,
+                                                            const std::optional<std::int64_t> expectedVersion) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        Statement current(database_, "SELECT version FROM comments WHERE id = ? AND deleted_at IS NULL");
+        current.bind(1, commentId);
+        if (current.step() != SQLITE_ROW) {
+            executeScript("ROLLBACK;");
+            return std::nullopt;
+        }
+        const std::int64_t currentVersion = sqlite3_column_int64(current.get(), 0);
+        if (expectedVersion && *expectedVersion != currentVersion) {
+            throw Domain::ConcurrencyConflict("Comment was modified by another user");
+        }
+
+        Statement update(database_, R"SQL(
+UPDATE comments SET body = ?, version = version + 1, edited_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+)SQL");
+        update.bind(1, body);
+        update.bind(2, commentId);
+        expectDone(database_, update, "Comment edit update");
+
+        executeScript("COMMIT;");
+        const std::string sql = std::string(CommentSelect) + "WHERE c.id = ?";
+        Statement read(database_, sql);
+        read.bind(1, commentId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Edited comment could not be read back");
+        }
+        return readComment(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool SqliteDatabase::deleteComment(const std::string& commentId, const std::string& actorUserId) {
+    std::scoped_lock lock(mutex_);
+    const std::string actorId = requireUserId(database_, actorUserId);
+    Statement statement(database_, R"SQL(
+UPDATE comments SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND deleted_at IS NULL
+)SQL");
+    statement.bind(1, actorId);
+    statement.bind(2, commentId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
 }
 
 Domain::DashboardStats SqliteDatabase::dashboardStats() {

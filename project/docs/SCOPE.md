@@ -54,6 +54,14 @@ remain as the long-term aspirational baseline only — do not build against them
   permanent alias (D38). See "Not yet built" below for the rest of Phase 3.
 - Domain, migration, crypto, identity, SQLite integration, authorization, and workflow tests (7/7
   passing; see `docs/VERIFICATION.md`).
+- **Comment editing and tombstone delete (Phase 4, partial, D81/D82/D83):** an `edited_at` timestamp
+  instead of a version-history table; soft-delete via the same `deleted_at`/`deleted_by_user_id` columns
+  issues and projects already use, with no separate admin recycle-bin API for comments (the row and
+  original body simply remain in the database, excluded from ordinary listing); simplified permissions --
+  the comment's own author can always edit/delete it, otherwise the actor needs project-Admin-or-above (or
+  global admin), no separate edit-own/edit-all/delete-own/delete-all matrix. Same optimistic-locking
+  contract (`expectedVersion` -> `Domain::ConcurrencyConflict`, 409) as issue edits. See "Not yet built"
+  below for the rest of Phase 4.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -61,7 +69,11 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Comments/mentions/reactions, attachments, and the Kanban board are not implemented (Phase 4-5).
+- Rest of Phase 4: the full Markdown editor/toolbar/preview (D16), emoji reactions (D84), `@handle`
+  mentions with autocomplete (D80, needs a new `users.handle` column, D56), the fixed in-app notification
+  set (D14), simplified worklogs (D13), and the append-only admin/security audit log (D23) are not
+  implemented yet.
+- Attachments and the Kanban board are not implemented (Phase 5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).

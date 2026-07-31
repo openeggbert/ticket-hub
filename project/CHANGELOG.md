@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — Comment editing and tombstone delete (D81/D82/D83): Phase 4 started
+
+- **Comment editing (D81)**: comments can now be edited via `PATCH /api/issues/{key}/comments/{id}`, with
+  the same optimistic-locking contract as issue edits (`expectedVersion` -> `Domain::ConcurrencyConflict`,
+  409) and a single `edited_at` timestamp recorded instead of a full version-history table. Migration
+  `008_comment_editing.sql` adds `comments.edited_at` on both backends.
+- **Tombstone delete (D82)**: `DELETE /api/issues/{key}/comments/{id}` soft-deletes via the same
+  `deleted_at`/`deleted_by_user_id` columns issues and projects already use. The comment row and its
+  original body remain in the database, excluded from ordinary listing -- there is no separate admin
+  recycle-bin API for comments, unlike issues and projects.
+- **Simplified permissions (D83)**: the comment's own author may always edit/delete it; otherwise the
+  actor needs project-Admin-or-above on the comment's issue's project (or global admin) -- no separate
+  edit-own/edit-all/delete-own/delete-all matrix.
+- `web/`: comments gained Edit/Delete buttons (hidden client-side for non-author/non-global-admin
+  actors), an inline edit textarea with Save/Cancel, and an `(edited)` marker. Browser-verified with
+  Playwright/Chromium, including a cross-user check that a non-author, non-admin user cannot see
+  Edit/Delete on someone else's comment.
+- New SQLite-integration and authorization-integration test coverage for `findCommentById`/
+  `editComment`/`deleteComment`.
+
 ## Unreleased — Reorder, move, and bulk-action UI: the demo UI now covers every Phase 1-3 route
 
 - **Reorder (D31)**: filtering the Issues table to a single project now sorts it by `rankOrder` and adds

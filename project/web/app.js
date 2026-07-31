@@ -716,8 +716,31 @@ async function openIssue(issueKey) {
               </section>
               <section class="drawer-section">
                 <h3>Comments</h3>
-                <div class="comment-list">${comments.items.length ? comments.items.map(comment => `
-                  <article class="comment"><span class="small-avatar">${escapeHtml(initials(comment.author.displayName))}</span><div class="comment-body"><header><strong>${escapeHtml(comment.author.displayName)}</strong><span>${escapeHtml(relativeDate(comment.createdAt))}</span></header><p>${escapeHtml(comment.body)}</p></div></article>`).join('') : '<div class="empty-state">No comments yet.</div>'}</div>
+                <div class="comment-list">${comments.items.length ? comments.items.map(comment => {
+                  // Simplified permissions (D83): the author can always
+                  // edit/delete their own comment. A project admin (not
+                  // global admin) could too per the server, but the client
+                  // never loads per-project role, so the buttons are shown
+                  // only for the author or a global admin -- a conservative
+                  // UI simplification, not a security boundary (the server
+                  // enforces the real rule regardless).
+                  const canModerate = comment.author.id === state.principal?.userId || state.principal?.isAdmin;
+                  return `
+                  <article class="comment" data-comment-id="${escapeHtml(comment.id)}">
+                    <span class="small-avatar">${escapeHtml(initials(comment.author.displayName))}</span>
+                    <div class="comment-body">
+                      <header>
+                        <strong>${escapeHtml(comment.author.displayName)}</strong>
+                        <span>${escapeHtml(relativeDate(comment.createdAt))}${comment.editedAt ? ' (edited)' : ''}</span>
+                      </header>
+                      <p class="comment-body-text" data-raw-body="${escapeHtml(comment.body)}">${escapeHtml(comment.body)}</p>
+                      ${canModerate ? `<div class="comment-actions">
+                        <button type="button" class="ghost-button" data-edit-comment="${escapeHtml(comment.id)}">Edit</button>
+                        <button type="button" class="ghost-button" data-delete-comment="${escapeHtml(comment.id)}">Delete</button>
+                      </div>` : ''}
+                    </div>
+                  </article>`;
+                }).join('') : '<div class="empty-state">No comments yet.</div>'}</div>
                 <form class="comment-form" id="comment-form"><textarea name="body" rows="3" required placeholder="Add a comment…"></textarea><button class="primary-button" type="submit">Comment</button></form>
               </section>
             </div>
@@ -849,6 +872,38 @@ async function openIssue(issueKey) {
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
       });
+      document.querySelectorAll('[data-delete-comment]').forEach(button => button.addEventListener('click', async () => {
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(button.dataset.deleteComment)}`, { method: 'DELETE' });
+          showToast('Comment deleted');
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      }));
+      document.querySelectorAll('[data-edit-comment]').forEach(button => button.addEventListener('click', () => {
+        const commentId = button.dataset.editComment;
+        const comment = comments.items.find(candidate => candidate.id === commentId);
+        const article = document.querySelector(`[data-comment-id="${CSS.escape(commentId)}"]`);
+        const bodyElement = article.querySelector('.comment-body-text');
+        bodyElement.innerHTML = `
+          <textarea class="comment-edit-textarea" rows="3">${escapeHtml(comment.body)}</textarea>
+          <div class="comment-edit-actions">
+            <button type="button" class="secondary-button" id="comment-edit-cancel">Cancel</button>
+            <button type="button" class="primary-button" id="comment-edit-save">Save</button>
+          </div>`;
+        article.querySelector('#comment-edit-cancel').addEventListener('click', () => openIssue(issue.key));
+        article.querySelector('#comment-edit-save').addEventListener('click', async () => {
+          const newBody = article.querySelector('.comment-edit-textarea').value.trim();
+          if (!newBody) return;
+          try {
+            await api(`/api/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(commentId)}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ body: newBody, expectedVersion: comment.version })
+            });
+            showToast('Comment updated');
+            await openIssue(issue.key);
+          } catch (error) { showToast(error.message); }
+        });
+      }));
 
       if (editing) {
         document.querySelector('#edit-cancel').addEventListener('click', () => render(false));

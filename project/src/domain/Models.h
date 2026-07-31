@@ -237,6 +237,10 @@ struct Comment {
     std::string body;
     std::string createdAt;
     std::string updatedAt;
+    std::int64_t version{1};
+    // Set once a comment is edited (D81); replaces a full version-history
+    // table -- only "this was edited at X" is kept, not the prior text.
+    std::optional<std::string> editedAt;
 };
 
 struct Issue {
