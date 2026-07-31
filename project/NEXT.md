@@ -21,31 +21,35 @@ anything from the removed/deferred list without an explicit new product conversa
 
 ## Immediate next implementation slice — Phase 1 of `docs/REDUCED_SCOPE_ROADMAP.md`
 
-**Identity and sessions** (Milestone 1 — Minimal usable tracker). This is the smallest phase that
-still produces forward progress: nothing else in the reduced roadmap can start until real principals
-exist.
+**Identity and sessions** (Milestone 1 — Minimal usable tracker), **further reduced by the product
+owner on 2026-07-31 before implementation started** (see `docs/REDUCED_SCOPE_ROADMAP.md` Phase 1 for
+the full rationale). This is the smallest phase that still produces forward progress: nothing else in
+the reduced roadmap can start until real principals exist.
 
-1. Introduce a `Principal` model and pass it into application write use cases, replacing the fixed
-   `demo` user.
-2. Add identity migrations for the **reduced** scope only:
-   - `users`: UUID identity, unique email, optional unique handle, `time_zone`, `clock_format`
-     (migrate the prototype's `username` column) — **no** generic i18n `locale` field,
+1. Introduce a `Principal` model and pass it into application write use cases, **removing the fixed
+   `demo` user entirely** (no dual demo-mode toggle — simpler than the original plan).
+2. Add identity migrations for the **further-reduced** scope only:
+   - `users`: UUID identity, unique email, `time_zone`, `clock_format` (migrate the prototype's
+     `username` column) — **no `handle` column yet** (added in Phase 4 with @mentions) and **no**
+     generic i18n `locale` field,
    - `local_credentials` (Argon2id),
    - `sessions`.
    - Do **not** add `invitations`, `groups`/`group_members`, `oidc_providers`, or
      `external_identities` — all removed for V1 (`docs/REDUCED_SCOPE_DATA_MODEL.md` §B).
-3. Add local-password hashing behind an authentication port (Argon2id, strength checks, rate limiting,
-   temporary lockout).
-4. Add login/logout/session endpoints and CSRF protection.
-5. Add an administrator-only "create user" action that sets a temporary password directly — this *is*
-   the entire registration/reset story for V1; there is no invitation flow and no self-service email
-   reset (see `REDUCED_SCOPE_SPECIFICATION.md` §3).
-6. Remove the fixed `demo` user from production write paths while retaining an explicit demo mode.
-7. Add authentication and session integration tests for SQLite; add PostgreSQL test wiring through an
+3. Add local-password hashing behind an authentication port: Argon2id, basic password length/strength
+   check, and a simple **login attempt counter** — the full configurable lockout policy is deferred to
+   Phase 6 alongside REST rate limiting (D124).
+4. Add login/logout/session endpoints and CSRF protection. **No active-session list or "sign out
+   everywhere" endpoint yet** — deferred to Phase 6.
+5. Add an administrator-only "create user" action that **sets the password directly** — no
+   `must_change_password` flag, no forced-change-on-first-login flow (permanent V1 simplification, not
+   a resequencing). This is the entire registration/reset story for V1; there is no invitation flow and
+   no self-service email reset (see `REDUCED_SCOPE_SPECIFICATION.md` §3).
+6. Add authentication and session integration tests for SQLite; add PostgreSQL test wiring through an
    environment-provided connection string.
 
-Exit gate (per `docs/REDUCED_SCOPE_ROADMAP.md` Phase 1): no fixed demo identity remains in any write
-use case; login/logout/session endpoints are tested on both databases; `ctest --output-on-failure`
+Exit gate (per `docs/REDUCED_SCOPE_ROADMAP.md` Phase 1): no fixed demo identity remains anywhere in the
+codebase; login/logout/session endpoints are tested on both databases; `ctest --output-on-failure`
 green on all supported build configurations.
 
 ## After Phase 1
