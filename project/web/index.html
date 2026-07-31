@@ -9,7 +9,29 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="app-shell">
+  <div class="login-screen hidden" id="login-screen">
+    <form class="login-card" id="login-form">
+      <div class="brand">
+        <div class="brand-mark">TH</div>
+        <div>
+          <strong>Ticket Hub</strong>
+          <span>Sign in to continue</span>
+        </div>
+      </div>
+      <label>
+        Email
+        <input name="email" type="email" required autocomplete="username" autofocus>
+      </label>
+      <label>
+        Password
+        <input name="password" type="password" required autocomplete="current-password">
+      </label>
+      <div id="login-error" class="form-error hidden"></div>
+      <button class="primary-button" type="submit">Sign in</button>
+    </form>
+  </div>
+
+  <div class="app-shell hidden" id="app-shell">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="brand-mark">TH</div>
@@ -32,11 +54,12 @@
       </div>
 
       <div class="sidebar-footer">
-        <div class="avatar">DU</div>
+        <div class="avatar" id="current-user-avatar">?</div>
         <div>
-          <strong>Demo User</strong>
-          <span>Local session</span>
+          <strong id="current-user-name">—</strong>
+          <span id="current-user-email">—</span>
         </div>
+        <button type="button" class="icon-button" id="logout-button" title="Sign out" aria-label="Sign out">⏻</button>
       </div>
     </aside>
 

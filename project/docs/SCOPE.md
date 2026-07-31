@@ -12,7 +12,8 @@ remain as the long-term aspirational baseline only — do not build against them
 - C++20/CMake project and `TicketHub` namespace.
 - Crow route layer (all Phase 1-3 routes, built and live-verified against a real HTTP server — see
   "Server verification" in `README.md` and `docs/VERIFICATION.md`) and a hybrid vanilla HTML/CSS/JS demo
-  UI (still not identity-aware -- no login page yet, see "Not yet built" below).
+  UI with a minimal login screen (browser-verified with Playwright/Chromium), but no other identity-aware
+  UI yet -- see "Not yet built" below.
 - PostgreSQL and SQLite database adapters behind one application-facing interface.
 - Ordered checksummed schema migrations and idempotent demo seed.
 - Projects and transactional project-local issue numbering.
@@ -55,10 +56,10 @@ remain as the long-term aspirational baseline only — do not build against them
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
-- There is no login page, project-management UI, or hierarchy/resolution/edit/link/clone/watch/vote/
-  recycle-bin/bulk-action/reorder/move UI in `web/` yet -- the routes themselves are built and
-  live-verified (see above), but nothing in the demo UI calls `/api/auth/login` or any of the
-  Phase 2/3 routes.
+- `web/` has a minimal login screen now, but no project-management UI, or hierarchy/resolution/edit/link/
+  clone/watch/vote/recycle-bin/bulk-action/reorder/move UI yet -- the routes themselves are built and
+  live-verified (see above), but nothing in the demo UI calls any of the Phase 2/3 write routes besides
+  create-issue and status-change.
 - Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch

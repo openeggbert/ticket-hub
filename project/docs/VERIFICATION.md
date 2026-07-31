@@ -1,5 +1,69 @@
 # Verification record
 
+## 2026-07-31 — Minimal login screen added to the demo UI, verified with a real headless browser
+
+Added a login screen to `web/index.html`/`app.js`/`styles.css` (the "Immediate next step" identified in
+the previous entry below): the demo UI previously had no authentication flow at all, so `TicketService`'s
+project-role enforcement, verified live via `curl` in the previous entry, was still unreachable from the
+UI itself, and the CSRF-token attachment the UI's own `fetch` calls needed was entirely missing.
+
+### What changed
+
+- `web/index.html`: a `#login-screen` (email/password form) sibling to the existing `#app-shell`, both
+  toggled via a shared `.hidden` class; the sidebar footer now shows the signed-in user's initials/name/
+  email (previously a hardcoded "Demo User") plus a sign-out button.
+- `web/app.js`: `api()` now reads the `th_csrf` cookie and attaches it as `X-CSRF-Token` on every
+  non-`GET` request (previously never sent from the UI at all -- every write from the demo UI would have
+  403'd the moment CSRF enforcement went live); any `401` response from any API call (except the two auth
+  probes themselves) shows the login screen, handling a session expiring mid-use; `init()` now silently
+  probes `GET /api/auth/me` before doing anything else and shows the login screen instead of loading data
+  if that fails; the login form calls `POST /api/auth/login`, then re-probes `/api/auth/me` to populate
+  the sidebar footer; the sign-out button calls `POST /api/auth/logout` and returns to the login screen.
+- `web/styles.css`: a centered login card matching the existing design system (same input/button/
+  form-error styles as the create-issue modal).
+
+### Verification
+
+Standalone Node.js scripts driving Playwright against the pre-installed Chromium
+(`executablePath: '/opt/pw-browsers/chromium'`, `playwright-core` installed ad hoc into the scratchpad
+directory, not committed to the repository) against a locally running `ticket-hub` server
+(SQLite, auto-migrated, demo-seeded):
+
+1. Fresh page load: `#login-screen` visible, `#app-shell` hidden, zero cookies present.
+2. Submitting valid credentials (`demo@ticket-hub.local` / `demo12345`): both `th_session` (`Secure`,
+   confirmed via `page.context().cookies()`) and `th_csrf` cookies get set: `#app-shell` becomes visible,
+   `#login-screen` hides, and the sidebar footer shows "Demo User" -- confirming `Secure` cookies are
+   **not** a blocker for local testing, since Chromium (and other major browsers) treat `localhost`/
+   `127.0.0.1` as a "potentially trustworthy origin" exempt from the Secure-requires-HTTPS restriction;
+   this does not weaken the production security posture (a real deployment hostname still requires TLS
+   for the cookie to be set at all).
+3. Every existing view renders after login: dashboard (stat cards populated), issues list (table rows),
+   board (Kanban columns), projects (project cards) -- all previously untestable end-to-end because
+   nothing could authenticate.
+4. Created a new issue via the create-issue modal (`POST /api/issues`, a CSRF-protected write) through the
+   browser's own `fetch` -- succeeded, opened the issue drawer, no error shown. This is the first time a
+   CSRF-protected write from the *browser UI itself* (not `curl` with a manually-added header) was
+   confirmed to work, proving `app.js`'s new automatic CSRF-header attachment functions correctly.
+5. Changed the new issue's status via the drawer's status `<select>` (`PATCH .../status`, also
+   CSRF-protected) -- succeeded, confirmation toast shown.
+6. Clicked sign-out: both cookies cleared, `#login-screen` shown again. Reloaded the page afterward: still
+   on the login screen (not silently re-entering the app), confirming the server actually invalidated the
+   session rather than the UI merely hiding it client-side.
+7. Submitted a wrong password: inline error message shown ("Invalid email or password"), `#app-shell`
+   never becomes visible.
+
+All seven checks passed on the first attempt; no code changes were needed after the initial
+implementation. Screenshots were captured for visual sanity-check (login screen and post-login dashboard)
+and discarded after review (not committed -- generated artifacts, not source).
+
+### What is still not built
+
+Only the login screen exists. There is still no UI for project management (create/archive/recycle-bin),
+issue hierarchy/resolution pickers, full edit, links, clone, watch/vote, the issue recycle bin, bulk
+actions, or the reorder/move actions added earlier this session -- all of those remain reachable only via
+direct API calls (all live-verified via `curl`, see the entry below), not through the demo UI. See
+`NEXT.md` for the itemized list.
+
 ## 2026-07-31 — Server target verified end-to-end for the first time (Crow build succeeded)
 
 Every prior entry in this log recorded the same standing limitation: outbound access to `github.com` was

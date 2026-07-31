@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — Minimal login screen for the demo UI
+
+- Added a login screen to `web/index.html`/`app.js`/`styles.css`: silently probes `GET /api/auth/me` on
+  load and shows a sign-in form instead of the app shell if unauthenticated; a successful
+  `POST /api/auth/login` reveals the app shell and shows the signed-in user's name/email/initials in the
+  sidebar footer, alongside a sign-out button (`POST /api/auth/logout`).
+- `app.js`'s `api()` helper now attaches `X-CSRF-Token` (read from the `th_csrf` cookie) to every
+  non-`GET` request automatically, and treats any `401` from any API call as a session expiry, redirecting
+  back to the login screen. Previously the demo UI never sent a CSRF token at all, so every write would
+  have failed once CSRF enforcement was reachable.
+- Verified with a real headless browser (Playwright/Chromium against the pre-installed browser), not just
+  `curl`: fresh-load login gate, successful login rendering every existing view, a CSRF-protected issue
+  create and status change both succeeding through the browser's own `fetch`, sign-out clearing cookies
+  and staying on the login screen across a reload, and a wrong password producing an inline error without
+  ever revealing the app shell. Confirmed the session/CSRF cookies' `Secure` attribute does not block
+  local `127.0.0.1` testing (browsers treat it as a trustworthy origin) while still requiring real TLS in
+  production. Full detail in `docs/VERIFICATION.md`.
+- Project-management, hierarchy/resolution, edit/link/clone/watch-vote/recycle-bin/bulk-action/
+  reorder/move UI still do not exist in `web/` -- only login does; see `NEXT.md`.
+
 ## Unreleased — Server target verified end-to-end for the first time
 
 - Outbound network access to `github.com` became reachable in this environment, so the Crow-based

@@ -16,7 +16,8 @@ const state = {
   selectedProject: null,
   search: '',
   status: '',
-  currentIssue: null
+  currentIssue: null,
+  principal: null
 };
 
 const content = document.querySelector('#content');
@@ -24,6 +25,10 @@ const createModal = document.querySelector('#create-modal');
 const issueDrawer = document.querySelector('#issue-drawer');
 const drawerBackdrop = document.querySelector('#issue-drawer-backdrop');
 const toast = document.querySelector('#toast');
+const loginScreen = document.querySelector('#login-screen');
+const appShell = document.querySelector('#app-shell');
+const loginForm = document.querySelector('#login-form');
+const loginError = document.querySelector('#login-error');
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -58,11 +63,23 @@ function relativeDate(value) {
   return formatDate(value);
 }
 
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options
-  });
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (method !== 'GET' && method !== 'HEAD') {
+    const csrfToken = getCookie('th_csrf');
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  }
+  const response = await fetch(path, { headers, ...options });
+  if (response.status === 401 && path !== '/api/auth/login' && path !== '/api/auth/me') {
+    showLoginScreen();
+    throw new Error('Your session expired. Please sign in again.');
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
   return payload;
@@ -72,6 +89,37 @@ function showToast(message) {
   toast.textContent = message;
   toast.classList.remove('hidden');
   window.setTimeout(() => toast.classList.add('hidden'), 2600);
+}
+
+function showLoginScreen() {
+  state.principal = null;
+  appShell.classList.add('hidden');
+  loginScreen.classList.remove('hidden');
+  loginForm.querySelector('input[name="email"]').focus();
+}
+
+function showAppShell() {
+  loginScreen.classList.add('hidden');
+  appShell.classList.remove('hidden');
+}
+
+function renderCurrentUser() {
+  const principal = state.principal;
+  if (!principal) return;
+  document.querySelector('#current-user-avatar').textContent = initials(principal.displayName);
+  document.querySelector('#current-user-name').textContent = principal.displayName;
+  document.querySelector('#current-user-email').textContent = principal.email;
+}
+
+// Checks the existing session cookie (if any) without ever showing the
+// generic "session expired" error -- this is the initial, silent probe.
+async function checkExistingSession() {
+  try {
+    state.principal = await api('/api/auth/me');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function showError(error) {
@@ -434,6 +482,33 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
   }
 });
 
+loginForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  loginError.classList.add('hidden');
+  const values = Object.fromEntries(new FormData(loginForm).entries());
+  try {
+    await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: values.email.trim(), password: values.password }) });
+    loginForm.reset();
+    state.principal = await api('/api/auth/me');
+    renderCurrentUser();
+    showAppShell();
+    await loadBaseData();
+    await renderCurrentView();
+  } catch (error) {
+    loginError.textContent = error.message;
+    loginError.classList.remove('hidden');
+  }
+});
+
+document.querySelector('#logout-button').addEventListener('click', async () => {
+  try {
+    await api('/api/auth/logout', { method: 'POST' });
+  } catch {
+    // Best-effort: show the login screen regardless of the response.
+  }
+  showLoginScreen();
+});
+
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     closeCreateModal();
@@ -446,6 +521,13 @@ document.addEventListener('keydown', event => {
 });
 
 (async function init() {
+  const authenticated = await checkExistingSession();
+  if (!authenticated) {
+    showLoginScreen();
+    return;
+  }
+  renderCurrentUser();
+  showAppShell();
   try {
     await loadBaseData();
     await renderDashboard();

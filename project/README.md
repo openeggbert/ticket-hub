@@ -285,9 +285,16 @@ Session-authenticated writes require the `X-CSRF-Token` header to match the read
 set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has now been compiled and
 smoke-tested against a live server** (see "Server verification" below).
 
-There is no login page in the web UI yet — `/api/auth/login` exists but nothing in `web/` calls it. The
-demo UI still browses/creates issues without authenticating, which will fail once the write routes
-actually enforce the session check end-to-end against a deployed instance.
+The demo UI now has a login screen (`web/index.html`/`app.js`): on load it silently probes
+`GET /api/auth/me`; if that returns 401 it shows a sign-in form instead of the app shell. A successful
+`POST /api/auth/login` reveals the app shell and shows the signed-in user's name/email/initials in the
+sidebar footer, alongside a sign-out button (`POST /api/auth/logout`) that returns to the login screen.
+Every non-`GET` request the UI makes now reads the `th_csrf` cookie and attaches it as `X-CSRF-Token`
+automatically, and any `401` response from any API call redirects back to the login screen (handles the
+session expiring mid-use). Browser-verified end-to-end with Playwright/Chromium against
+`127.0.0.1` — see "Server verification" below; Chromium (and other major browsers) treat `localhost`/
+`127.0.0.1` as a "potentially trustworthy origin", so the session/CSRF cookies' `Secure` attribute does
+not block local HTTP testing, while still requiring real TLS for any other hostname in production.
 
 ## Server verification
 
@@ -314,8 +321,18 @@ a moved issue's vacated key still resolves via `issue_key_aliases` through the r
 patterns over many prior batches, behaved exactly as documented on the first real test. Full detail is in
 `docs/VERIFICATION.md`'s "Server target verified end-to-end" entry.
 
-What is still **not** done: there is no login page or any authentication UI in `web/` (see above) — that
-is a real gap, not a verification gap, and is the next thing to build (`NEXT.md`).
+A follow-up batch then added the login screen described above and verified it with a real, automated
+browser (Playwright/Chromium, headless) rather than `curl`: fresh page load shows the login screen and
+hides the app shell; signing in with valid credentials shows the app shell, the correct user's name, and
+lets every view (dashboard/board/issues/projects) render; creating an issue and changing its status both
+succeed (confirming the browser's own `fetch` calls carry the CSRF header correctly, not just `curl` with
+a manually-added header); signing out clears both cookies and returns to the login screen, and a page
+reload afterward stays on the login screen rather than silently re-entering the app; a wrong password
+shows an inline error without ever revealing the app shell. Full detail is in `docs/VERIFICATION.md`.
+
+Project-management UI (create/archive/recycle-bin), hierarchy/resolution pickers, edit/link/clone/
+watch-vote/recycle-bin/bulk-action/reorder/move UI still do not exist in `web/` — only login does. Those
+routes are all live-verified via `curl` (above) but still not reachable from the demo UI.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
