@@ -121,6 +121,17 @@ crow::json::wvalue commentJson(const Domain::Comment& comment) {
     return json;
 }
 
+crow::json::wvalue issueLinkJson(const Domain::IssueLink& link) {
+    const auto labels = Domain::linkTypeLabels(link.linkType);
+    crow::json::wvalue json;
+    json["id"] = link.id;
+    json["linkType"] = link.linkType;
+    json["label"] = link.outward ? labels.outward : labels.inward;
+    json["otherIssueKey"] = link.otherIssueKey;
+    json["otherIssueSummary"] = link.otherIssueSummary;
+    return json;
+}
+
 std::optional<std::string> queryParameter(const crow::request& request, const char* name) {
     const char* value = request.url_params.get(name);
     if (value == nullptr || *value == '\0') {
@@ -685,6 +696,99 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Simple field-copy clone (D60): summary/description/type/priority/labels
+    // into a new issue in the same project, plus a clones/is-cloned-by link
+    // back to the original.
+    CROW_ROUTE(app, "/api/issues/<string>/clone")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            return jsonResponse(201, issueJson(service->cloneIssue(issueKey, *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/links")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& link : service->listIssueLinks(issueKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(issueLinkJson(link));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // The fixed link catalog (D17): blocks/relates_to/duplicates/clones.
+    // Both the source (`issueKey`) and target (`targetIssueKey`) projects
+    // must be accessible to the actor, since a link touches two issues that
+    // may be in different projects.
+    CROW_ROUTE(app, "/api/issues/<string>/links")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            const std::string targetIssueKey = requiredString(body, "targetIssueKey");
+            const std::string linkType = requiredString(body, "linkType");
+            return jsonResponse(201, issueLinkJson(service->createIssueLink(issueKey, targetIssueKey, linkType, *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issue-links/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& linkId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->deleteIssueLink(linkId, *principal)) {
+                return errorResponse(404, "Link not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

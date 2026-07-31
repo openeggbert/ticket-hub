@@ -1,5 +1,63 @@
 # Verification record
 
+## 2026-07-31 — Phase 3, partial continued (issue links and cloning, reduced scope)
+
+Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
+libpq 16.14, and a live local PostgreSQL 16.14 server (freshly created for this batch and dropped
+afterward, same as every prior PostgreSQL verification this session).
+
+### Core configuration
+
+```bash
+cmake -S . -B build -DTICKETHUB_BUILD_SERVER=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
+```
+
+All warnings enabled (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`); zero warnings, including through
+the four new `IDatabase` methods (`createIssueLink`/`listIssueLinks`/`findIssueLinkById`/
+`deleteIssueLink`) forcing a rebuild through both adapters and `TicketService`.
+
+### Passing tests (7/7 — same binaries, extended coverage)
+
+1. `ticket-hub-domain-tests`, `ticket-hub-migration-tests`, `ticket-hub-identity-tests`,
+   `ticket-hub-crypto-tests` — unchanged, all still passing.
+2. `ticket-hub-sqlite-integration-tests` — extended: creates a link from the previously-created issue to
+   a seeded one, asserts it is visible as outward from the source and inward from the target, asserts an
+   exact-duplicate link and a self-link are both rejected (the self-link by the database `CHECK`
+   constraint), asserts `findIssueLinkById` resolves both ends, and asserts the link can be deleted
+   (and that deleting it again returns `false`).
+3. `ticket-hub-workflow-tests` — extended: clones an issue and asserts summary/description/type/
+   priority/labels are copied but assignee and the parent/Epic link are not; asserts the clone has an
+   outward `clones` link to the original and the original has the inverse inward link; clones a Sub-task
+   and asserts its original parent is retained (the structural exception); and a basic link
+   create/list/delete lifecycle through `TicketService`, including rejecting a self-link and an unknown
+   link type.
+4. `ticket-hub-authorization-tests` — extended: a non-member cannot clone another project's issue; a
+   project admin can; creating a link between a project the actor can access and one they cannot is
+   rejected even though the source project is fine; a non-member of either linked project cannot delete
+   the link; a member of both can.
+
+### Additional verification beyond the automated suite
+
+- **Live PostgreSQL 16 server**: created a scratch `tickethub` database/role, ran `ticket-hub-cli
+  migrate`/`seed-demo`, then compiled and ran a standalone program (`pg_links_smoke.cpp`, not committed)
+  exercising both the raw `PostgresDatabase` link methods (create/list-from-both-ends/duplicate-and-
+  self-link rejection/find-by-id/delete) and, through a `TicketService` wrapping the same
+  `PostgresDatabase`, `cloneIssue` (field-copy correctness, the automatic `clones` link, and the
+  sub-task-parent-retention special case). All 13 assertions passed. The scratch database and role were
+  dropped after verification.
+- Both SQLite and PostgreSQL adapters, `ticket-hub-core`, `ticket-hub-cli`, and all seven test binaries
+  compile and link cleanly, including in the SQLite-only and PostgreSQL-only build configurations.
+
+### Environment limitations (unchanged)
+
+`src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) still
+could not be compiled -- outbound access to `github.com` remains blocked. The new
+`POST /api/issues/{key}/clone`, `GET`/`POST /api/issues/{key}/links`, and
+`DELETE /api/issue-links/{id}` routes follow the same patterns as the already-unverified Phase 1-3
+routes and carry the same caveat.
+
 ## 2026-07-31 — Phase 3, partial continued (full issue edit, reduced scope)
 
 Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,

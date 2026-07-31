@@ -46,6 +46,14 @@ anything from the removed/deferred list without an explicit new product conversa
   Does not edit `issueTypeKey`/`parentIssueKey` -- re-typing/re-parenting is not yet implemented. Shared
   validation logic factored into `appendIssueContentErrors` (`Validation.cpp`) and `normalizeLabels`
   (`TicketService.cpp`) instead of duplicating it between create and edit.
+- **Phase 3, partial continued (issue links and cloning), this batch:** the fixed issue-link catalog
+  (D17) -- `Domain::isValidLinkType`/`linkTypeLabels` (`blocks`, `relates_to`, `duplicates`, `clones`),
+  `IDatabase::createIssueLink`/`listIssueLinks`/`findIssueLinkById`/`deleteIssueLink` in both adapters,
+  and matching `TicketService` methods requiring project-Member-or-above on **both** linked issues'
+  projects. Simple field-copy cloning (D60) via `TicketService::cloneIssue`, composed from the existing
+  `createIssue` + the new `createIssueLink` (summary/description/type/priority/labels copied, an
+  automatic `clones` link created; assignee/story points/due date/attachments/sub-tasks/other links not
+  copied; a cloned Sub-task keeps its original parent since it cannot exist without one).
 - Tested: `ctest --output-on-failure` is 7/7 green (`domain`, `migration`, `sqlite-integration`,
   `identity`, `authorization`, `workflow`, `crypto`) on SQLite, in all three build configurations (full,
   SQLite-only, PostgreSQL-only). Every Phase 2/3 core-layer addition was additionally verified manually
@@ -54,14 +62,16 @@ anything from the removed/deferred list without an explicit new product conversa
 - Web layer source (`src/web/Api.cpp`, `HttpServer.cpp`, `main.cpp`) updated to match all phases so far:
   Phase 1's `/api/auth/login|logout|me` and session-cookie/CSRF protection, Phase 2's project CRUD
   routes and every read route resolving an optional `Principal`, Phase 3's `parentIssueKey` on issue
-  creation, `resolution` on status changes, `Domain::WorkflowViolation` mapped to HTTP 422, and the new
-  `PATCH /api/issues/{key}` full-edit route. While adding the edit route, fixed a real bug found by
-  inspection: three existing routes (`POST /api/issues`, `PATCH /api/issues/{key}/status`,
-  `POST /api/issues/{key}/comments`) were missing a `catch (const Domain::Forbidden&)` handler, so a
-  project-role authorization failure would have fallen through to the generic 500 handler instead of
-  403. **None of `Api.cpp` has been compiled** — Crow is unavailable in this sandbox (network to
-  `github.com` blocked). See "Known verification limitation" below; this is still the actual next thing
-  to close out, now covering three phases' worth of route changes.
+  creation, `resolution` on status changes, `Domain::WorkflowViolation` mapped to HTTP 422, the
+  `PATCH /api/issues/{key}` full-edit route, and the new `POST /api/issues/{key}/clone`,
+  `GET`/`POST /api/issues/{key}/links`, and `DELETE /api/issue-links/{id}` routes. While adding the edit
+  route (prior batch), fixed a real bug found by inspection: three existing routes (`POST /api/issues`,
+  `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments`) were missing a
+  `catch (const Domain::Forbidden&)` handler, so a project-role authorization failure would have fallen
+  through to the generic 500 handler instead of 403. **None of `Api.cpp` has been compiled** — Crow is
+  unavailable in this sandbox (network to `github.com` blocked). See "Known verification limitation"
+  below; this is still the actual next thing to close out, now covering three phases' worth of route
+  changes.
 
 ## Immediate next step: verify the server target
 
@@ -85,7 +95,12 @@ for the same environment reason, not skipped:
    unfinished sub-task (expect 422); reopen a completed issue and confirm `resolution` is null in the
    response; `PATCH /api/issues/{key}` as a non-member (expect 403, confirming the just-fixed
    `Domain::Forbidden` catch actually works end-to-end) and as a member with a stale `expectedVersion`
-   (expect 409) and with a fresh one (expect 200, every field updated).
+   (expect 409) and with a fresh one (expect 200, every field updated); `POST /api/issues/{key}/clone`
+   (expect 201, a new issue plus a `clones` link); `POST /api/issues/{key}/links` with an unknown
+   `linkType` (expect 400), with a target in a project the actor cannot access (expect 403), and with a
+   valid same-accessible-project target (expect 201); `GET /api/issues/{key}/links` on both ends of the
+   new link; `DELETE /api/issue-links/{id}` as a non-member of either project (expect 403) and as a
+   member of both (expect 200).
 5. Add a minimal login page (and, ideally, project-management and hierarchy/resolution UI) to `web/`
    (there isn't one yet) so the demo UI can actually authenticate and exercise the newer routes instead
    of hitting 401s/blank forms once the session check is live.
@@ -97,10 +112,6 @@ Phase 3 is only partially done. Still open, in `docs/REDUCED_SCOPE_ROADMAP.md`'s
 
 - Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation --
   `TicketService::editIssue` deliberately does not touch either field yet.
-- Simple cloning (D60): field-copy clone into a new issue in the same project, creating a
-  `clones`/`is cloned by` link.
-- Fixed issue-link catalog (D17): blocks/is blocked by, relates to, duplicates/is duplicated by (clones
-  covered by cloning above). `issue_links` table already exists as a schema foundation.
 - Self-only watchers (D20) and voting (D79) — no schema yet for either.
 - Simple bulk actions (D36: multi-select + one action + confirm) and always-allowed project moves (D37).
 - The integer rank/renumber migration (D31), which needs a **new** migration (not an edit to

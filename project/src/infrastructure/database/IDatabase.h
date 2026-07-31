@@ -111,6 +111,20 @@ public:
     virtual Domain::Comment addComment(const Domain::AddCommentRequest& request,
                                        const std::string& authorUserId) = 0;
     virtual Domain::DashboardStats dashboardStats() = 0;
+
+    // --- Issue links (Phase 3, D17) ---
+    // Rejects an unknown source/target key (std::invalid_argument) and an
+    // exact-duplicate (source, target, linkType) triple; a self-link is
+    // rejected by the `issues.CHECK(source_issue_id <> target_issue_id)`
+    // constraint. The returned view is from the source issue's perspective
+    // (`outward = true`).
+    virtual Domain::IssueLink createIssueLink(const std::string& sourceIssueKey,
+                                              const std::string& targetIssueKey,
+                                              const std::string& linkType) = 0;
+    // Every link touching `issueKey`, from either end.
+    virtual std::vector<Domain::IssueLink> listIssueLinks(const std::string& issueKey) = 0;
+    virtual std::optional<Domain::IssueLinkDetail> findIssueLinkById(const std::string& linkId) = 0;
+    virtual bool deleteIssueLink(const std::string& linkId) = 0;
 };
 
 } // namespace TicketHub::Infrastructure::Database

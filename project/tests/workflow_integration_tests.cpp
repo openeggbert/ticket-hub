@@ -163,6 +163,65 @@ int main() {
         }
     }
 
+    // --- Simple cloning (D60) ---
+    {
+        auto original = makeRequest("task", "Clone source task");
+        original.labels = {"clone-test", "sample"};
+        original.priorityKey = "high";
+        const auto source = tickets.createIssue(original, demo);
+
+        const auto clone = tickets.cloneIssue(source.key, demo);
+        require(clone.key != source.key, "the clone is a new issue");
+        require(clone.summary == source.summary, "summary is copied");
+        require(clone.description == source.description, "description is copied");
+        require(clone.type.key == source.type.key, "issue type is copied");
+        require(clone.priority.key == source.priority.key, "priority is copied");
+        require(clone.labels == source.labels, "labels are copied");
+        require(!clone.assignee.has_value(), "assignee is not copied");
+        require(!clone.parentIssueKey.has_value(), "a non-sub-task clone has no parent/epic link copied");
+
+        const auto cloneLinks = tickets.listIssueLinks(clone.key, demo);
+        require(cloneLinks.size() == 1 && cloneLinks[0].outward
+                    && cloneLinks[0].linkType == TicketHub::Domain::LinkTypeClones
+                    && cloneLinks[0].otherIssueKey == source.key,
+               "the clone has an outward 'clones' link to the original");
+
+        const auto sourceLinks = tickets.listIssueLinks(source.key, demo);
+        require(sourceLinks.size() == 1 && !sourceLinks[0].outward && sourceLinks[0].otherIssueKey == clone.key,
+               "the original has the inverse 'is cloned by' link");
+    }
+
+    // --- Cloning a sub-task retains its (structurally required) parent ---
+    {
+        const auto parent = tickets.createIssue(makeRequest("task", "Clone parent task"), demo);
+        auto subTaskRequest = makeRequest("sub-task", "Clone source sub-task");
+        subTaskRequest.parentIssueKey = parent.key;
+        const auto subTask = tickets.createIssue(subTaskRequest, demo);
+
+        const auto clonedSubTask = tickets.cloneIssue(subTask.key, demo);
+        require(clonedSubTask.parentIssueKey.has_value() && *clonedSubTask.parentIssueKey == parent.key,
+               "cloning a sub-task keeps its original parent, since a sub-task cannot exist without one");
+    }
+
+    // --- Issue links: basic lifecycle through TicketService (D17) ---
+    {
+        const auto a = tickets.createIssue(makeRequest("task", "Link source"), demo);
+        const auto b = tickets.createIssue(makeRequest("task", "Link target"), demo);
+
+        require(throwsInvalidArgument([&] {
+            tickets.createIssueLink(a.key, a.key, TicketHub::Domain::LinkTypeRelatesTo, demo);
+        }), "an issue cannot be linked to itself");
+        require(throwsInvalidArgument([&] {
+            tickets.createIssueLink(a.key, b.key, "not-a-real-link-type", demo);
+        }), "an unknown link type is rejected");
+
+        const auto link = tickets.createIssueLink(a.key, b.key, TicketHub::Domain::LinkTypeBlocks, demo);
+        require(tickets.listIssueLinks(a.key, demo).size() == 1, "the link appears on the source issue");
+        require(tickets.listIssueLinks(b.key, demo).size() == 1, "the link appears on the target issue");
+        require(tickets.deleteIssueLink(link.id, demo), "the link can be deleted");
+        require(!tickets.deleteIssueLink(link.id, demo), "deleting an already-gone link returns false");
+    }
+
     fs::remove(databasePath, removeError);
     fs::remove(databasePath.string() + "-wal", removeError);
     fs::remove(databasePath.string() + "-shm", removeError);

@@ -63,6 +63,13 @@ public:
                                const std::string& authorUserId) override;
     Domain::DashboardStats dashboardStats() override;
 
+    Domain::IssueLink createIssueLink(const std::string& sourceIssueKey,
+                                      const std::string& targetIssueKey,
+                                      const std::string& linkType) override;
+    std::vector<Domain::IssueLink> listIssueLinks(const std::string& issueKey) override;
+    std::optional<Domain::IssueLinkDetail> findIssueLinkById(const std::string& linkId) override;
+    bool deleteIssueLink(const std::string& linkId) override;
+
 private:
     std::string connectionString_;
     std::string migrationsDirectory_;

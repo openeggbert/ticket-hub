@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — Phase 3 (partial, continued): issue links and cloning (reduced scope)
+
+- Added the fixed issue-link catalog (D17): `Domain::isValidLinkType`/`linkTypeLabels` (`blocks`,
+  `relates_to`, `duplicates`, `clones`, each with an outward/inward label pair; `relates_to` uses the
+  same label both ways), `Domain::IssueLink` (one link as seen from a given issue) and
+  `Domain::IssueLinkDetail` (both ends resolved to their project, for authorization).
+- Added `IDatabase::createIssueLink`/`listIssueLinks`/`findIssueLinkById`/`deleteIssueLink` in both
+  adapters, and the matching `TicketService` methods. Creating or deleting a link requires
+  project-Member-or-above on **both** linked issues' projects (a link write touches two issues that may
+  be in different projects, unlike every other issue write). `createIssueLink` rejects an unknown link
+  type, a self-link (the database `CHECK` constraint is the backstop), and an exact-duplicate
+  `(source, target, linkType)` triple.
+- Added simple field-copy cloning (D60): `TicketService::cloneIssue` copies summary/description/type/
+  priority/labels into a new issue via the existing `createIssue` path (getting hierarchy validation and
+  a fresh key for free), then creates a `clones` link back to the original. Does not copy assignee,
+  story points, due date, attachments, sub-tasks, or other links. One structural exception: cloning a
+  Sub-task keeps its original parent, since a Sub-task cannot exist without one (D64).
+- Added `POST /api/issues/{key}/clone`, `GET`/`POST /api/issues/{key}/links`, and
+  `DELETE /api/issue-links/{id}` to `Api.cpp` (**not yet compiled** — see "Known verification limitation"
+  in `README.md`).
+- Extended `sqlite_integration_tests` (link create/list-from-both-ends/duplicate-rejection/
+  self-link-rejection/find-by-id/delete), `workflow_integration_tests` (clone field-copy correctness, the
+  sub-task-parent-retention special case, and basic link lifecycle through `TicketService`), and
+  `authorization_integration_tests` (role gating for cloning and for links spanning two projects).
+- Manually verified issue links (create/list/duplicate-and-self-link rejection/find/delete) and cloning
+  (through `TicketService`, including the sub-task special case) against a live local PostgreSQL 16
+  server.
+
 ## Unreleased — Phase 3 (partial, continued): full issue edit (reduced scope)
 
 - Added `Domain::EditIssueRequest` and `IDatabase::editIssue`/`TicketService::editIssue` (D129): a

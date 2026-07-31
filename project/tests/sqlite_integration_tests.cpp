@@ -167,6 +167,43 @@ int main() {
             + "' AND field_name IN ('summary','description','priority','assignee','story_points','due_date')");
         require(editHistoryCount >= 6, "each changed field writes an issue_history row");
 
+        const auto link = database.createIssueLink(created.key, "TH-1", TicketHub::Domain::LinkTypeBlocks);
+        require(!link.id.empty() && link.outward && link.otherIssueKey == "TH-1",
+               "a link is created from the source issue's perspective");
+
+        const auto sourceLinks = database.listIssueLinks(created.key);
+        require(sourceLinks.size() == 1 && sourceLinks[0].outward && sourceLinks[0].otherIssueKey == "TH-1",
+               "the source issue sees the link as outward");
+
+        const auto targetLinks = database.listIssueLinks("TH-1");
+        require(targetLinks.size() == 1 && !targetLinks[0].outward && targetLinks[0].otherIssueKey == created.key,
+               "the target issue sees the same link as inward");
+
+        bool duplicateLinkRejected = false;
+        try {
+            database.createIssueLink(created.key, "TH-1", TicketHub::Domain::LinkTypeBlocks);
+        } catch (const std::invalid_argument&) {
+            duplicateLinkRejected = true;
+        }
+        require(duplicateLinkRejected, "an exact-duplicate link is rejected");
+
+        bool selfLinkRejected = false;
+        try {
+            database.createIssueLink(created.key, created.key, TicketHub::Domain::LinkTypeRelatesTo);
+        } catch (const std::exception&) {
+            selfLinkRejected = true;
+        }
+        require(selfLinkRejected, "a self-link is rejected by the database CHECK constraint");
+
+        const auto linkDetail = database.findIssueLinkById(link.id);
+        require(linkDetail.has_value() && linkDetail->sourceIssueKey == created.key
+                    && linkDetail->targetIssueKey == "TH-1",
+               "findIssueLinkById resolves both ends of the link");
+
+        require(database.deleteIssueLink(link.id), "the link can be deleted");
+        require(database.listIssueLinks(created.key).empty(), "the link no longer appears after deletion");
+        require(!database.deleteIssueLink(link.id), "deleting an already-gone link returns false");
+
         const auto comment = database.addComment({created.key, "Database adapter smoke test passed."}, demoUserId);
         require(!comment.id.empty(), "comment receives an id");
         require(database.listComments(created.key).size() == 1, "comment can be listed");

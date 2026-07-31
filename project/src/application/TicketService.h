@@ -63,6 +63,30 @@ public:
                                            std::optional<std::int64_t> expectedVersion = std::nullopt);
     Domain::Comment addComment(const std::string& issueKey, const std::string& body, const Domain::Principal& actor);
 
+    // Simple field-copy clone (D60): summary/description/type/priority/labels
+    // into a new issue in the same project, plus a `clones`/`is cloned by`
+    // link back to the original. Assignee, story points, due date, and
+    // (except the one structurally-required case below) the parent/Epic link
+    // are not copied. Requires project-Member-or-above, same as createIssue.
+    // Special case: a Sub-task cannot exist without a parent (D64), so
+    // cloning a Sub-task keeps its original parent -- this is a structural
+    // requirement for the clone to be valid at all, not "copying the
+    // hierarchy" in the sense the decision excludes.
+    Domain::Issue cloneIssue(const std::string& issueKey, const Domain::Principal& actor);
+
+    // --- Issue links (Phase 3, D17) ---
+    // Both ends of a link must be project-Member-or-above for the actor,
+    // since a link write touches two issues that may be in different
+    // projects (unlike other issue writes, which touch exactly one).
+    Domain::IssueLink createIssueLink(const std::string& sourceIssueKey,
+                                      const std::string& targetIssueKey,
+                                      const std::string& linkType,
+                                      const Domain::Principal& actor);
+    std::vector<Domain::IssueLink> listIssueLinks(const std::string& issueKey,
+                                                   const std::optional<Domain::Principal>& actor);
+    // Returns false if the link does not exist.
+    bool deleteIssueLink(const std::string& linkId, const Domain::Principal& actor);
+
     // --- Project lifecycle (Phase 2, D3/D87/D88/D89) ---
     // Creation requires global administrator: there is no project to hold a
     // project-admin membership row over until it exists, matching the

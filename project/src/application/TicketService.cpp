@@ -207,6 +207,71 @@ Domain::Comment TicketService::addComment(const std::string& issueKey, const std
     return database_->addComment(Domain::AddCommentRequest{normalizedKey, body}, actor.userId);
 }
 
+Domain::Issue TicketService::cloneIssue(const std::string& issueKey, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto source = database_->findIssueByKey(normalizedKey);
+    if (!source) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    requireProjectRole(actor, source->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+
+    Domain::CreateIssueRequest clone;
+    clone.projectKey = source->projectKey;
+    clone.summary = source->summary;
+    clone.description = source->description;
+    clone.issueTypeKey = source->type.key;
+    clone.priorityKey = source->priority.key;
+    clone.labels = source->labels;
+    if (source->type.key == Domain::IssueTypeSubTask && source->parentIssueKey) {
+        clone.parentIssueKey = source->parentIssueKey;
+    }
+
+    const auto created = createIssue(clone, actor);
+    database_->createIssueLink(created.key, source->key, Domain::LinkTypeClones);
+    return created;
+}
+
+Domain::IssueLink TicketService::createIssueLink(const std::string& sourceIssueKey,
+                                                  const std::string& targetIssueKey,
+                                                  const std::string& linkType,
+                                                  const Domain::Principal& actor) {
+    if (!Domain::isValidLinkType(linkType)) {
+        throw std::invalid_argument("Unknown link type: " + linkType);
+    }
+    const std::string normalizedSource = Domain::normalizeIssueKey(sourceIssueKey);
+    const std::string normalizedTarget = Domain::normalizeIssueKey(targetIssueKey);
+    if (normalizedSource == normalizedTarget) {
+        throw std::invalid_argument("An issue cannot be linked to itself");
+    }
+    const auto source = database_->findIssueByKey(normalizedSource);
+    if (!source) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedSource);
+    }
+    const auto target = database_->findIssueByKey(normalizedTarget);
+    if (!target) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedTarget);
+    }
+    requireProjectRole(actor, source->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, target->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    return database_->createIssueLink(normalizedSource, normalizedTarget, linkType);
+}
+
+std::vector<Domain::IssueLink> TicketService::listIssueLinks(const std::string& issueKey,
+                                                              const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listIssueLinks(Domain::normalizeIssueKey(issueKey));
+}
+
+bool TicketService::deleteIssueLink(const std::string& linkId, const Domain::Principal& actor) {
+    const auto link = database_->findIssueLinkById(linkId);
+    if (!link) {
+        return false;
+    }
+    requireProjectRole(actor, link->sourceProjectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, link->targetProjectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    return database_->deleteIssueLink(linkId);
+}
+
 Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
     return database_->dashboardStats();
