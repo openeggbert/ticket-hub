@@ -195,6 +195,24 @@ public:
     std::vector<Domain::Project> listDeletedProjects(const Domain::Principal& actor);
     bool permanentlyDeleteProject(const std::string& projectKey, const Domain::Principal& actor);
 
+    // --- User directory (Phase 4, D80) ---
+    // Just enough to support @mention autocomplete and other user pickers --
+    // requires an authenticated session (not anonymous, even when the
+    // installation-wide anonymous-read toggle is on), since the user
+    // directory is more sensitive than issue data.
+    std::vector<Domain::User> listUsers(const Domain::Principal& actor);
+
+    // --- Fixed in-app notifications (Phase 4, D14) ---
+    // Exactly three types, created as a side effect of assigning an issue,
+    // being @mentioned in a new comment, or a new comment landing on an
+    // issue the recipient watches -- see addComment/createIssue/editIssue.
+    // Always scoped to the caller's own notifications; there is no
+    // cross-user notification management.
+    std::vector<Domain::Notification> listNotifications(const Domain::Principal& actor, bool unreadOnly);
+    int countUnreadNotifications(const Domain::Principal& actor);
+    bool markNotificationRead(const std::string& notificationId, const Domain::Principal& actor);
+    bool markAllNotificationsRead(const Domain::Principal& actor);
+
 private:
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;
 
@@ -202,6 +220,21 @@ private:
     void requireGlobalAdmin(const Domain::Principal& actor) const;
     void requireReadAccess(const std::optional<Domain::Principal>& actor);
     void requireValidHierarchy(Domain::CreateIssueRequest& request);
+
+    // Notifies a newly-set assignee (D14 "assigned to me"), skipping a
+    // self-assignment and a no-op re-save with the same assignee.
+    void dispatchAssignmentNotification(const Domain::Issue& issueAfter,
+                                        const std::optional<Domain::UserSummary>& assigneeBefore,
+                                        const Domain::Principal& actor);
+    // Notifies @handle mentions found in a just-created comment body (D80)
+    // and every watcher of the issue except the comment's own author (D14
+    // "comment on a watched issue"). A user who is both mentioned and a
+    // watcher gets only the "mentioned" notification, not both -- one
+    // notification per comment per recipient, the more specific reason
+    // wins. Only called from addComment -- editing a comment does not
+    // re-scan for new mentions, to avoid re-notifying on every save of an
+    // already-mentioning comment.
+    void dispatchCommentNotifications(const Domain::Issue& issue, const Domain::Comment& comment, const Domain::Principal& actor);
 };
 
 } // namespace TicketHub::Application

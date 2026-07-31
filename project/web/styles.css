@@ -86,6 +86,24 @@ button { cursor: pointer; }
 .global-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); }
 .topbar-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .backend-pill { padding: 5px 9px; border-radius: 999px; background: #e9f2ff; color: #0055cc; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+
+.notification-menu { position: relative; }
+.notification-badge { position: absolute; top: -2px; right: -2px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 999px; background: var(--danger); color: white; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.notification-panel { position: absolute; top: calc(100% + 8px); right: 0; width: 340px; max-height: 420px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); z-index: 40; }
+.notification-panel-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.notification-panel-header strong { font-size: 13px; }
+.notification-item { display: block; width: 100%; text-align: left; padding: 10px 14px; border: 0; border-bottom: 1px solid var(--border); background: transparent; cursor: pointer; color: var(--text); }
+.notification-item:last-child { border-bottom: 0; }
+.notification-item:hover { background: var(--surface-soft); }
+.notification-item.unread { background: #e9f2ff; }
+.notification-item .notification-type { font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 700; }
+.notification-item .notification-summary { display: block; margin-top: 2px; font-size: 13px; }
+.notification-item .notification-time { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
+
+.mention-autocomplete { position: relative; }
+.mention-autocomplete-list { position: absolute; left: 0; right: 0; z-index: 30; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; box-shadow: var(--shadow); margin-top: 2px; max-height: 180px; overflow-y: auto; }
+.mention-autocomplete-item { display: block; width: 100%; text-align: left; padding: 6px 10px; border: 0; background: transparent; cursor: pointer; font-size: 13px; color: var(--text); }
+.mention-autocomplete-item:hover, .mention-autocomplete-item.active { background: var(--surface-soft); }
 .primary-button, .secondary-button, .ghost-button, .icon-button {
   border: 0; border-radius: 7px; font-weight: 600;
 }

@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — @mention handles and the fixed in-app notification set (D56/D80/D14)
+
+- **@mention handles (D56)**: `users.handle` (migration `010_mentions_and_notifications.sql`, both
+  backends) -- optional, unique (case-insensitive via lowercase normalization), 1-32
+  letters/digits/underscores. Set at account creation via `ticket-hub-cli create-user ... --handle=<handle>`;
+  there is no self-service profile editing yet. The three seeded demo accounts now have handles
+  (`demo`, `alex`, `sam`).
+- **@mentions (D80)**: a comment body's `@handle` tokens are parsed once, at creation time (not on every
+  edit), and resolved against the handle directory; each resolved user (other than the comment's own
+  author) gets a "mentioned" notification. `GET /api/users` backs the new @mention autocomplete dropdown
+  in the comment textarea (both add and edit).
+- **Fixed in-app notification set (D14)**: exactly three types -- `assigned` (a new or changed assignee,
+  skipping self-assignment and unchanged re-saves), `mentioned` (D80), and `watched_comment` (a new
+  comment on an issue you watch, skipping the comment's own author). No email, no configurable schemes,
+  no per-user preferences or digests. A recipient who is both mentioned and a watcher on the same comment
+  gets exactly one notification (mentioned wins), not two. New `notifications` table (migration
+  `010_mentions_and_notifications.sql`) and `GET /api/notifications[?unread=true]`,
+  `GET /api/notifications/unread-count`, `POST /api/notifications/{id}/read`,
+  `POST /api/notifications/read-all` routes.
+- `web/`: a notification bell in the top bar with an unread-count badge, opening a dropdown list;
+  clicking a notification marks it read and opens the related issue. Browser-verified end-to-end:
+  assigning an issue notifies the assignee, mentioning a user in a comment notifies them (with working
+  autocomplete), and the notification panel/badge/mark-read/mark-all-read flow all work through the real
+  HTTP layer.
+
 ## Unreleased — Fixed emoji reactions on comments (D84)
 
 - **Fixed emoji reactions (D84)**: comments can now receive reactions via

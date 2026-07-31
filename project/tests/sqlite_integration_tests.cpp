@@ -268,6 +268,36 @@ int main() {
                "removing an already-removed reaction is a no-op");
         require(database.listCommentReactions(comment.id).size() == 2, "two reactions remain");
 
+        // --- @mention handles and the fixed notification set (D56/D80/D14) ---
+        const auto demoUser = database.findUserByHandle("demo");
+        require(demoUser.has_value() && demoUser->id == demoUserId,
+               "findUserByHandle resolves the seeded demo handle");
+        require(!database.findUserByHandle("no-such-handle").has_value(),
+               "findUserByHandle returns nullopt for an unknown handle");
+
+        const auto assignedNotification = database.createNotification(alexUserId, "assigned", created.id);
+        require(assignedNotification.type == "assigned", "createNotification returns the type it was given");
+        require(assignedNotification.issueKey.has_value() && *assignedNotification.issueKey == created.key,
+               "createNotification resolves the issue key via the stored issue_id");
+        require(!assignedNotification.readAt.has_value(), "a new notification starts unread");
+
+        database.createNotification(alexUserId, "mentioned", created.id);
+        require(database.listNotifications(alexUserId, false).size() == 2, "both notifications are listed");
+        require(database.countUnreadNotifications(alexUserId) == 2, "both notifications are unread");
+
+        require(database.markNotificationRead(assignedNotification.id, alexUserId),
+               "marking a notification read succeeds");
+        require(!database.markNotificationRead(assignedNotification.id, alexUserId),
+               "marking an already-read notification read again is a no-op");
+        require(database.countUnreadNotifications(alexUserId) == 1, "one notification remains unread");
+        require(database.listNotifications(alexUserId, true).size() == 1, "unreadOnly filters to the remaining one");
+        require(!database.markNotificationRead(assignedNotification.id, demoUserId),
+               "a different user cannot mark someone else's notification read");
+
+        require(database.markAllNotificationsRead(alexUserId), "markAllNotificationsRead succeeds when unread remain");
+        require(database.countUnreadNotifications(alexUserId) == 0, "no notifications remain unread");
+        require(!database.markAllNotificationsRead(alexUserId), "marking all read again is a no-op");
+
         require(database.deleteComment(comment.id, demoUserId), "a comment can be soft-deleted");
         require(database.listComments(created.key).empty(), "a soft-deleted comment no longer appears in the list");
         require(!database.findCommentById(comment.id).has_value(), "a soft-deleted comment is not found by findCommentById");

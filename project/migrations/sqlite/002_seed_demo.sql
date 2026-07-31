@@ -1,7 +1,9 @@
-INSERT INTO users(id, display_name, email, is_admin) VALUES
-('00000000-0000-4000-8000-000000000001', 'Demo User', 'demo@ticket-hub.local', 1),
-('00000000-0000-4000-8000-000000000002', 'Alex Morgan', 'alex@ticket-hub.local', 0),
-('00000000-0000-4000-8000-000000000003', 'Sam Lee', 'sam@ticket-hub.local', 0)
+-- `handle` lets the demo data exercise @mention autocomplete (D80) out of
+-- the box without a separate ticket-hub-cli create-user --handle step.
+INSERT INTO users(id, display_name, email, handle, is_admin) VALUES
+('00000000-0000-4000-8000-000000000001', 'Demo User', 'demo@ticket-hub.local', 'demo', 1),
+('00000000-0000-4000-8000-000000000002', 'Alex Morgan', 'alex@ticket-hub.local', 'alex', 0),
+('00000000-0000-4000-8000-000000000003', 'Sam Lee', 'sam@ticket-hub.local', 'sam', 0)
 ON CONFLICT DO NOTHING;
 
 -- Dev-only password for all three demo accounts: "demo12345". Never reuse

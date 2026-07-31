@@ -156,14 +156,15 @@ The CLI builds without Crow and uses the same database adapters:
 ./build-core/ticket-hub-cli diagnostics
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli migrate
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli seed-demo
-TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli create-user "person@example.com" "A Person" "a sufficiently long password" [--admin]
+TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli create-user "person@example.com" "A Person" "a sufficiently long password" [--admin] [--handle=<handle>]
 ```
 
 `diagnostics` redacts the PostgreSQL connection string. Installed deployments should set `TICKETHUB_MIGRATIONS_ROOT` to the installed migration directory when it differs from the compiled development default.
 
 `create-user` is administrator-only account creation: there is no public registration and no invitation
 flow in V1 (`REDUCED_SCOPE_SPECIFICATION.md` section 3). The password is set directly by whoever runs
-the command; there is no forced-change-on-first-login flow.
+the command; there is no forced-change-on-first-login flow. `--handle` sets the optional, unique @mention
+handle (D56/D80) -- there is no self-service profile-editing flow yet to set or change it afterward.
 
 ## Run with SQLite
 
@@ -215,6 +216,11 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `POST` | `/api/auth/logout` | no | clears session (safe to call unauthenticated) |
 | `GET` | `/api/auth/me` | session | current principal, or 401 |
 | `GET` | `/api/dashboard` | session, or anon if enabled | counts and recent issues |
+| `GET` | `/api/users` | session | user directory (id/displayName/email/handle) for @mention autocomplete (D80) |
+| `GET` | `/api/notifications` | session | `?unread=true` filters; fixed set (D14) |
+| `GET` | `/api/notifications/unread-count` | session | `{count}` |
+| `POST` | `/api/notifications/{id}/read` | session + CSRF | scoped to the caller's own notifications |
+| `POST` | `/api/notifications/read-all` | session + CSRF | scoped to the caller's own notifications |
 | `GET` | `/api/projects` | session, or anon if enabled | active project summaries |
 | `POST` | `/api/projects` | session + CSRF, global admin | create project |
 | `PATCH` | `/api/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |
@@ -308,6 +314,22 @@ watch/vote (no project-role check), and each user may add each reaction key at m
 `POST`/`DELETE` are idempotent the same way watch/vote are. `GET .../reactions` returns
 `{items: [{reactionKey, user}, ...]}` -- the caller groups by `reactionKey` for counts/highlighting, the
 same "server stays dumb, client aggregates" split used for issue links.
+
+`GET /api/users` is a directory listing (id/displayName/email/handle only -- no isAdmin/active/timeZone),
+requiring a session even when the installation-wide anonymous-read toggle is on, since the user directory
+is more sensitive than issue data. It backs @mention autocomplete (D80) and is the only way the demo UI
+discovers handles.
+
+The fixed in-app notification set (D14) is created as a side effect of three existing writes, never
+directly by an API caller: `POST`/`PATCH /api/issues` notifies a newly-set or changed assignee (skipping
+self-assignment and a no-op re-save with the same assignee); `POST /api/issues/{key}/comments` notifies
+every `@handle` mention resolved in the body (D80) and every watcher of the issue except the comment's
+own author, with mentioned taking priority over watched for a recipient who is both (one notification,
+not two). `GET /api/notifications` and `GET /api/notifications/unread-count` are always scoped to the
+caller's own notifications; `POST /api/notifications/{id}/read` returns `{ok: false}` rather than 404 for
+an unknown id or someone else's notification (there is no cross-user notification management, so there is
+nothing more specific to report). Mentions are parsed only when a comment is created, not on every edit,
+to avoid re-notifying on every save of an already-mentioning comment.
 
 Session-authenticated writes require the `X-CSRF-Token` header to match the readable `th_csrf` cookie
 set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has now been compiled and
@@ -431,6 +453,26 @@ switching to a second user, the count is shared (visible to both) while each use
 is independent -- confirmed by alex reacting to a comment demo had already reacted to and the count going
 from 1 to 2 without alex seeing demo's own active state carried over.
 
+A ninth batch added @mention handles and the fixed in-app notification set (D56/D80/D14). Migration
+`010_mentions_and_notifications.sql` adds `users.handle` (optional, unique via a partial index) and
+`notifications` (`user_id`, `type`, `issue_id` nullable, `read_at` -- the exact minimal shape in
+`docs/REDUCED_SCOPE_DATA_MODEL.md`). `ticket-hub-cli create-user` gained `--handle=<handle>`; the three
+seeded demo accounts now have handles (`demo`/`alex`/`sam`). `TicketService::createIssue`/`editIssue`
+notify a newly-set or changed assignee; `addComment` parses `@handle` tokens out of the body (once, at
+creation) and notifies each resolved user, plus every watcher of the issue except the comment's own
+author -- a recipient who is both mentioned and watching gets exactly one notification, the more specific
+reason winning. New `GET /api/users` (directory listing for autocomplete) and the four
+`/api/notifications*` routes above. `web/` gained a notification bell with an unread-count badge in the
+top bar (clicking a notification marks it read and opens the related issue, with a "mark all read"
+button) and an @mention autocomplete dropdown under the comment textarea (both add and edit), backed by
+the cached `/api/users` directory. Browser-verified end-to-end: creating an issue assigned to a second
+user shows exactly one unread notification for them; typing `@sa` in the comment box shows a matching
+autocomplete suggestion that inserts the full handle on click; posting a comment that mentions a user
+notifies them with the correct issue reference; opening the notification panel, clicking an item, and
+using "mark all read" all update the badge correctly through the real HTTP layer; and a full regression
+re-run of the eighth batch's reaction test and the seventh batch's comment-editing test both still pass
+unchanged.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -438,8 +480,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
   hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, simple cloning,
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
-  renumbering, moving an issue between projects, and (Phase 4) comment editing/tombstone delete and fixed
-  emoji reactions, in both database adapters),
+  renumbering, moving an issue between projects, and (Phase 4) comment editing/tombstone delete, fixed
+  emoji reactions, and @mention handles/the fixed in-app notification set, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the
@@ -453,9 +495,14 @@ What **was** compiled and tested in this environment, with all warnings enabled
   editing: version increment, `editedAt` set, stale-edit conflict, editing an unknown comment; tombstone
   delete: soft-deleted comments excluded from listing and `findCommentById`, the row and body still
   physically present, deleting an already-deleted comment is a no-op; comment reactions: idempotent
-  add/remove per (comment, user, key), multiple users and multiple keys per comment listed correctly),
+  add/remove per (comment, user, key), multiple users and multiple keys per comment listed correctly;
+  `findUserByHandle` resolving the seeded handle and returning nullopt for an unknown one; notifications:
+  `createNotification` resolving the issue key via the stored `issue_id`, `listNotifications`/
+  `countUnreadNotifications` with the `unreadOnly` filter, `markNotificationRead`/
+  `markAllNotificationsRead` idempotency and per-user scoping),
   `identity_integration_tests` (create-user, login success/failure, generic-error anti-enumeration check,
-  minimal lockout, session validate/expire/logout), `authorization_integration_tests` (project-role
+  minimal lockout, session validate/expire/logout, handle normalization/uniqueness/format validation for
+  create-user's optional `--handle`), `authorization_integration_tests` (project-role
   gating on issue writes/edits/cloning/links/reorder/move — including the "member of source but not
   target project" move case, not-found semantics under authorization, the anonymous-read-access toggle,
   the full project lifecycle: create/archive/soft-delete/restore/permanently-delete against both
@@ -463,8 +510,13 @@ What **was** compiled and tested in this environment, with all warnings enabled
   everything else, the issue recycle bin's project-admin-vs-global-admin split, bulk actions applying
   the same per-issue authorization on a mixed batch of accessible/inaccessible/unknown keys, comment
   edit/delete's simplified author-or-project-admin permissions, including the global-admin-can-moderate-
-  any-comment case and unknown-comment nullopt/false returns, and comment reactions requiring no project
-  role (like watch/vote) while still rejecting an unknown reaction key or an unknown comment id),
+  any-comment case and unknown-comment nullopt/false returns, comment reactions requiring no project
+  role (like watch/vote) while still rejecting an unknown reaction key or an unknown comment id, and the
+  fixed notification set -- assigned/self-assigned/unchanged-reassign, mentioned/unknown-handle/
+  self-mention, watched-comment/self-watch-self-comment, the mentioned-wins-over-watched dedupe, and
+  per-user scoping of mark-read/mark-all-read, each isolated in its own issue with an explicit
+  markAllNotificationsRead reset between sub-tests so no sub-test's leftover watcher state can
+  contaminate the next one's assertions),
   `workflow_integration_tests` (every Epic/Sub-task hierarchy rejection case, resolution
   required/rejected-if-unknown on completion, resolution cleared on reopen, the sub-task-completion gate,
   reopening leaving a sub-task's status untouched, clone field-copy correctness, the
@@ -482,9 +534,13 @@ What **was** compiled and tested in this environment, with all warnings enabled
   rank/counter allocation, alias resolution, and the same-project/unknown-project/parent/children
   rejection cases, through `PostgresDatabase` directly); Phase 4 repeated it for `editComment`/
   `deleteComment`/`findCommentById` (version increment, `editedAt`, stale-edit conflict, tombstone
-  exclusion from listing, no-op on an already-deleted comment) and for `addCommentReaction`/
+  exclusion from listing, no-op on an already-deleted comment), for `addCommentReaction`/
   `removeCommentReaction`/`listCommentReactions` (idempotent add/remove, multiple users and reaction keys
-  per comment listed correctly), through `PostgresDatabase` directly — all passing.
+  per comment listed correctly), and for `findUserByHandle` plus `createNotification`/
+  `listNotifications`/`countUnreadNotifications`/`markNotificationRead`/`markAllNotificationsRead`
+  (issue-key resolution via the stored `issue_id`, the `unreadOnly` filter, idempotent mark-read/
+  mark-all-read, per-user scoping), through `PostgresDatabase` directly — all passing. `ticket-hub-cli
+  create-user --handle=<handle>` was also exercised directly against a live PostgreSQL server.
 
 `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) are now
 built and live-verified as described in "Server verification" above — including every route added across

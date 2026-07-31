@@ -163,6 +163,52 @@ int main() {
         require(invalidRejected, "invalid create-user request is rejected");
     }
 
+    // --- @mention handles (D56/D80) ---
+    {
+        CreateUserRequest withHandle;
+        withHandle.email = "handle.user@ticket-hub.local";
+        withHandle.displayName = "Handle User";
+        withHandle.password = "correct horse battery staple";
+        withHandle.handle = "Handle_User";
+
+        const auto user = auth.createUser(withHandle);
+        require(user.handle.has_value() && *user.handle == "handle_user",
+               "the handle is normalized to lowercase, same as email");
+
+        CreateUserRequest duplicateHandle;
+        duplicateHandle.email = "another.user@ticket-hub.local";
+        duplicateHandle.displayName = "Another User";
+        duplicateHandle.password = "correct horse battery staple";
+        duplicateHandle.handle = "HANDLE_USER"; // same handle, different case
+        bool duplicateHandleRejected = false;
+        try {
+            auth.createUser(duplicateHandle);
+        } catch (const std::invalid_argument&) {
+            duplicateHandleRejected = true;
+        }
+        require(duplicateHandleRejected, "a duplicate handle is rejected even with different casing");
+
+        CreateUserRequest invalidHandle;
+        invalidHandle.email = "invalid.handle@ticket-hub.local";
+        invalidHandle.displayName = "Invalid Handle";
+        invalidHandle.password = "correct horse battery staple";
+        invalidHandle.handle = "not a valid handle!";
+        bool invalidHandleRejected = false;
+        try {
+            auth.createUser(invalidHandle);
+        } catch (const std::invalid_argument&) {
+            invalidHandleRejected = true;
+        }
+        require(invalidHandleRejected, "a handle with spaces/punctuation is rejected");
+
+        CreateUserRequest noHandle;
+        noHandle.email = "no.handle@ticket-hub.local";
+        noHandle.displayName = "No Handle";
+        noHandle.password = "correct horse battery staple";
+        const auto userWithoutHandle = auth.createUser(noHandle);
+        require(!userWithoutHandle.handle.has_value(), "the handle remains optional -- omitting it is not an error");
+    }
+
     fs::remove(databasePath, removeError);
     fs::remove(databasePath.string() + "-wal", removeError);
     fs::remove(databasePath.string() + "-shm", removeError);

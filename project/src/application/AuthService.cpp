@@ -45,12 +45,18 @@ AuthService::AuthService(std::shared_ptr<Infrastructure::Database::IDatabase> da
 
 Domain::User AuthService::createUser(Domain::CreateUserRequest request) {
     request.email = Domain::normalizeEmail(request.email);
+    if (request.handle) {
+        request.handle = Domain::normalizeHandle(*request.handle);
+    }
     const auto errors = Domain::validateCreateUser(request);
     if (!errors.empty()) {
         throwValidationErrors(errors);
     }
     if (database_->findUserByEmail(request.email).has_value()) {
         throw std::invalid_argument("Email is already in use: " + request.email);
+    }
+    if (request.handle && database_->findUserByHandle(*request.handle).has_value()) {
+        throw std::invalid_argument("Handle is already in use: " + *request.handle);
     }
     const std::string passwordHash = Common::hashPassword(request.password);
     return database_->createUser(request, passwordHash);

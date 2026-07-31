@@ -252,6 +252,109 @@ int main() {
         require(unknownCommentRejectedOnRemove, "un-reacting to an unknown comment is rejected");
     }
 
+    // --- Fixed in-app notifications (D14): assigned, mentioned, watched-comment ---
+    // Each sub-test uses its own issue and resets with markAllNotificationsRead
+    // so later side effects (e.g. a lingering watcher from an earlier
+    // sub-test) can never contaminate a later assertion.
+    {
+        // --- assigned ---
+        CreateIssueRequest assignedToAlex;
+        assignedToAlex.projectKey = "TH";
+        assignedToAlex.summary = "Notification test: assigned";
+        assignedToAlex.assigneeEmail = "alex@ticket-hub.local";
+        const auto assignedIssue = tickets.createIssue(assignedToAlex, demo);
+        require(tickets.countUnreadNotifications(alex) == 1,
+               "creating an issue assigned to alex notifies alex (D14 assigned)");
+
+        CreateIssueRequest selfAssigned;
+        selfAssigned.projectKey = "TH";
+        selfAssigned.summary = "Notification test: self-assigned";
+        selfAssigned.assigneeEmail = "demo@ticket-hub.local";
+        tickets.createIssue(selfAssigned, demo);
+        require(tickets.countUnreadNotifications(demo) == 0, "assigning an issue to yourself does not notify you");
+
+        EditIssueRequest reassign;
+        reassign.summary = assignedIssue.summary;
+        reassign.description = assignedIssue.description;
+        reassign.priorityKey = assignedIssue.priority.key;
+        reassign.assigneeEmail = "alex@ticket-hub.local"; // unchanged
+        tickets.editIssue(assignedIssue.key, reassign, demo);
+        require(tickets.countUnreadNotifications(alex) == 1,
+               "re-saving an edit with the same assignee does not send a second notification");
+
+        reassign.assigneeEmail = "sam@ticket-hub.local"; // actually changed
+        tickets.editIssue(assignedIssue.key, reassign, demo);
+        require(tickets.countUnreadNotifications(sam) == 1,
+               "reassigning to a different user on edit notifies the new assignee");
+        require(tickets.markAllNotificationsRead(alex) && tickets.markAllNotificationsRead(sam),
+               "reset before the next sub-test");
+
+        // --- mentioned ---
+        CreateIssueRequest mentionIssue;
+        mentionIssue.projectKey = "TH";
+        mentionIssue.summary = "Notification test: mentioned";
+        const auto mentioned = tickets.createIssue(mentionIssue, demo);
+        tickets.addComment(mentioned.key, "@sam please take a look at this.", alex);
+        require(tickets.countUnreadNotifications(sam) == 1, "an @handle mention notifies that user");
+
+        // An unknown handle is silently ignored -- no throw, no notification.
+        tickets.addComment(mentioned.key, "@no-such-handle-at-all, thanks!", alex);
+        require(tickets.countUnreadNotifications(demo) == 0 && tickets.countUnreadNotifications(sam) == 1,
+               "an unknown @handle notifies nobody and does not throw");
+
+        // Mentioning yourself never notifies you.
+        tickets.addComment(mentioned.key, "@alex noting this for myself.", alex);
+        require(tickets.countUnreadNotifications(alex) == 0, "mentioning yourself does not notify you");
+        require(tickets.markAllNotificationsRead(sam), "reset before the next sub-test");
+
+        // --- watched_comment, and the "mentioned wins over watched" dedupe ---
+        CreateIssueRequest watchedIssue;
+        watchedIssue.projectKey = "TH";
+        watchedIssue.summary = "Notification test: watched comment";
+        const auto watched = tickets.createIssue(watchedIssue, demo);
+        tickets.watchIssue(watched.key, sam);
+        tickets.addComment(watched.key, "Progress update, no mentions here.", alex);
+        require(tickets.countUnreadNotifications(sam) == 1,
+               "a new comment on a watched issue notifies every watcher except its author");
+
+        // The comment author never gets a watched-comment notification for
+        // their own comment, even while watching the issue themselves.
+        tickets.watchIssue(watched.key, alex);
+        tickets.addComment(watched.key, "Another update.", alex);
+        require(tickets.countUnreadNotifications(alex) == 0,
+               "the comment's own author is never notified about their own comment");
+        require(tickets.countUnreadNotifications(sam) == 2, "sam (a different watcher) is notified again");
+
+        require(tickets.markAllNotificationsRead(sam), "reset before the dedupe sub-test");
+        tickets.addComment(watched.key, "@sam this one both mentions you and you're watching.", alex);
+        const auto dedupedNotifications = tickets.listNotifications(sam, true);
+        require(dedupedNotifications.size() == 1,
+               "being both mentioned and a watcher on the same comment yields exactly one notification");
+        require(dedupedNotifications.front().type == "mentioned",
+               "the more specific reason (mentioned) wins over the generic watched-comment one");
+
+        // --- listNotifications / markNotificationRead / markAllNotificationsRead scoping ---
+        const auto samNotifications = tickets.listNotifications(sam, false);
+        require(!samNotifications.empty(), "listNotifications (all) returns sam's history, not just unread");
+        const auto firstId = samNotifications.front().id;
+        require(tickets.markNotificationRead(firstId, sam), "sam can mark their own notification read");
+        require(!tickets.markNotificationRead(firstId, demo),
+               "demo cannot mark sam's notification read (scoped to the caller)");
+        require(tickets.countUnreadNotifications(sam) == 0,
+               "marking the single remaining unread notification read leaves none unread");
+        require(!tickets.markAllNotificationsRead(sam),
+               "markAllNotificationsRead is a no-op (returns false) once everything is already read");
+    }
+
+    // --- User directory for @mention autocomplete (D80) ---
+    {
+        const auto users = tickets.listUsers(sam);
+        require(users.size() >= 3, "listUsers returns at least the three seeded demo users");
+        require(std::any_of(users.begin(), users.end(),
+                            [](const auto& u) { return u.handle.has_value() && *u.handle == "alex"; }),
+               "the seeded demo users have their handles populated");
+    }
+
     // --- Issue recycle bin: project-admin-vs-global-admin split (D22, mirrors D88) ---
     {
         CreateIssueRequest binRequest;

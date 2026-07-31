@@ -133,16 +133,17 @@ Domain::User readUser(PGresult* result, int row) {
     user.id = value(result, row, 0);
     user.email = value(result, row, 1);
     user.displayName = value(result, row, 2);
-    user.timeZone = value(result, row, 3);
-    user.clockFormat = value(result, row, 4);
-    user.active = boolValue(result, row, 5);
-    user.isAdmin = boolValue(result, row, 6);
-    user.createdAt = value(result, row, 7);
+    user.handle = optionalValue(result, row, 3);
+    user.timeZone = value(result, row, 4);
+    user.clockFormat = value(result, row, 5);
+    user.active = boolValue(result, row, 6);
+    user.isAdmin = boolValue(result, row, 7);
+    user.createdAt = value(result, row, 8);
     return user;
 }
 
 constexpr const char* UserSelect =
-    "SELECT id, email, display_name, time_zone, clock_format, active, is_admin, created_at::text FROM users";
+    "SELECT id, email, display_name, handle, time_zone, clock_format, active, is_admin, created_at::text FROM users";
 
 Domain::Issue readIssue(PGresult* result, int row) {
     Domain::Issue issue;
@@ -344,12 +345,20 @@ Domain::User PostgresDatabase::createUser(const Domain::CreateUserRequest& reque
         if (PQntuples(existing.get()) != 0) {
             throw std::invalid_argument("Email is already in use: " + request.email);
         }
+        if (request.handle) {
+            auto existingHandle = execParams(connection.get(), "SELECT 1 FROM users WHERE handle = $1", {*request.handle},
+                                             "Check existing handle");
+            if (PQntuples(existingHandle.get()) != 0) {
+                throw std::invalid_argument("Handle is already in use: " + *request.handle);
+            }
+        }
 
         execParams(connection.get(), R"SQL(
-INSERT INTO users(id, email, display_name, is_admin, created_at, updated_at)
-VALUES ($1, $2, $3, $4::boolean, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+INSERT INTO users(id, email, display_name, handle, is_admin, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5::boolean, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL",
-                   {userId, request.email, request.displayName, request.isAdmin ? std::string("true") : std::string("false")},
+                   {userId, request.email, request.displayName, request.handle,
+                    request.isAdmin ? std::string("true") : std::string("false")},
                    "Insert user");
 
         execParams(connection.get(), R"SQL(
@@ -387,6 +396,15 @@ std::optional<Domain::User> PostgresDatabase::findUserByEmail(const std::string&
 std::optional<Domain::User> PostgresDatabase::findUserById(const std::string& userId) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), std::string(UserSelect) + " WHERE id = $1", {userId}, "Find user by id");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return readUser(result.get(), 0);
+}
+
+std::optional<Domain::User> PostgresDatabase::findUserByHandle(const std::string& handle) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(UserSelect) + " WHERE handle = $1", {handle}, "Find user by handle");
     if (PQntuples(result.get()) == 0) {
         return std::nullopt;
     }
@@ -1367,6 +1385,89 @@ ORDER BY r.reaction_key, u.display_name
         reactions.push_back(std::move(reaction));
     }
     return reactions;
+}
+
+namespace {
+Domain::Notification readNotification(PGresult* result, int row) {
+    Domain::Notification notification;
+    notification.id = value(result, row, 0);
+    notification.type = value(result, row, 1);
+    notification.issueKey = optionalValue(result, row, 2);
+    notification.issueSummary = optionalValue(result, row, 3);
+    notification.readAt = optionalValue(result, row, 4);
+    notification.createdAt = value(result, row, 5);
+    return notification;
+}
+
+constexpr const char* NotificationSelect = R"SQL(
+SELECT n.id, n.type, i.issue_key, i.summary, n.read_at::text, n.created_at::text
+FROM notifications n
+LEFT JOIN issues i ON i.id = n.issue_id
+)SQL";
+} // namespace
+
+Domain::Notification PostgresDatabase::createNotification(const std::string& userId,
+                                                           const std::string& type,
+                                                           const std::string& issueId) {
+    auto connection = connect(connectionString_);
+    const std::string notificationId = Common::uuidV4();
+    execParams(connection.get(), R"SQL(
+INSERT INTO notifications(id, user_id, type, issue_id, created_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+)SQL",
+               {notificationId, userId, type, issueId},
+               "Insert notification");
+
+    auto result = execParams(connection.get(), std::string(NotificationSelect) + "WHERE n.id = $1",
+                             {notificationId}, "Read created notification");
+    if (PQntuples(result.get()) != 1) {
+        throw std::runtime_error("Created notification could not be read back");
+    }
+    return readNotification(result.get(), 0);
+}
+
+std::vector<Domain::Notification> PostgresDatabase::listNotifications(const std::string& userId, const bool unreadOnly) {
+    auto connection = connect(connectionString_);
+    std::string sql = std::string(NotificationSelect) + "WHERE n.user_id = $1";
+    if (unreadOnly) {
+        sql += " AND n.read_at IS NULL";
+    }
+    sql += " ORDER BY n.created_at DESC";
+    auto result = execParams(connection.get(), sql, {userId}, "List notifications");
+    std::vector<Domain::Notification> notifications;
+    const int rowCount = PQntuples(result.get());
+    for (int row = 0; row < rowCount; ++row) {
+        notifications.push_back(readNotification(result.get(), row));
+    }
+    return notifications;
+}
+
+int PostgresDatabase::countUnreadNotifications(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL",
+                             {userId}, "Count unread notifications");
+    if (PQntuples(result.get()) == 0) {
+        return 0;
+    }
+    return static_cast<int>(int64Value(result.get(), 0, 0));
+}
+
+bool PostgresDatabase::markNotificationRead(const std::string& notificationId, const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2 AND read_at IS NULL
+)SQL",
+                             {notificationId, userId},
+                             "Mark notification read");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool PostgresDatabase::markAllNotificationsRead(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(),
+                             "UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND read_at IS NULL",
+                             {userId},
+                             "Mark all notifications read");
+    return std::string(PQcmdTuples(result.get())) != "0";
 }
 
 Domain::DashboardStats PostgresDatabase::dashboardStats() {

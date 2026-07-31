@@ -20,10 +20,11 @@ void printUsage(const char* executable) {
         << "Commands:\n"
         << "  migrate                                     Apply all pending schema migrations.\n"
         << "  seed-demo                                    Apply migrations and insert idempotent demo data.\n"
-        << "  create-user <email> <displayName> <password> [--admin]\n"
+        << "  create-user <email> <displayName> <password> [--admin] [--handle=<handle>]\n"
         << "                                                Create a local account directly (no invitation\n"
         << "                                                flow, no forced password change). This is the\n"
-        << "                                                entire registration story for V1.\n"
+        << "                                                entire registration story for V1. --handle sets\n"
+        << "                                                the optional, unique @mention handle (D56/D80).\n"
         << "  diagnostics                                  Print resolved non-secret configuration.\n"
         << "  version                                      Print the Ticket Hub version.\n";
 }
@@ -47,23 +48,34 @@ void printDiagnostics(const TicketHub::Config::AppConfig& config) {
 }
 
 int runCreateUser(const TicketHub::Config::AppConfig& config, int argc, char** argv) {
-    if (argc < 5 || argc > 6) {
-        std::cerr << "Usage: create-user <email> <displayName> <password> [--admin]\n";
+    if (argc < 5 || argc > 7) {
+        std::cerr << "Usage: create-user <email> <displayName> <password> [--admin] [--handle=<handle>]\n";
         return 2;
     }
     TicketHub::Domain::CreateUserRequest request;
     request.email = argv[2];
     request.displayName = argv[3];
     request.password = argv[4];
-    request.isAdmin = argc == 6 && std::string(argv[5]) == "--admin";
+    for (int index = 5; index < argc; ++index) {
+        const std::string flag = argv[index];
+        if (flag == "--admin") {
+            request.isAdmin = true;
+        } else if (flag.rfind("--handle=", 0) == 0) {
+            request.handle = flag.substr(std::string("--handle=").length());
+        } else {
+            std::cerr << "Usage: create-user <email> <displayName> <password> [--admin] [--handle=<handle>]\n";
+            return 2;
+        }
+    }
 
     auto database = TicketHub::Infrastructure::Database::createDatabase(config);
     TicketHub::Application::AuthService authService(database);
     const auto user = authService.createUser(std::move(request));
-    // Never log the password. The id/email/isAdmin confirmation below is
-    // deliberately the only feedback given.
-    std::cout << "Created user " << user.email << " (id=" << user.id << ", admin=" << (user.isAdmin ? "true" : "false")
-              << ")\n";
+    // Never log the password. The id/email/handle/isAdmin confirmation below
+    // is deliberately the only feedback given.
+    std::cout << "Created user " << user.email << " (id=" << user.id
+              << ", handle=" << (user.handle ? *user.handle : "none")
+              << ", admin=" << (user.isAdmin ? "true" : "false") << ")\n";
     return 0;
 }
 
