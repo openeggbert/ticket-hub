@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 124 / 142
-- Decisions remaining: 18
-- KEEP_FOR_V1: 22
-- SIMPLIFY_FOR_V1: 44
-- DEFER_AFTER_V1: 34
+- Decisions completed: 130 / 142
+- Decisions remaining: 12
+- KEEP_FOR_V1: 23
+- SIMPLIFY_FOR_V1: 47
+- DEFER_AFTER_V1: 35
 - REMOVE_COMPLETELY: 7
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 17
+- ALREADY_IMPLEMENTED_AND_KEEP: 18
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -159,12 +159,12 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 121 | IMAP delivery mode | IMAP IDLE with configurable polling fallback | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
 | 122 | Inbound email idempotency | Message-ID/UID/checksum-based idempotency plus quarantine | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
 | 123 | Inbound email processing failure | Retry with backoff then dead-letter queue; atomic processing | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115; concludes the email block | 0h (already counted in Decision 115) | DONE |
-| 124 | REST rate limiting |  |  |  |  |  | PENDING |
-| 125 | REST request and batch limits |  |  |  |  |  | PENDING |
-| 126 | REST pagination |  |  |  |  |  | PENDING |
-| 127 | REST API versioning |  |  |  |  |  | PENDING |
-| 128 | REST write idempotency keys |  |  |  |  |  | PENDING |
-| 129 | Concurrent issue editing |  |  |  |  |  | PENDING |
+| 124 | REST rate limiting | Configurable multi-level rate limits by IP/user/token/service account/endpoint/installation; 429 + Retry-After | Simple fixed rate limit per IP/user (e.g. login and write endpoints); no admin config, no per-endpoint/service-account exceptions | SIMPLIFY_FOR_V1 | Multi-level limits were designed for public API with service accounts, simplified after Decision 39; basic brute-force protection still kept | 10-15h | DONE |
+| 125 | REST request and batch limits | Endpoint-specific body/item limits with audited service-account exceptions; covers imports/attachments/bulk/filters/webhooks/page size | Fixed constants only (max body size, max bulk items, max page size); no admin exceptions | SIMPLIFY_FOR_V1 | Service accounts, imports, and webhooks already removed, shrinking scope to a few simple hardcoded limits | 3-5h | DONE |
+| 126 | REST pagination | Cursor pagination preferred for public API; numbered/offset available where suitable | Numbered/offset pagination everywhere; no cursor mechanism | SIMPLIFY_FOR_V1 | Cursor pagination targeted high-volume public API use, unnecessary for a small internal tracker with a simplified PAT-only API | 5-10h | DONE |
+| 127 | REST API versioning | Major version in URL (/api/v1); backward-compatible evolution; /api/v2 with deprecation period for breaking changes | Use /api/v1 prefix now; formal deprecation policy deferred until a real /api/v2 is needed | KEEP_FOR_V1 | URL prefix is trivial to add; formal versioning process only matters once a v2 actually exists | 0-2h | DONE |
+| 128 | REST write idempotency keys | Required for high-risk operations (issue/comment/worklog creation, bulk changes, imports); optional for simpler updates | No idempotency-key mechanism in V1; accept small risk of duplicate records on client retries | DEFER_AFTER_V1 | Import use case already removed; lower priority for a small internal tracker with direct UI/PAT access | 8-12h | DONE |
+| 129 | Concurrent issue editing | Optimistic locking with version; stale writes fail (409); UI shows conflicting changes and allows reload/reapply | Keep full behavior: server-side version conflict rejection (already partly done) plus UI dialog for reload/reapply | ALREADY_IMPLEMENTED_AND_KEEP | version column and stale-write detection already exist in prototype for status changes | 0h (kept as-is) | DONE |
 | 130 | Realtime browser updates |  |  |  |  |  | PENDING |
 | 131 | Internal event distribution |  |  |  |  |  | PENDING |
 | 132 | Caching |  |  |  |  |  | PENDING |
