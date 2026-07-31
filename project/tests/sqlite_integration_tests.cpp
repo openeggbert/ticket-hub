@@ -93,13 +93,16 @@ int main() {
         const auto viaAlias = database.findIssueByKey("LEGACY-7");
         require(viaAlias.has_value() && viaAlias->key == created.key, "permanent issue-key alias resolves to current key");
 
-        require(database.changeIssueStatus(created.key, "done", demoUserId, created.version), "issue status can be changed");
+        require(database.changeIssueStatus(created.key, "done", demoUserId, std::string("fixed"), created.version),
+               "issue status can be changed");
         const auto done = database.findIssueByKey(created.key);
         require(done.has_value() && done->status.key == "done", "changed status is persisted");
         require(done->version == created.version + 1, "status change increments optimistic-lock version");
+        require(done->resolution.has_value() && *done->resolution == "fixed",
+               "resolution is stored on the transition to a Done-category status");
         bool conflictDetected = false;
         try {
-            database.changeIssueStatus(created.key, "review", demoUserId, created.version);
+            database.changeIssueStatus(created.key, "review", demoUserId, std::nullopt, created.version);
         } catch (const TicketHub::Domain::ConcurrencyConflict&) {
             conflictDetected = true;
         }

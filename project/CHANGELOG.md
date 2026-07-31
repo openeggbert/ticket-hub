@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased — Phase 3 (partial): fixed workflow and hierarchy (reduced scope)
+
+- Added the fixed Epic -> Story/Task/Bug -> Sub-task hierarchy (D5, D29, D64-D66) as an
+  application-layer rule (`Domain::issueTypeHierarchyLevel`, `TicketService::requireValidHierarchy`):
+  a Sub-task requires a Story/Task/Bug parent, an Epic may not have a parent, a Story/Task/Bug's
+  optional parent must be an Epic, and a parent must be in the same project. `CreateIssueRequest`
+  gained `parentIssueKey`; `createIssue` now persists `issues.parent_issue_id` (previously write-only
+  in name -- the column existed and was read back, but nothing ever set it).
+- Added the fixed workflow's hardcoded transition rules (D68-D70), enforced transactionally inside
+  `IDatabase::changeIssueStatus` in both adapters (not the application layer, since they depend on
+  current database state and must not race with a concurrent change): a transition to a
+  Done-category status requires a valid `resolution` (`Domain::isValidResolution`) and is rejected
+  with the new `Domain::WorkflowViolation` if any non-deleted child issue is not yet Done-category
+  ("cannot complete while sub-tasks are unfinished"); a transition away from Done-category
+  ("reopening") always clears `resolution` and never touches child issues; any other transition
+  leaves `resolution` untouched. `changeIssueStatus` gained a `resolution` parameter (both
+  `IDatabase` and `TicketService::changeStatus`). `Domain::Issue` gained a `resolution` field.
+- Added `Domain::WorkflowViolation` (maps to HTTP 422 in `Api.cpp`), distinct from `Domain::Forbidden`
+  (authorization) and `Domain::ConcurrencyConflict` (stale version): the caller is authorized and the
+  request is well-formed, but the current state doesn't allow it.
+- Updated `Api.cpp`: `POST /api/issues` accepts `parentIssueKey`; `PATCH /api/issues/{key}/status`
+  accepts `resolution` and maps `Domain::WorkflowViolation` to 422; issue JSON responses include
+  `resolution` (**not yet compiled** — see "Known verification limitation" in `README.md`).
+- Added `workflow_integration_tests` (SQLite, through `TicketService`): every hierarchy-rejection case,
+  resolution required/rejected-if-unknown on the transition to Done, resolution cleared on reopen, the
+  sub-task-completion gate blocking and then permitting a parent's completion, and reopening a parent
+  leaving its sub-task's status untouched.
+- Manually verified `createIssue` (with `parentIssueKey`) and `changeIssueStatus` (with `resolution`,
+  the sub-task gate, and the reopen-clears-resolution rule) against a live local PostgreSQL 16 server.
+- **Not yet done from Phase 3** (see `NEXT.md`): full issue edit beyond status (summary/description/
+  priority/assignee/labels/due date changes with optimistic locking), simple cloning (D60), the fixed
+  issue-link catalog (D17), self-only watchers (D20), voting (D79), simple bulk actions (D36),
+  always-allowed project moves (D37), and the integer rank/renumber migration (D31) replacing the
+  unused `issues.rank_value` text column. No web UI changes for any of Phase 3 (no hierarchy picker,
+  no resolution field on the status-change form) -- that depends on the still-unverified server target.
+
 ## Unreleased — Phase 2: authorization and projects (reduced scope)
 
 - Added fixed project roles (`Domain::ProjectRoleViewer`/`Member`/`Admin`, `Domain::projectRoleRank`) and

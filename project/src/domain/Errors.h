@@ -43,4 +43,15 @@ public:
     explicit AuthenticationRequired(const std::string& message) : std::runtime_error(message) {}
 };
 
+// A request is well-formed and the caller is authorized, but it violates one
+// of the fixed, hardcoded workflow/hierarchy rules that replace the original
+// configurable workflow engine (D4, D64-D70) -- e.g. completing an issue
+// that still has unfinished sub-tasks, or omitting the required resolution
+// on a transition to a Done-category status. Maps to HTTP 422: the request
+// is syntactically valid but the current state does not allow it.
+class WorkflowViolation final : public std::runtime_error {
+public:
+    explicit WorkflowViolation(const std::string& message) : std::runtime_error(message) {}
+};
+
 } // namespace TicketHub::Domain

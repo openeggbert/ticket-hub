@@ -30,17 +30,24 @@ remain as the long-term aspirational baseline only — do not build against them
   archive/unarchive (project admin), soft delete/restore/permanent delete (project admin to bin, global
   admin to restore or purge), fixed 90-day on-demand recycle-bin retention; installation-wide anonymous
   read-access toggle, off by default (D59) -- every read use case now takes an optional `Principal`.
-- Domain, migration, crypto, identity, SQLite integration, and authorization tests (6/6 passing; see
-  `docs/VERIFICATION.md`).
+- **Fixed hierarchy and workflow rules (Phase 3, partial):** the Epic -> Story/Task/Bug -> Sub-task
+  hierarchy is enforced on issue creation (D5, D29, D64-D66); status transitions enforce the fixed
+  workflow rules (D68-D70) -- resolution required on completion, cleared on reopen, and a parent cannot
+  complete while any sub-task is unfinished. See "Not yet built" below for the rest of Phase 3.
+- Domain, migration, crypto, identity, SQLite integration, authorization, and workflow tests (7/7
+  passing; see `docs/VERIFICATION.md`).
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
-- The session-cookie/CSRF wiring and the Phase 2 project-CRUD/settings routes in `src/web/Api.cpp` have
-  not been compiled or smoke-tested (Crow is unavailable in this sandbox); there is also no login page or
-  project-management UI in `web/` yet.
+- The session-cookie/CSRF wiring and the Phase 2/3 route additions in `src/web/Api.cpp` have not been
+  compiled or smoke-tested (Crow is unavailable in this sandbox); there is also no login page,
+  project-management UI, or hierarchy/resolution UI in `web/` yet.
 - Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
   to Phase 6, alongside REST rate limiting.
-- Status changes are not yet restricted by the fixed workflow rules (Phase 3).
+- Rest of Phase 3: full issue edit beyond status (summary/description/priority/assignee/labels/due date
+  with optimistic locking), simple cloning (D60), the fixed issue-link catalog (D17), self-only watchers
+  (D20), voting (D79), simple bulk actions (D36), always-allowed project moves (D37), and the integer
+  rank/renumber migration (D31) that replaces the unused `issues.rank_value` text column.
 - Comments/mentions/reactions, attachments, and the Kanban board are not implemented (Phase 4-5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).

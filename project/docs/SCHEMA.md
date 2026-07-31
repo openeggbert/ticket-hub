@@ -85,7 +85,10 @@ installation-level toggles that survived scope reduction -- currently just `anon
 - `issue_statuses`: key, name, one of `todo`, `in_progress`, `done`, sort order.
 - `priorities`: fixed key/name/rank/color rows.
 
-The demo seed includes Epic, Story, Task, Bug and Sub-task, but full hierarchy enforcement is not yet implemented.
+The demo seed includes Epic, Story, Task, Bug and Sub-task. Hierarchy is enforced at the application
+layer (Phase 3 of `REDUCED_SCOPE_ROADMAP.md`), not by a database constraint: `issue_types.hierarchy_level`
+isn't consulted at all -- `Domain::issueTypeHierarchyLevel` hardcodes the fixed Epic(1)/Story-Task-Bug(0)/
+Sub-task(-1) levels (D5, D29, D64-D66), since there are no custom types in V1.
 
 ### `issues`
 
@@ -100,6 +103,19 @@ Core columns:
 - lifecycle: `created_at`, `updated_at`, `version`, `deleted_at`, `deleted_by_user_id`.
 
 Ordinary list, detail and dashboard queries exclude deleted issues. Status changes increment `version`; an expected stale version raises a concurrency conflict.
+
+`parent_issue_id` now has application-layer meaning (Phase 3): `TicketService::createIssue` rejects a
+request that violates the fixed hierarchy (a Sub-task without a parent, a parent of the wrong type, or a
+parent in a different project) with `std::invalid_argument` before the row is ever inserted.
+
+`resolution` (`fixed`/`done`/`wont-fix`/`duplicate`/`cannot-reproduce`, CHECK-constrained since
+`001_initial.sql`) is now set and cleared by `changeIssueStatus` itself, transactionally with the status
+update (D68-D70): required when the target status's `category` is `done` (missing or unrecognized ->
+`Domain::WorkflowViolation`), forced to `NULL` when leaving a `done`-category status ("reopening"), and
+left untouched for any other transition. The same transaction also rejects completing an issue
+(`Domain::WorkflowViolation`) while any non-deleted child (`parent_issue_id` pointing at it) has a
+non-`done`-category status -- the fixed "sub-task completion gate" (D68). Reopening a parent never
+touches its children's rows (D69) -- there is no cascade to implement.
 
 ### `issue_key_aliases`
 
@@ -141,8 +157,10 @@ Indexes cover project/status/assignee/update issue access, live issue listing, c
 ## Deliberate implementation gap
 
 The current schema is a migration-safe foundation for the **reduced-scope V1**, not the full original
-target model. Fixed project roles and project lifecycle (Phase 2) are now enforced; the fixed workflow,
-boards, and attachments remain future phases defined in `REDUCED_SCOPE_DATA_MODEL.md`
+target model. Fixed project roles and project lifecycle (Phase 2), and the fixed workflow/hierarchy rules
+plus resolution handling (Phase 3, partial -- see `NEXT.md` for exactly what of Phase 3 remains: cloning,
+issue links, watchers, voting, bulk actions, and the rank/renumber migration are not yet built) are now
+enforced. Boards and attachments remain future phases defined in `REDUCED_SCOPE_DATA_MODEL.md`
 (`REDUCED_SCOPE_ROADMAP.md`). Permission schemes, workflow versions/drafts, custom fields, saved filters,
 sprints, notifications schemes, jobs, event log, and webhooks are not part of the V1 plan at all -- see
 `docs/REMOVED_AND_DEFERRED_FEATURES.md`.

@@ -57,6 +57,39 @@ void TicketService::requireReadAccess(const std::optional<Domain::Principal>& ac
     }
 }
 
+void TicketService::requireValidHierarchy(Domain::CreateIssueRequest& request) {
+    const int level = Domain::issueTypeHierarchyLevel(request.issueTypeKey);
+    const bool hasParent = request.parentIssueKey.has_value() && !request.parentIssueKey->empty();
+
+    if (level == 1 && hasParent) {
+        throw std::invalid_argument("An Epic cannot have a parent issue");
+    }
+    if (level == -1 && !hasParent) {
+        throw std::invalid_argument("A sub-task must have a parent issue");
+    }
+    if (!hasParent) {
+        request.parentIssueKey = std::nullopt;
+        return;
+    }
+
+    const std::string parentKey = Domain::normalizeIssueKey(*request.parentIssueKey);
+    const auto parent = database_->findIssueByKey(parentKey);
+    if (!parent) {
+        throw std::invalid_argument("Unknown parent issue: " + parentKey);
+    }
+    if (parent->projectKey != request.projectKey) {
+        throw std::invalid_argument("A parent issue must be in the same project");
+    }
+    const int parentLevel = Domain::issueTypeHierarchyLevel(parent->type.key);
+    if (level == -1 && parentLevel != 0) {
+        throw std::invalid_argument("A sub-task's parent must be a Story, Task, or Bug");
+    }
+    if (level == 0 && parentLevel != 1) {
+        throw std::invalid_argument("A Story/Task/Bug's parent must be an Epic");
+    }
+    request.parentIssueKey = parentKey;
+}
+
 std::string TicketService::backendName() const {
     return database_->backendName();
 }
@@ -94,6 +127,7 @@ std::optional<Domain::Issue> TicketService::findIssue(const std::string& issueKe
 Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, const Domain::Principal& actor) {
     request.projectKey = Domain::normalizeProjectKey(request.projectKey);
     requireProjectRole(actor, request.projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireValidHierarchy(request);
     if (request.assigneeEmail) {
         request.assigneeEmail = Domain::normalizeEmail(*request.assigneeEmail);
     }
@@ -112,6 +146,7 @@ Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, con
 bool TicketService::changeStatus(const std::string& issueKey,
                                  const std::string& statusKey,
                                  const Domain::Principal& actor,
+                                 const std::optional<std::string> resolution,
                                  const std::optional<std::int64_t> expectedVersion) {
     if (issueKey.empty() || statusKey.empty()) {
         throw std::invalid_argument("issueKey and statusKey are required");
@@ -122,7 +157,7 @@ bool TicketService::changeStatus(const std::string& issueKey,
         return false;
     }
     requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
-    return database_->changeIssueStatus(normalizedKey, statusKey, actor.userId, expectedVersion);
+    return database_->changeIssueStatus(normalizedKey, statusKey, actor.userId, resolution, expectedVersion);
 }
 
 std::vector<Domain::Comment> TicketService::listComments(const std::string& issueKey,

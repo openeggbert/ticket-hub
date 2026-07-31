@@ -28,6 +28,13 @@ Implemented now:
   90-day on-demand retention, restore, and permanent delete (global admin)**,
 - **installation-wide anonymous read-access toggle, off by default** — every read use case takes an
   optional `Principal`; an anonymous caller is rejected unless the toggle is on,
+- **fixed Epic → Story/Task/Bug → Sub-task hierarchy, enforced on issue creation** (`TicketService::
+  requireValidHierarchy` — Phase 3 of `docs/REDUCED_SCOPE_ROADMAP.md`, partial): a Sub-task requires a
+  same-project Story/Task/Bug parent, an Epic may not have a parent, an optional Story/Task/Bug parent
+  must be an Epic,
+- **the fixed workflow's hardcoded transition rules, enforced transactionally in `changeIssueStatus`**:
+  a resolution is required to complete an issue and is cleared automatically on reopen, and an issue
+  cannot complete while it has an unfinished sub-task,
 - every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
@@ -35,7 +42,7 @@ Implemented now:
 - issue optimistic-lock versioning for status updates,
 - permanent issue/project key-alias schema foundations,
 - recycle-bin schema foundations and live-query filtering,
-- domain, migration, crypto, SQLite integration, identity, and authorization tests (see "Known
+- domain, migration, crypto, SQLite integration, identity, authorization, and workflow tests (see "Known
   verification limitation" below for what is *not* yet compiled/tested in this environment).
 
 Authoritative documents:
@@ -188,15 +195,20 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `GET` | `/api/settings/anonymous-read` | session | current toggle value |
 | `PUT` | `/api/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
 | `GET` | `/api/issues` | session, or anon if enabled | filter by `project`, `status`, `q` |
-| `POST` | `/api/issues` | session + CSRF, project member | create issue (`assigneeEmail`, not username) |
+| `POST` | `/api/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
 | `GET` | `/api/issues/{key}` | session, or anon if enabled | current key or permanent alias |
-| `PATCH` | `/api/issues/{key}/status` | session + CSRF, project member | status update; accepts `expectedVersion` |
+| `PATCH` | `/api/issues/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
 | `GET` | `/api/issues/{key}/comments` | session, or anon if enabled | live comments |
 | `POST` | `/api/issues/{key}/comments` | session + CSRF, project member | add comment |
 
-Issue responses include `version`. A stale `expectedVersion` returns HTTP 409. A missing/insufficient
-project role or global-admin requirement returns HTTP 403. An anonymous read while the toggle is off
-returns HTTP 401.
+Issue responses include `version` and `resolution`. A stale `expectedVersion` returns HTTP 409. A
+missing/insufficient project role or global-admin requirement returns HTTP 403. An anonymous read while
+the toggle is off returns HTTP 401. A request that violates the fixed workflow's hardcoded rules --
+completing an issue without a `resolution`, an unrecognized `resolution`, or completing an issue that
+still has an unfinished sub-task -- returns HTTP 422. `parentIssueKey` on issue creation is validated
+against the fixed Epic/Sub-task hierarchy (a Sub-task requires a same-project Story/Task/Bug parent, an
+Epic may not have one, a Story/Task/Bug's optional parent must be a same-project Epic); a violation
+returns HTTP 400, same as any other invalid request field.
 
 Session-authenticated writes require the `X-CSRF-Token` header to match the readable `th_csrf` cookie
 set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has not been compiled in any
@@ -218,30 +230,34 @@ What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
 - `ticket-hub-core` (domain, application, infrastructure/database — including the identity/session code,
-  fixed project-role authorization, project lifecycle, and the anonymous-read-access toggle, in both
-  database adapters),
+  fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, and the fixed
+  hierarchy/workflow rules, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
-- all six test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
+- all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests`, `identity_integration_tests` (create-user, login success/failure,
   generic-error anti-enumeration check, minimal lockout, session validate/expire/logout),
-  `authorization_integration_tests` (new — project-role gating on issue writes, not-found semantics
-  under authorization, the anonymous-read-access toggle, and the full project lifecycle: create/archive/
+  `authorization_integration_tests` (project-role gating on issue writes, not-found semantics under
+  authorization, the anonymous-read-access toggle, and the full project lifecycle: create/archive/
   soft-delete/restore/permanently-delete, each checked against both the project-admin and
-  global-administrator authorization paths), and `crypto_tests` — all passing.
+  global-administrator authorization paths), `workflow_integration_tests` (new — every Epic/Sub-task
+  hierarchy rejection case, resolution required/rejected-if-unknown on completion, resolution cleared on
+  reopen, the sub-task-completion gate blocking and then permitting a parent's completion, and reopening
+  a parent leaving its sub-task's status untouched), and `crypto_tests` — all passing.
 - Additionally, migrations, seed data, `create-user`, and a full login → validate-session → logout cycle
   were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite) in
-  Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code with a
-  dedicated smoke test exercising `createProject`, `setProjectArchived`, `softDeleteProject`,
-  `listDeletedProjects` (the `LATERAL`-join query and the on-demand 90-day purge), `restoreProject`,
-  `permanentlyDeleteProject`, and the `installation_settings` get/set-with-upsert methods against a real
-  server — all passing.
+  Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code
+  (`createProject`, `setProjectArchived`, `softDeleteProject`, `listDeletedProjects`, `restoreProject`,
+  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it again for
+  `createIssue` (with `parentIssueKey`) and `changeIssueStatus` (with `resolution`, the sub-task gate,
+  and the reopen-clears-resolution rule) — all passing.
 
 What was **not** compiled or tested: `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the
-`ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, and the new Phase 2 project-CRUD
-and anonymous-read-toggle routes, follow the exact patterns already used by the surrounding
-(previously-verified) route handlers, but none of it has been built or exercised against a real HTTP
-client. Build and smoke-test the server target in an environment with network access to `github.com` (or
-a preinstalled Crow package) before trusting it in production.
+`ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, the Phase 2 project-CRUD and
+anonymous-read-toggle routes, and the Phase 3 `parentIssueKey`/`resolution` request fields and the new
+HTTP 422 mapping for `Domain::WorkflowViolation`, follow the exact patterns already used by the
+surrounding (previously-verified) route handlers, but none of it has been built or exercised against a
+real HTTP client. Build and smoke-test the server target in an environment with network access to
+`github.com` (or a preinstalled Crow package) before trusting it in production.
 
 Schema migrations are files such as `001_initial.sql` and `003_product_foundation.sql`. The runner:
 

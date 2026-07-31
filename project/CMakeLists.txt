@@ -151,6 +151,13 @@ if(TICKETHUB_BUILD_TESTS)
             TICKETHUB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         )
         add_test(NAME ticket-hub-authorization-tests COMMAND ticket-hub-authorization-tests)
+
+        add_executable(ticket-hub-workflow-tests tests/workflow_integration_tests.cpp)
+        target_link_libraries(ticket-hub-workflow-tests PRIVATE ticket-hub-core)
+        target_compile_definitions(ticket-hub-workflow-tests PRIVATE
+            TICKETHUB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+        add_test(NAME ticket-hub-workflow-tests COMMAND ticket-hub-workflow-tests)
     endif()
 
     add_executable(ticket-hub-crypto-tests tests/crypto_tests.cpp)

@@ -98,6 +98,7 @@ crow::json::wvalue issueJson(const Domain::Issue& issue) {
     json["parentIssueKey"] = issue.parentIssueKey ? crow::json::wvalue(*issue.parentIssueKey) : crow::json::wvalue(nullptr);
     json["storyPoints"] = issue.storyPoints ? crow::json::wvalue(*issue.storyPoints) : crow::json::wvalue(nullptr);
     json["dueDate"] = issue.dueDate ? crow::json::wvalue(*issue.dueDate) : crow::json::wvalue(nullptr);
+    json["resolution"] = issue.resolution ? crow::json::wvalue(*issue.resolution) : crow::json::wvalue(nullptr);
     crow::json::wvalue::list labels;
     for (const auto& label : issue.labels) {
         labels.emplace_back(label);
@@ -530,6 +531,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             create.issueTypeKey = optionalString(body, "issueTypeKey").value_or("task");
             create.priorityKey = optionalString(body, "priorityKey").value_or("medium");
             create.assigneeEmail = optionalString(body, "assigneeEmail");
+            create.parentIssueKey = optionalString(body, "parentIssueKey");
             create.dueDate = optionalString(body, "dueDate");
             if (body.has("storyPoints") && body["storyPoints"].t() != crow::json::type::Null) {
                 create.storyPoints = body["storyPoints"].d();
@@ -575,17 +577,20 @@ void registerApiRoutes(crow::SimpleApp& app,
                 return errorResponse(400, "Request body must be valid JSON");
             }
             const std::string statusKey = requiredString(body, "statusKey");
+            const auto resolution = optionalString(body, "resolution");
             std::optional<std::int64_t> expectedVersion;
             if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
                 expectedVersion = body["expectedVersion"].i();
             }
-            if (!service->changeStatus(issueKey, statusKey, *principal, expectedVersion)) {
+            if (!service->changeStatus(issueKey, statusKey, *principal, resolution, expectedVersion)) {
                 return errorResponse(404, "Issue not found");
             }
             auto issue = service->findIssue(issueKey, principal);
             return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
         } catch (const Domain::ConcurrencyConflict& error) {
             return errorResponse(409, error.what());
+        } catch (const Domain::WorkflowViolation& error) {
+            return errorResponse(422, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
