@@ -43,6 +43,9 @@ Implemented now:
   to both projects,
 - **simple field-copy cloning** (D60): summary/description/type/priority/labels copied into a new issue,
   with an automatic `clones` link back to the original,
+- **self-service watching and voting** (D20/D79): any authenticated user may watch or vote on any issue
+  — the one write with no project-role requirement — idempotent on repeat, with a visible watcher/voter
+  list,
 - every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
@@ -213,6 +216,10 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `GET` | `/api/issues/{key}/links` | session, or anon if enabled | links from both ends |
 | `POST` | `/api/issues/{key}/links` | session + CSRF, member of both projects | `{targetIssueKey, linkType}` |
 | `DELETE` | `/api/issue-links/{id}` | session + CSRF, member of both projects | remove a link |
+| `GET` | `/api/issues/{key}/watchers` | session, or anon if enabled | current watchers |
+| `POST`/`DELETE` | `/api/issues/{key}/watch` | session + CSRF | watch/unwatch (no project role required) |
+| `GET` | `/api/issues/{key}/voters` | session, or anon if enabled | current voters |
+| `POST`/`DELETE` | `/api/issues/{key}/vote` | session + CSRF | vote/unvote (no project role required) |
 
 `PATCH /api/issues/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
 priorityKey, assigneeEmail?, storyPoints?, dueDate?, labels?, expectedVersion?}`. Every editable field
@@ -232,6 +239,11 @@ returns HTTP 400, same as any other invalid request field.
 `linkType` on `POST /api/issues/{key}/links` must be one of the fixed catalog (`blocks`, `relates_to`,
 `duplicates`, `clones`); there is no admin-configurable link-type list. Both the source and target
 issue's projects must be accessible to the actor (project-Member-or-above), not just the source's.
+
+The watch/vote routes are the one exception among issue writes: they require only an authenticated
+session, not project-Member-or-above, since watching/voting is self-referential and doesn't mutate the
+issue itself. `POST` is idempotent (watching/voting twice is a no-op, still `200`); `DELETE` on a watch/
+vote that doesn't exist is also `200`, not `404`.
 
 Session-authenticated writes require the `X-CSRF-Token` header to match the readable `th_csrf` cookie
 set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has not been compiled in any
@@ -254,37 +266,40 @@ What **was** compiled and tested in this environment, with all warnings enabled
 
 - `ticket-hub-core` (domain, application, infrastructure/database — including the identity/session code,
   fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
-  hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, and simple
-  cloning, in both database adapters),
+  hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, simple cloning,
+  and self-service watching/voting, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the
   stale-version conflict, one `issue_history` row per changed field; issue links: create, list from both
-  ends, duplicate/self-link rejection, find-by-id, delete), `identity_integration_tests` (create-user,
-  login success/failure, generic-error anti-enumeration check, minimal lockout, session
-  validate/expire/logout), `authorization_integration_tests` (project-role gating on issue writes/edits/
-  cloning/links, not-found semantics under authorization, the anonymous-read-access toggle, and the full
-  project lifecycle: create/archive/soft-delete/restore/permanently-delete, each checked against both the
-  project-admin and global-administrator authorization paths), `workflow_integration_tests` (every
-  Epic/Sub-task hierarchy rejection case, resolution required/rejected-if-unknown on completion,
-  resolution cleared on reopen, the sub-task-completion gate, reopening leaving a sub-task's status
-  untouched, clone field-copy correctness, the sub-task-parent-retention special case, and basic link
-  lifecycle), and `crypto_tests` — all passing.
+  ends, duplicate/self-link rejection, find-by-id, delete; watch/vote: idempotency, listing,
+  unknown-issue rejection), `identity_integration_tests` (create-user, login success/failure,
+  generic-error anti-enumeration check, minimal lockout, session validate/expire/logout),
+  `authorization_integration_tests` (project-role gating on issue writes/edits/cloning/links,
+  not-found semantics under authorization, the anonymous-read-access toggle, the full project lifecycle:
+  create/archive/soft-delete/restore/permanently-delete against both project-admin and
+  global-administrator paths, and confirming watch/vote require no project role unlike everything else),
+  `workflow_integration_tests` (every Epic/Sub-task hierarchy rejection case, resolution
+  required/rejected-if-unknown on completion, resolution cleared on reopen, the sub-task-completion gate,
+  reopening leaving a sub-task's status untouched, clone field-copy correctness, the
+  sub-task-parent-retention special case, and basic link lifecycle), and `crypto_tests` — all passing.
 - Additionally, migrations, seed data, `create-user`, and a full login → validate-session → logout cycle
   were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite) in
   Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code
   (`createProject`, `setProjectArchived`, `softDeleteProject`, `listDeletedProjects`, `restoreProject`,
-  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it again three times, for
+  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it four times, for
   `createIssue`/`changeIssueStatus` (hierarchy, resolution, sub-task gate), `editIssue` (every field,
-  label replacement, assignee clearing, stale-version conflict), and issue links/cloning (create/list/
-  duplicate-and-self-link rejection/find/delete, plus `cloneIssue` including the sub-task special case)
-  — all passing.
+  label replacement, assignee clearing, stale-version conflict), issue links/cloning (create/list/
+  duplicate-and-self-link rejection/find/delete, plus `cloneIssue` including the sub-task special case),
+  and watch/vote (idempotency, listing, unwatch/unvote, unknown-issue rejection) — all passing.
 
 What was **not** compiled or tested: `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the
 `ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, the Phase 2 project-CRUD and
 anonymous-read-toggle routes, the Phase 3 `parentIssueKey`/`resolution` request fields, the
 `PATCH /api/issues/{key}` full-edit route, the HTTP 422 mapping for `Domain::WorkflowViolation`, and the
-new `POST /api/issues/{key}/clone`, `GET`/`POST /api/issues/{key}/links`, and
+new `POST /api/issues/{key}/clone`, `GET`/`POST /api/issues/{key}/links`,
+`POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
+`POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters`, and
 `DELETE /api/issue-links/{id}` routes, follow the exact patterns already used by the surrounding
 (previously-verified) route handlers, but none of it has been built or exercised against a real HTTP
 client. (While adding the edit route, three existing routes -- `POST /api/issues`,

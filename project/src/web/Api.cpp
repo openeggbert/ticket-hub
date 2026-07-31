@@ -794,6 +794,122 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
+    // Watching and voting (D20, D79): self-service only, no project-role
+    // check -- any authenticated user may watch/vote on any issue.
+    CROW_ROUTE(app, "/api/issues/<string>/watchers")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& user : service->listWatchers(issueKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(userJson(user));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/watch")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            service->watchIssue(issueKey, *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/watch")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            service->unwatchIssue(issueKey, *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/voters")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& user : service->listVoters(issueKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(userJson(user));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/vote")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            service->voteIssue(issueKey, *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/vote")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            service->unvoteIssue(issueKey, *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
     CROW_ROUTE(app, "/api/dashboard")([service, authService](const crow::request& request) {
         try {
             const auto stats = service->dashboard(resolvePrincipal(request, authService));

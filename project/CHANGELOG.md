@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — Phase 3 (partial, continued): watchers and voting (reduced scope)
+
+- Added migration `006_collaboration.sql` (both backends): `issue_watchers` and `issue_votes`, identical
+  `(issue_id, user_id)` composite-PK many-to-many tables with `ON DELETE CASCADE`.
+- Added `IDatabase::watchIssue`/`unwatchIssue`/`listWatchers` and `voteIssue`/`unvoteIssue`/`listVoters`
+  in both adapters (D20, D79), and matching `TicketService` methods. Both features are self-service only
+  and deliberately have **no project-role check** -- the one exception among issue writes -- since
+  Jira gates watch/vote by "browse" access rather than a write-capable role; any authenticated user may
+  watch/vote on any issue. `watch`/`voteIssue` return `true` only when newly added (idempotent on
+  repeat); `unwatch`/`unvoteIssue` return `true` only when a row was actually removed.
+- Added `POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
+  `POST`/`DELETE /api/issues/{key}/vote`, and `GET /api/issues/{key}/voters` to `Api.cpp` (**not yet
+  compiled** — see "Known verification limitation" in `README.md`).
+- Extended `sqlite_integration_tests` (watch/vote idempotency, listing, unknown-issue rejection) and
+  `authorization_integration_tests` (a non-member of the issue's project can still watch/vote, unlike
+  every other write tested).
+- Manually verified watch/vote (idempotency, listing, unwatch/unvote, unknown-issue rejection) against a
+  live local PostgreSQL 16 server.
+
 ## Unreleased — Phase 3 (partial, continued): issue links and cloning (reduced scope)
 
 - Added the fixed issue-link catalog (D17): `Domain::isValidLinkType`/`linkTypeLabels` (`blocks`,

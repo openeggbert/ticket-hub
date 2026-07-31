@@ -204,6 +204,29 @@ int main() {
         require(database.listIssueLinks(created.key).empty(), "the link no longer appears after deletion");
         require(!database.deleteIssueLink(link.id), "deleting an already-gone link returns false");
 
+        const std::string alexUserId = "00000000-0000-4000-8000-000000000002";
+        require(database.watchIssue(created.key, demoUserId), "watching an issue succeeds");
+        require(!database.watchIssue(created.key, demoUserId), "watching an already-watched issue is a no-op");
+        require(database.watchIssue(created.key, alexUserId), "a second user can also watch");
+        require(database.listWatchers(created.key).size() == 2, "both watchers are listed");
+        require(database.unwatchIssue(created.key, demoUserId), "unwatching removes the watcher");
+        require(!database.unwatchIssue(created.key, demoUserId), "unwatching again is a no-op");
+        require(database.listWatchers(created.key).size() == 1, "one watcher remains");
+
+        require(database.voteIssue(created.key, demoUserId), "voting for an issue succeeds");
+        require(!database.voteIssue(created.key, demoUserId), "voting again is a no-op");
+        require(database.listVoters(created.key).size() == 1, "the voter is listed");
+        require(database.unvoteIssue(created.key, demoUserId), "removing a vote succeeds");
+        require(database.listVoters(created.key).empty(), "no voters remain");
+
+        bool watchUnknownIssueRejected = false;
+        try {
+            database.watchIssue("TH-9999", demoUserId);
+        } catch (const std::invalid_argument&) {
+            watchUnknownIssueRejected = true;
+        }
+        require(watchUnknownIssueRejected, "watching an unknown issue is rejected");
+
         const auto comment = database.addComment({created.key, "Database adapter smoke test passed."}, demoUserId);
         require(!comment.id.empty(), "comment receives an id");
         require(database.listComments(created.key).size() == 1, "comment can be listed");

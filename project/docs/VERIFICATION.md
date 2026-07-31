@@ -1,5 +1,57 @@
 # Verification record
 
+## 2026-07-31 — Phase 3, partial continued (watchers and voting, reduced scope)
+
+Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
+libpq 16.14, and a live local PostgreSQL 16.14 server (the server needed restarting first, as in every
+prior batch this session; freshly created scratch database/role, dropped afterward).
+
+### Core configuration
+
+```bash
+cmake -S . -B build -DTICKETHUB_BUILD_SERVER=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
+```
+
+All warnings enabled (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`); zero warnings, including through
+the six new `IDatabase` methods (`watchIssue`/`unwatchIssue`/`listWatchers`/`voteIssue`/`unvoteIssue`/
+`listVoters`) forcing a rebuild through both adapters and `TicketService`.
+
+### Passing tests (7/7 — same binaries, extended coverage)
+
+1. `ticket-hub-domain-tests`, `ticket-hub-migration-tests`, `ticket-hub-identity-tests`,
+   `ticket-hub-workflow-tests`, `ticket-hub-crypto-tests` — unchanged, all still passing.
+2. `ticket-hub-sqlite-integration-tests` — extended: watches the previously-created issue with two
+   different users, asserts watching again is a no-op, asserts both watchers are listed, asserts
+   unwatching removes one and unwatching again is a no-op; the same sequence for voting; asserts
+   watching an unknown issue key raises `std::invalid_argument`.
+3. `ticket-hub-authorization-tests` — extended: Sam, who is not a member of the WEB project at all
+   (unlike every other actor/action tested in this file), can still watch and vote on a WEB issue,
+   confirming watch/vote are deliberately exempt from the project-role check every other issue write
+   enforces; watching/voting again is a no-op; both are visible to any authenticated reader.
+
+### Additional verification beyond the automated suite
+
+- **Live PostgreSQL 16 server**: ran `ticket-hub-cli migrate`/`seed-demo` (confirmed `issue_watchers`
+  and `issue_votes` were created with the expected columns, composite primary key, and `ON DELETE
+  CASCADE` foreign keys via `psql \d`), then compiled and ran a standalone program
+  (`pg_watch_vote_smoke.cpp`, not committed) exercising `PostgresDatabase::watchIssue`/`unwatchIssue`/
+  `listWatchers`/`voteIssue`/`unvoteIssue`/`listVoters` directly: idempotency of watch/vote, two
+  independent watchers, listing, unwatch/unvote removing exactly the right row, and voting on an unknown
+  issue key raising `std::invalid_argument`. All 13 assertions passed. The scratch database and role
+  were dropped after verification.
+- Both SQLite and PostgreSQL adapters, `ticket-hub-core`, `ticket-hub-cli`, and all seven test binaries
+  compile and link cleanly, including in the SQLite-only and PostgreSQL-only build configurations.
+
+### Environment limitations (unchanged)
+
+`src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) still
+could not be compiled -- outbound access to `github.com` remains blocked. The new
+`POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
+`POST`/`DELETE /api/issues/{key}/vote`, and `GET /api/issues/{key}/voters` routes follow the same
+patterns as the already-unverified Phase 1-3 routes and carry the same caveat.
+
 ## 2026-07-31 — Phase 3, partial continued (issue links and cloning, reduced scope)
 
 Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,

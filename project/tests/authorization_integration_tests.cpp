@@ -148,6 +148,21 @@ int main() {
                "a member of both linked projects (TH member, WEB admin) can delete the link");
     }
 
+    // --- Watching and voting are self-service and require no project role (D20, D79) ---
+    {
+        // Sam is not a WEB member at all, unlike every other write tested
+        // above -- watch/vote are the one exception to "roles gate writes".
+        require(tickets.watchIssue("WEB-1", sam), "a non-member can still watch an issue");
+        require(!tickets.watchIssue("WEB-1", sam), "watching again is a no-op");
+        require(tickets.listWatchers("WEB-1", demo).size() == 1, "the watcher is visible to any authenticated reader");
+        require(tickets.unwatchIssue("WEB-1", sam), "a non-member can unwatch their own watch");
+
+        require(tickets.voteIssue("WEB-1", sam), "a non-member can still vote on an issue");
+        require(!tickets.voteIssue("WEB-1", sam), "voting again is a no-op");
+        require(tickets.listVoters("WEB-1", demo).size() == 1, "the voter is visible to any authenticated reader");
+        require(tickets.unvoteIssue("WEB-1", sam), "a non-member can remove their own vote");
+    }
+
     // --- Anonymous read-access toggle (D59, off by default) ---
     {
         const std::optional<Principal> anonymous = std::nullopt;

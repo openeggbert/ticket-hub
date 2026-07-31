@@ -125,6 +125,20 @@ public:
     virtual std::vector<Domain::IssueLink> listIssueLinks(const std::string& issueKey) = 0;
     virtual std::optional<Domain::IssueLinkDetail> findIssueLinkById(const std::string& linkId) = 0;
     virtual bool deleteIssueLink(const std::string& linkId) = 0;
+
+    // --- Watchers and voting (Phase 3, D20/D79) ---
+    // Self-service only: there is no admin management of another user's
+    // watch/vote state, so there is no project-role check either (see
+    // TicketService) -- any authenticated user may watch/vote on any issue.
+    // watch/voteIssue return true only if the row was newly inserted;
+    // unwatch/unvoteIssue return true only if a row was actually removed.
+    // Both throw std::invalid_argument for an unknown issue key.
+    virtual bool watchIssue(const std::string& issueKey, const std::string& userId) = 0;
+    virtual bool unwatchIssue(const std::string& issueKey, const std::string& userId) = 0;
+    virtual std::vector<Domain::UserSummary> listWatchers(const std::string& issueKey) = 0;
+    virtual bool voteIssue(const std::string& issueKey, const std::string& userId) = 0;
+    virtual bool unvoteIssue(const std::string& issueKey, const std::string& userId) = 0;
+    virtual std::vector<Domain::UserSummary> listVoters(const std::string& issueKey) = 0;
 };
 
 } // namespace TicketHub::Infrastructure::Database

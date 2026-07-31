@@ -87,6 +87,24 @@ public:
     // Returns false if the link does not exist.
     bool deleteIssueLink(const std::string& linkId, const Domain::Principal& actor);
 
+    // --- Watchers and voting (Phase 3, D20/D79) ---
+    // Self-service only -- no managing other users' watch/vote state, and no
+    // project-role check: only the issue itself needs to exist. Any
+    // authenticated user may watch/vote on any issue (D58: any authenticated
+    // user sees all projects; roles gate writes only, and watch/vote are the
+    // one exception even to that, since Jira gates them by "browse" access
+    // rather than a write-capable role). watch/vote return true only when the
+    // row was newly added; unwatch/unvote return true only when a row was
+    // actually removed. All throw std::invalid_argument for an unknown issue.
+    bool watchIssue(const std::string& issueKey, const Domain::Principal& actor);
+    bool unwatchIssue(const std::string& issueKey, const Domain::Principal& actor);
+    std::vector<Domain::UserSummary> listWatchers(const std::string& issueKey,
+                                                   const std::optional<Domain::Principal>& actor);
+    bool voteIssue(const std::string& issueKey, const Domain::Principal& actor);
+    bool unvoteIssue(const std::string& issueKey, const Domain::Principal& actor);
+    std::vector<Domain::UserSummary> listVoters(const std::string& issueKey,
+                                                 const std::optional<Domain::Principal>& actor);
+
     // --- Project lifecycle (Phase 2, D3/D87/D88/D89) ---
     // Creation requires global administrator: there is no project to hold a
     // project-admin membership row over until it exists, matching the
