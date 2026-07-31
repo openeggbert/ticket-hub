@@ -1,5 +1,73 @@
 # Verification record
 
+## 2026-07-31 — Phase 2 (authorization and projects, reduced scope)
+
+Verified in the same session/environment as Phase 1 below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
+libpq 16.14, and a live local PostgreSQL 16.14 server (freshly created for this phase's verification and
+dropped afterward).
+
+### Core configuration
+
+```bash
+cmake -S . -B build -DTICKETHUB_BUILD_SERVER=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
+```
+
+All warnings enabled (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`); zero warnings, in both the
+initial database-layer compile and every subsequent incremental compile as the application layer
+(`TicketService`), the new test binary, and the read-access-gating changes were added.
+
+### Passing tests (6/6)
+
+1. `ticket-hub-domain-tests`, `ticket-hub-migration-tests`, `ticket-hub-sqlite-integration-tests`,
+   `ticket-hub-identity-tests`, `ticket-hub-crypto-tests` — unchanged from Phase 1, all still passing.
+2. `ticket-hub-authorization-tests` (new) — SQLite, exercised through `TicketService` (not the raw
+   database adapter, unlike the other integration tests) so the authorization layer itself is under
+   test:
+   - a project non-member cannot create an issue, change status, or comment in another project
+     (`Domain::Forbidden`); a project member can; a project admin (not global admin) can too;
+   - not-found semantics are unaffected by authorization: changing the status of an unknown issue still
+     returns `false` (not `Forbidden`), commenting on one still raises `std::invalid_argument`;
+   - the anonymous-read-access toggle: off by default, an anonymous caller is rejected
+     (`Domain::AuthenticationRequired`) while off and admitted once a global administrator turns it on,
+     an authenticated caller can always read regardless of the toggle, and only a global administrator
+     may flip it;
+   - the full project lifecycle authorization matrix: creation is global-admin-only even for another
+     project's admin; archiving requires at least project-admin; the recycle bin
+     (`listDeletedProjects`/`restoreProject`/`permanentlyDeleteProject`) is global-administrator-only even
+     for the project's own admin, matching D88 ("admin restore or permanent delete"); soft-delete
+     (moving to the bin) is available to a project admin.
+   - One real bug caught by this suite before it was trusted: the test's first assertion expected an
+     archived project to still appear (with `archived: true`) in `listProjects()`. The actual (pre-existing,
+     correct) behavior is that `listProjects()` is the *active* project list and excludes archived/deleted
+     projects entirely, per D87 ("leaves active lists"). The test assertion was wrong, not the
+     implementation; it was corrected to assert the project's absence, then its return once unarchived.
+
+### Additional verification beyond the automated suite
+
+- **Live PostgreSQL 16 server**: created a scratch `tickethub` database/role, ran `ticket-hub-cli
+  migrate`/`seed-demo`/`create-user` against it, then compiled and ran a standalone program
+  (`pg_phase2_smoke.cpp`, not committed) linking directly against `PostgresDatabase` to exercise every
+  Phase 2 method that could not be covered by the SQLite-only `authorization_integration_tests`:
+  `getSetting`/`setSetting` (including the `ON CONFLICT` upsert), `findProjectRoleByKey`, `createProject`
+  (including the auto-inserted creator-as-admin membership row), `setProjectArchived`,
+  `softDeleteProject` (including its idempotent-false second call), `listDeletedProjects` (the `LATERAL`
+  join and the on-demand `INTERVAL '90 days'` purge), `restoreProject`, and `permanentlyDeleteProject`
+  (including its idempotent-false second call). All 17 assertions passed. The scratch database and role
+  were dropped after verification; nothing PostgreSQL-specific was left running.
+- Both SQLite and PostgreSQL adapters, `ticket-hub-core`, `ticket-hub-cli`, and all six test binaries
+  compile and link cleanly.
+
+### Environment limitations (unchanged from Phase 1)
+
+`src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) still
+could not be compiled -- outbound access to `github.com`, needed for CMake `FetchContent` to fetch Crow,
+remains blocked. The new Phase 2 routes (`POST/PATCH/DELETE /api/projects/...`,
+`GET/PUT /api/settings/anonymous-read`) and the read-route changes to resolve an optional `Principal`
+follow the same patterns as the already-unverified Phase 1 routes and carry the same caveat: build and
+smoke-test against a real Crow checkout before trusting them.
+
 ## 2026-07-31 — Phase 1 (identity and sessions, reduced scope)
 
 Verified in the session environment with GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1, libpq 16.14, and a

@@ -144,6 +144,13 @@ if(TICKETHUB_BUILD_TESTS)
             TICKETHUB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         )
         add_test(NAME ticket-hub-identity-tests COMMAND ticket-hub-identity-tests)
+
+        add_executable(ticket-hub-authorization-tests tests/authorization_integration_tests.cpp)
+        target_link_libraries(ticket-hub-authorization-tests PRIVATE ticket-hub-core)
+        target_compile_definitions(ticket-hub-authorization-tests PRIVATE
+            TICKETHUB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+        add_test(NAME ticket-hub-authorization-tests COMMAND ticket-hub-authorization-tests)
     endif()
 
     add_executable(ticket-hub-crypto-tests tests/crypto_tests.cpp)

@@ -1,5 +1,6 @@
 #include "application/TicketService.h"
 
+#include "domain/Errors.h"
 #include "domain/Validation.h"
 
 #include <algorithm>
@@ -8,6 +9,19 @@
 
 namespace TicketHub::Application {
 
+namespace {
+std::string joinErrors(const std::vector<std::string>& errors) {
+    std::ostringstream message;
+    for (std::size_t index = 0; index < errors.size(); ++index) {
+        if (index != 0) {
+            message << "; ";
+        }
+        message << errors[index];
+    }
+    return message.str();
+}
+} // namespace
+
 TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database)
     : database_(std::move(database)) {
     if (!database_) {
@@ -15,15 +29,55 @@ TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase
     }
 }
 
+void TicketService::requireProjectRole(const Domain::Principal& actor,
+                                       const std::string& projectKey,
+                                       const int minimumRank) const {
+    if (actor.isAdmin) {
+        return;
+    }
+    const auto role = database_->findProjectRoleByKey(projectKey, actor.userId);
+    const int rank = role ? Domain::projectRoleRank(*role) : -1;
+    if (rank < minimumRank) {
+        throw Domain::Forbidden("Actor lacks the required role on project " + projectKey);
+    }
+}
+
+void TicketService::requireGlobalAdmin(const Domain::Principal& actor) const {
+    if (!actor.isAdmin) {
+        throw Domain::Forbidden("This action requires global administrator privileges");
+    }
+}
+
+void TicketService::requireReadAccess(const std::optional<Domain::Principal>& actor) {
+    if (actor) {
+        return;
+    }
+    if (!isAnonymousReadEnabled()) {
+        throw Domain::AuthenticationRequired("Anonymous read access is disabled on this installation");
+    }
+}
+
 std::string TicketService::backendName() const {
     return database_->backendName();
 }
 
-std::vector<Domain::Project> TicketService::listProjects() {
+bool TicketService::isAnonymousReadEnabled() {
+    return database_->getSetting("anonymous_read_access") == std::string("true");
+}
+
+void TicketService::setAnonymousReadEnabled(const bool enabled, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    database_->setSetting("anonymous_read_access", enabled ? "true" : "false");
+}
+
+std::vector<Domain::Project> TicketService::listProjects(const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
     return database_->listProjects();
 }
 
-std::vector<Domain::Issue> TicketService::listIssues(const Domain::IssueFilter& filter) {
+std::vector<Domain::Issue> TicketService::listIssues(const Domain::IssueFilter& filter,
+                                                      const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
     auto normalized = filter;
     if (normalized.projectKey) {
         normalized.projectKey = Domain::normalizeProjectKey(*normalized.projectKey);
@@ -31,12 +85,15 @@ std::vector<Domain::Issue> TicketService::listIssues(const Domain::IssueFilter& 
     return database_->listIssues(normalized);
 }
 
-std::optional<Domain::Issue> TicketService::findIssue(const std::string& issueKey) {
+std::optional<Domain::Issue> TicketService::findIssue(const std::string& issueKey,
+                                                       const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
     return database_->findIssueByKey(Domain::normalizeIssueKey(issueKey));
 }
 
 Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, const Domain::Principal& actor) {
     request.projectKey = Domain::normalizeProjectKey(request.projectKey);
+    requireProjectRole(actor, request.projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     if (request.assigneeEmail) {
         request.assigneeEmail = Domain::normalizeEmail(*request.assigneeEmail);
     }
@@ -47,14 +104,7 @@ Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, con
     request.labels.erase(std::unique(request.labels.begin(), request.labels.end()), request.labels.end());
     const auto errors = Domain::validateCreateIssue(request);
     if (!errors.empty()) {
-        std::ostringstream message;
-        for (std::size_t index = 0; index < errors.size(); ++index) {
-            if (index != 0) {
-                message << "; ";
-            }
-            message << errors[index];
-        }
-        throw std::invalid_argument(message.str());
+        throw std::invalid_argument(joinErrors(errors));
     }
     return database_->createIssue(request, actor.userId);
 }
@@ -66,10 +116,18 @@ bool TicketService::changeStatus(const std::string& issueKey,
     if (issueKey.empty() || statusKey.empty()) {
         throw std::invalid_argument("issueKey and statusKey are required");
     }
-    return database_->changeIssueStatus(Domain::normalizeIssueKey(issueKey), statusKey, actor.userId, expectedVersion);
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        return false;
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    return database_->changeIssueStatus(normalizedKey, statusKey, actor.userId, expectedVersion);
 }
 
-std::vector<Domain::Comment> TicketService::listComments(const std::string& issueKey) {
+std::vector<Domain::Comment> TicketService::listComments(const std::string& issueKey,
+                                                          const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
     return database_->listComments(Domain::normalizeIssueKey(issueKey));
 }
 
@@ -80,11 +138,55 @@ Domain::Comment TicketService::addComment(const std::string& issueKey, const std
     if (body.size() > 100000) {
         throw std::invalid_argument("comment body must not exceed 100000 characters");
     }
-    return database_->addComment(Domain::AddCommentRequest{Domain::normalizeIssueKey(issueKey), body}, actor.userId);
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    return database_->addComment(Domain::AddCommentRequest{normalizedKey, body}, actor.userId);
 }
 
-Domain::DashboardStats TicketService::dashboard() {
+Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
     return database_->dashboardStats();
+}
+
+Domain::Project TicketService::createProject(Domain::CreateProjectRequest request, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    request.key = Domain::normalizeProjectKey(request.key);
+    const auto errors = Domain::validateCreateProject(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->createProject(request, actor.userId);
+}
+
+bool TicketService::setProjectArchived(const std::string& projectKey, const bool archived, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeProjectKey(projectKey);
+    requireProjectRole(actor, normalizedKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    return database_->setProjectArchived(normalizedKey, archived);
+}
+
+bool TicketService::deleteProject(const std::string& projectKey, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeProjectKey(projectKey);
+    requireProjectRole(actor, normalizedKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    return database_->softDeleteProject(normalizedKey, actor.userId);
+}
+
+bool TicketService::restoreProject(const std::string& projectKey, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->restoreProject(Domain::normalizeProjectKey(projectKey));
+}
+
+std::vector<Domain::Project> TicketService::listDeletedProjects(const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->listDeletedProjects();
+}
+
+bool TicketService::permanentlyDeleteProject(const std::string& projectKey, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->permanentlyDeleteProject(Domain::normalizeProjectKey(projectKey));
 }
 
 } // namespace TicketHub::Application

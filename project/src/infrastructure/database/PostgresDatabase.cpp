@@ -470,6 +470,172 @@ void PostgresDatabase::deleteExpiredSessions() {
     exec(connection.get(), "DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP", "Delete expired sessions");
 }
 
+// --- Authorization and project lifecycle ---
+
+namespace {
+constexpr const char* ProjectSelectSql = R"SQL(
+SELECT p.id, p.project_key, p.name, p.description,
+       lead.id, lead.display_name, lead.email,
+       counts.issue_count, counts.open_issue_count,
+       p.archived
+FROM projects p
+LEFT JOIN users lead ON lead.id = p.lead_user_id
+LEFT JOIN LATERAL (
+    SELECT COUNT(i.id) AS issue_count,
+           COUNT(i.id) FILTER (WHERE s.category <> 'done') AS open_issue_count
+    FROM issues i JOIN issue_statuses s ON s.id = i.status_id
+    WHERE i.project_id = p.id AND i.deleted_at IS NULL
+) counts ON TRUE
+)SQL";
+
+Domain::Project readProject(PGresult* result, int row) {
+    Domain::Project project;
+    project.id = value(result, row, 0);
+    project.key = value(result, row, 1);
+    project.name = value(result, row, 2);
+    project.description = value(result, row, 3);
+    if (PQgetisnull(result, row, 4) == 0) {
+        project.lead = readUserSummary(result, row, 4);
+    }
+    project.issueCount = int64Value(result, row, 7);
+    project.openIssueCount = int64Value(result, row, 8);
+    project.archived = boolValue(result, row, 9);
+    return project;
+}
+} // namespace
+
+std::optional<std::string> PostgresDatabase::findProjectRoleByKey(const std::string& projectKey,
+                                                                   const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT pm.role_key
+FROM project_members pm
+JOIN projects p ON p.id = pm.project_id
+WHERE p.project_key = $1 AND pm.user_id = $2
+)SQL",
+                             {projectKey, userId}, "Find project role");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return value(result.get(), 0, 0);
+}
+
+Domain::Project PostgresDatabase::createProject(const Domain::CreateProjectRequest& request,
+                                                const std::string& creatorUserId) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin create project transaction");
+    try {
+        const std::string projectId = Common::uuidV4();
+        auto existing = execParams(connection.get(), "SELECT 1 FROM projects WHERE project_key = $1",
+                                   {request.key}, "Check existing project key");
+        if (PQntuples(existing.get()) != 0) {
+            throw std::invalid_argument("Project key is already in use: " + request.key);
+        }
+
+        execParams(connection.get(), R"SQL(
+INSERT INTO projects(id, project_key, name, description, lead_user_id, next_issue_number, archived, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, 1, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL",
+                   {projectId, request.key, request.name, request.description, creatorUserId},
+                   "Insert project");
+
+        execParams(connection.get(),
+                   "INSERT INTO project_members(project_id, user_id, role_key) VALUES ($1, $2, $3)",
+                   {projectId, creatorUserId, std::string(Domain::ProjectRoleAdmin)},
+                   "Insert project creator membership");
+
+        exec(connection.get(), "COMMIT", "Commit create project transaction");
+
+        auto result = execParams(connection.get(), std::string(ProjectSelectSql) + " WHERE p.id = $1",
+                                 {projectId}, "Read created project");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Created project could not be read back");
+        }
+        return readProject(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback create project transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool PostgresDatabase::setProjectArchived(const std::string& projectKey, const bool archived) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE projects SET archived = $1::boolean, archived_at = CASE WHEN $1::boolean THEN CURRENT_TIMESTAMP ELSE NULL END, updated_at = CURRENT_TIMESTAMP
+WHERE project_key = $2 AND deleted_at IS NULL
+)SQL",
+                             {archived ? std::string("true") : std::string("false"), projectKey},
+                             "Set project archived");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool PostgresDatabase::softDeleteProject(const std::string& projectKey, const std::string& actorUserId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE projects SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = $1, updated_at = CURRENT_TIMESTAMP
+WHERE project_key = $2 AND deleted_at IS NULL
+)SQL",
+                             {actorUserId, projectKey}, "Soft delete project");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool PostgresDatabase::restoreProject(const std::string& projectKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE projects SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE project_key = $1 AND deleted_at IS NOT NULL
+)SQL",
+                             {projectKey}, "Restore project");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::vector<Domain::Project> PostgresDatabase::listDeletedProjects() {
+    auto connection = connect(connectionString_);
+    // Fixed 90-day retention, checked on demand -- there is no background
+    // job to purge proactively (D89/D51).
+    exec(connection.get(),
+        "DELETE FROM projects WHERE deleted_at IS NOT NULL AND deleted_at <= CURRENT_TIMESTAMP - INTERVAL '90 days'",
+        "Purge expired recycle-bin projects");
+
+    auto result = exec(connection.get(),
+                       std::string(ProjectSelectSql) + " WHERE p.deleted_at IS NOT NULL ORDER BY p.deleted_at DESC",
+                       "List deleted projects");
+    std::vector<Domain::Project> projects;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        projects.push_back(readProject(result.get(), row));
+    }
+    return projects;
+}
+
+bool PostgresDatabase::permanentlyDeleteProject(const std::string& projectKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "DELETE FROM projects WHERE project_key = $1 AND deleted_at IS NOT NULL",
+                             {projectKey}, "Permanently delete project");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::optional<std::string> PostgresDatabase::getSetting(const std::string& key) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "SELECT value FROM installation_settings WHERE setting_key = $1",
+                             {key}, "Get installation setting");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return value(result.get(), 0, 0);
+}
+
+void PostgresDatabase::setSetting(const std::string& key, const std::string& value) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), R"SQL(
+INSERT INTO installation_settings(setting_key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+ON CONFLICT (setting_key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+)SQL",
+               {key, value}, "Set installation setting");
+}
+
 // --- Issue tracker ---
 
 std::vector<Domain::Project> PostgresDatabase::listProjects() {

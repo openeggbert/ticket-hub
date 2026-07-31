@@ -48,6 +48,29 @@ public:
     // Opportunistic housekeeping call (no background job exists in V1).
     virtual void deleteExpiredSessions() = 0;
 
+    // --- Authorization and project lifecycle (Phase 2) ---
+    // nullopt means "no membership row" -- combined with an unrecognized
+    // role string, Domain::projectRoleRank(...) treats both as no access.
+    virtual std::optional<std::string> findProjectRoleByKey(const std::string& projectKey,
+                                                             const std::string& userId) = 0;
+    virtual Domain::Project createProject(const Domain::CreateProjectRequest& request,
+                                          const std::string& creatorUserId) = 0;
+    virtual bool setProjectArchived(const std::string& projectKey, bool archived) = 0;
+    // Recycle bin: soft delete / restore / list (which purges anything past
+    // the fixed 90-day retention on access -- there is no background job to
+    // do this proactively, D89) / permanent delete.
+    virtual bool softDeleteProject(const std::string& projectKey, const std::string& actorUserId) = 0;
+    virtual bool restoreProject(const std::string& projectKey) = 0;
+    virtual std::vector<Domain::Project> listDeletedProjects() = 0;
+    virtual bool permanentlyDeleteProject(const std::string& projectKey) = 0;
+
+    // Tiny generic key/value store for the handful of installation-level
+    // toggles that survived scope reduction (e.g. anonymous read access,
+    // D59). Not a general settings framework -- see
+    // docs/REDUCED_SCOPE_DATA_MODEL.md section A.
+    virtual std::optional<std::string> getSetting(const std::string& key) = 0;
+    virtual void setSetting(const std::string& key, const std::string& value) = 0;
+
     // --- Issue tracker (existing prototype surface, now principal-driven) ---
     virtual std::vector<Domain::Project> listProjects() = 0;
     virtual std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter) = 0;

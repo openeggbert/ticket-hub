@@ -1,6 +1,6 @@
 # Ticket Hub next work
 
-Current version: 0.2.0 (Phase 1 in progress)
+Current version: 0.2.0 (Phase 2 core layer complete, server target still unverified)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -17,59 +17,75 @@ anything from the removed/deferred list without an explicit new product conversa
   schema foundations, key/label normalization, administration CLI (version/diagnostics/migrate/
   seed-demo), domain/migration/SQLite integration tests, SQLite-only and PostgreSQL-only build
   verification.
-- **Phase 1, core layer (this batch):** `Principal`, `AuthService` (login/logout/session validation,
+- **Phase 1 (identity and sessions):** `Principal`, `AuthService` (login/logout/session validation,
   administrator-only `createUser`, minimal login-attempt lockout), Argon2id password hashing
   (`common/PasswordHash`), SHA-256 session-token hashing (`common/Sha256`), migration
   `004_identity.sql` on both backends (`local_credentials`, `sessions`, drops `users.username`, adds
   `time_zone`/`clock_format`/`is_admin`), `ticket-hub-cli create-user`. The fixed `demo` user is gone
-  from every write path; `TicketService::createIssue`/`changeStatus`/`addComment` now require a real
-  `Domain::Principal`. All further-reduced per `docs/REDUCED_SCOPE_ROADMAP.md` Phase 1 (no `handle`
-  column yet, no active-session list yet, no forced-password-change flow ever).
-- Tested: `ctest --output-on-failure` is 5/5 green (including two new suites, `crypto_tests` and
-  `identity_integration_tests`) on both SQLite (automated) and PostgreSQL (manually verified against a
-  live local server — migrate/seed/create-user/login/validate-session/logout all confirmed working).
-  Full detail in `docs/VERIFICATION.md`.
-- Web layer source (`src/web/Api.cpp`, `HttpServer.cpp`, `main.cpp`) updated to match: new
-  `/api/auth/login|logout|me` routes, session-cookie + double-submit-CSRF protection on existing write
-  routes, `assigneeUsername` renamed to `assigneeEmail` (also updated in `web/index.html`/`app.js`).
-  **This has not been compiled** — Crow is unavailable in this sandbox (network to `github.com`
-  blocked). See "Known verification limitation" below; this is the actual next thing to close out.
+  from every write path.
+- **Phase 2 (authorization and projects, this batch), core layer:** fixed project roles
+  (`Domain::ProjectRoleViewer`/`Member`/`Admin`, `Domain::projectRoleRank`) and a global-administrator
+  bypass, enforced in `TicketService` (`requireProjectRole`/`requireGlobalAdmin`, throwing
+  `Domain::Forbidden`); `createIssue`/`changeStatus`/`addComment` now require project-Member-or-above.
+  Project lifecycle: `createProject` (global admin), `setProjectArchived` (project admin),
+  `deleteProject`/`restoreProject`/`listDeletedProjects`/`permanentlyDeleteProject` (soft-delete by
+  project admin, everything else recycle-bin-related is global-admin-only per D88). Migration
+  `005_authorization.sql` (both backends) adds `installation_settings`. Installation-wide anonymous
+  read-access toggle (D59, off by default): every read use case (`listProjects`, `listIssues`,
+  `findIssue`, `listComments`, `dashboard`) now takes `std::optional<Principal>` and rejects an
+  anonymous caller with `Domain::AuthenticationRequired` unless the toggle is on; any authenticated
+  caller can always read (D58: roles gate writes only).
+- Tested: `ctest --output-on-failure` is 6/6 green (`domain`, `migration`, `sqlite-integration`,
+  `identity`, the new `authorization-tests`, `crypto`) on SQLite (automated); the Phase 2
+  authorization/project-lifecycle/settings code paths were additionally verified manually against a
+  live local PostgreSQL server (created and dropped for this batch's verification). Full detail in
+  `docs/VERIFICATION.md`.
+- Web layer source (`src/web/Api.cpp`, `HttpServer.cpp`, `main.cpp`) updated to match both phases: Phase
+  1's `/api/auth/login|logout|me` and session-cookie/CSRF protection, and Phase 2's project CRUD routes
+  (`POST/PATCH/DELETE /api/projects/...`, `GET /api/projects/deleted`,
+  `GET/PUT /api/settings/anonymous-read`) plus every existing read route now resolving an optional
+  `Principal`. **None of this has been compiled** — Crow is unavailable in this sandbox (network to
+  `github.com` blocked). See "Known verification limitation" below; this is still the actual next thing
+  to close out, now covering two phases' worth of route changes instead of one.
 
 ## Immediate next step: verify the server target
 
-Phase 1 is not done until this is closed:
+Neither Phase 1 nor Phase 2 is fully done until this is closed — it has been deferred across both
+phases for the same environment reason, not skipped:
 
 1. In an environment with network access to `github.com` (or a preinstalled/vendored Crow 1.3.3), build
    the `ticket-hub` server target (`-DTICKETHUB_BUILD_SERVER=ON`) and fix any compile errors in
    `src/web/Api.cpp` / `HttpServer.cpp` / `main.cpp` — they were written carefully against the existing
    patterns but never compiled.
-2. Smoke-test end-to-end by hand: `create-user` → `POST /api/auth/login` → confirm `Set-Cookie` headers
-   for `th_session` (HttpOnly) and `th_csrf` (readable) → `GET /api/auth/me` → `POST /api/issues` with
-   and without the `X-CSRF-Token` header (expect 201 vs. 403) → `POST /api/auth/logout` → confirm the
-   session cookie no longer authenticates.
-3. Add a minimal login page to `web/` (there isn't one yet) so the demo UI can actually authenticate
-   instead of hitting 401s on every write once the session check is live.
-4. Only then close Phase 1's exit gate for real: "no fixed demo identity remains anywhere in the
-   codebase; login/logout/session endpoints are tested on both databases."
+2. Smoke-test Phase 1 end-to-end by hand: `create-user` → `POST /api/auth/login` → confirm `Set-Cookie`
+   headers for `th_session` (HttpOnly) and `th_csrf` (readable) → `GET /api/auth/me` → `POST /api/issues`
+   with and without the `X-CSRF-Token` header (expect 201 vs. 403) → `POST /api/auth/logout` → confirm
+   the session cookie no longer authenticates.
+3. Smoke-test Phase 2 end-to-end: `POST /api/projects` as a non-admin (expect 403) and as an admin
+   (expect 201); `PATCH /api/projects/{key}/archived`, `DELETE /api/projects/{key}`,
+   `GET /api/projects/deleted`, `POST /api/projects/{key}/restore`,
+   `DELETE /api/projects/{key}/permanent` each as project-admin/global-admin/neither; `GET`/`PUT
+   /api/settings/anonymous-read`; confirm an anonymous `GET /api/issues` returns 401 by default and 200
+   once the toggle is flipped on.
+4. Add a minimal login page (and, ideally, a project-management view) to `web/` (there isn't one yet) so
+   the demo UI can actually authenticate instead of hitting 401s on every write once the session check
+   is live.
+5. Only then close both phases' exit gates for real: "no fixed demo identity remains anywhere in the
+   codebase; login/logout/session endpoints are tested on both databases" (Phase 1) and "every route is
+   explicitly public, authenticated, or role-checked; no fixed demo user remains anywhere" (Phase 2).
 
-## After the server target is verified: Phase 2
+## After the server target is verified: Phase 3
 
-Continue in order through `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 2 (authorization and projects — fixed
-project roles enforced via `project_members.role_key`, project archive/recycle-bin UI, anonymous
-read-access toggle), Phase 3 (issue core and the fixed workflow), then Milestone 2 (collaboration,
-attachments, Kanban board), Milestone 3 (API, backup/restore), Milestone 4 (packaging and hardening).
-Do not jump ahead to later-phase features early, and do not implement anything from
-`docs/REMOVED_AND_DEFERRED_FEATURES.md`.
-
-Note: Phase 2's authorization *logic* (fixed-role checks in `TicketService`/a new
-`AuthorizationService`) does not strictly require Crow either and could be started in parallel with the
-server-target verification above if useful — but the exit gate for "every route is explicitly public,
-authenticated, or role-checked" still needs the real HTTP layer compiling to actually verify.
+Continue in order through `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 3 (issue core and the fixed workflow —
+fixed statuses/transitions, Epic/Sub-task hierarchy, full issue edit with optimistic locking already
+partially in place), then Milestone 2 (collaboration, attachments, Kanban board), Milestone 3 (API,
+backup/restore), Milestone 4 (packaging and hardening). Do not jump ahead to later-phase features early,
+and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Known verification limitation
 
 The `ticket-hub` server target (Crow) could not be compiled in this sandbox because outbound access to
 `github.com` — needed for CMake `FetchContent` to fetch Crow — was blocked by the session's network
-egress policy. This is the same limitation recorded in every prior session. Core, CLI, and all five test
-binaries compile and pass on both SQLite and PostgreSQL. Full detail, including exactly what was and
-was not verified, is in `docs/VERIFICATION.md`.
+egress policy. This is the same limitation recorded in every prior session, now spanning two phases of
+route changes. Core, CLI, and all six test binaries compile and pass on both SQLite and PostgreSQL. Full
+detail, including exactly what was and was not verified, is in `docs/VERIFICATION.md`.

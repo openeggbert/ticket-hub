@@ -25,16 +25,21 @@ remain as the long-term aspirational baseline only — do not build against them
   server-side sessions (SHA-256 token hash, 30-day fixed lifetime), minimal login-attempt lockout,
   administrator-only account creation via `ticket-hub-cli create-user`. No self-registration, no
   invitations, no OIDC, no forced-password-change flow -- see `REDUCED_SCOPE_SPECIFICATION.md` section 3.
-- Domain, migration, crypto, identity, and SQLite integration tests (5/5 passing; see
+- **Fixed project-role authorization and project lifecycle (Phase 2):** Viewer/Member/Admin roles plus a
+  global-administrator bypass, enforced on every issue and project write; project create (global admin),
+  archive/unarchive (project admin), soft delete/restore/permanent delete (project admin to bin, global
+  admin to restore or purge), fixed 90-day on-demand recycle-bin retention; installation-wide anonymous
+  read-access toggle, off by default (D59) -- every read use case now takes an optional `Principal`.
+- Domain, migration, crypto, identity, SQLite integration, and authorization tests (6/6 passing; see
   `docs/VERIFICATION.md`).
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
-- The session-cookie/CSRF wiring in `src/web/Api.cpp` has not been compiled or smoke-tested (Crow is
-  unavailable in this sandbox); there is also no login page in `web/` yet.
+- The session-cookie/CSRF wiring and the Phase 2 project-CRUD/settings routes in `src/web/Api.cpp` have
+  not been compiled or smoke-tested (Crow is unavailable in this sandbox); there is also no login page or
+  project-management UI in `web/` yet.
 - Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
   to Phase 6, alongside REST rate limiting.
-- No role enforcement yet (Phase 2).
 - Status changes are not yet restricted by the fixed workflow rules (Phase 3).
 - Comments/mentions/reactions, attachments, and the Kanban board are not implemented (Phase 4-5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented

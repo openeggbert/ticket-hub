@@ -31,6 +31,19 @@ public:
     void deleteSession(const std::string& sessionId) override;
     void deleteExpiredSessions() override;
 
+    std::optional<std::string> findProjectRoleByKey(const std::string& projectKey,
+                                                     const std::string& userId) override;
+    Domain::Project createProject(const Domain::CreateProjectRequest& request,
+                                  const std::string& creatorUserId) override;
+    bool setProjectArchived(const std::string& projectKey, bool archived) override;
+    bool softDeleteProject(const std::string& projectKey, const std::string& actorUserId) override;
+    bool restoreProject(const std::string& projectKey) override;
+    std::vector<Domain::Project> listDeletedProjects() override;
+    bool permanentlyDeleteProject(const std::string& projectKey) override;
+
+    std::optional<std::string> getSetting(const std::string& key) override;
+    void setSetting(const std::string& key, const std::string& value) override;
+
     std::vector<Domain::Project> listProjects() override;
     std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter) override;
     std::optional<Domain::Issue> findIssueByKey(const std::string& issueKey) override;

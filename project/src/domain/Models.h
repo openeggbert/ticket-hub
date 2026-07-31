@@ -65,6 +65,28 @@ struct AuthenticatedSession {
     std::string sessionToken; // returned to the caller exactly once, at creation
 };
 
+// Fixed project roles (Phase 2, D3). Replaces the original plan's
+// configurable permission schemes -- there is no admin UI to define new
+// roles or grant targets in V1. `ProjectRoleRank` returns -1 for an unknown
+// role string, so callers can treat "no membership row" and "unrecognized
+// role" the same way (no access).
+constexpr const char* ProjectRoleViewer = "viewer";
+constexpr const char* ProjectRoleMember = "member";
+constexpr const char* ProjectRoleAdmin = "admin";
+
+inline int projectRoleRank(const std::string& role) {
+    if (role == ProjectRoleViewer) {
+        return 0;
+    }
+    if (role == ProjectRoleMember) {
+        return 1;
+    }
+    if (role == ProjectRoleAdmin) {
+        return 2;
+    }
+    return -1;
+}
+
 struct Project {
     std::string id;
     std::string key;
@@ -73,6 +95,13 @@ struct Project {
     std::optional<UserSummary> lead;
     std::int64_t issueCount{};
     std::int64_t openIssueCount{};
+    bool archived{false};
+};
+
+struct CreateProjectRequest {
+    std::string key;
+    std::string name;
+    std::string description;
 };
 
 struct IssueType {
