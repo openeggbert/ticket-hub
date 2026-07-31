@@ -15,6 +15,10 @@ Current schema migrations:
 - `004_identity.sql` — local accounts, sessions, minimal login-attempt lockout (Phase 1 of
   `REDUCED_SCOPE_ROADMAP.md`). Drops `users.username`; adds `users.time_zone`/`clock_format`/`is_admin`,
   plus the new `local_credentials` and `sessions` tables.
+- `005_authorization.sql` — fixed project roles and project lifecycle (Phase 2 of
+  `REDUCED_SCOPE_ROADMAP.md`). Adds the `installation_settings` key/value table; no column changes to
+  existing tables (`project_members.role_key` and the `archived`/`deleted_at` columns on `projects`
+  already existed).
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users.
 
@@ -48,6 +52,12 @@ The raw session token is never stored, only its SHA-256 hash; it is returned to 
 
 The application allocates issue numbers transactionally. PostgreSQL locks the project row; SQLite uses `BEGIN IMMEDIATE` and an adapter mutex.
 
+Archiving (D87) and the recycle bin (D88/D89) are now enforced at the application layer, not just schema
+columns: `listProjects` excludes both archived and soft-deleted projects from the active list;
+`listDeletedProjects` purges anything with `deleted_at` older than 90 days before returning results (no
+background job -- purge happens on next access); the project key stays reserved (the `project_key`
+column keeps its `UNIQUE` constraint across soft-deleted rows) until `permanentlyDeleteProject` (D90).
+
 ### `project_key_aliases`
 
 `alias_key` PK, `project_id` nullable, `created_at`. A null project ID can preserve key reservation after a future permanent deletion.
@@ -55,6 +65,19 @@ The application allocates issue numbers transactionally. PostgreSQL locks the pr
 ### `project_members`
 
 `project_id`, `user_id`, `role_key`, `joined_at`; composite PK.
+
+`role_key` is one of the three fixed V1 roles (`Domain::ProjectRoleViewer`/`Member`/`Admin`; D3) -- there
+are no configurable permission schemes. A user with no membership row (or an unrecognized `role_key`) has
+no access to that project's writes; `Domain::projectRoleRank` returns -1 for both cases so callers cannot
+tell them apart. A `users.is_admin` global administrator bypasses this check entirely and is implicitly
+Admin on every project. `createProject` inserts the creator as project Admin automatically.
+
+### `installation_settings`
+
+`setting_key` PK, `value`, `updated_at`. A small generic key/value store for the handful of
+installation-level toggles that survived scope reduction -- currently just `anonymous_read_access`
+(`true`/`false`, absent means disabled), D59. Not a general settings framework
+(`REDUCED_SCOPE_DATA_MODEL.md` section A).
 
 ### Fixed/reference data
 
@@ -118,8 +141,8 @@ Indexes cover project/status/assignee/update issue access, live issue listing, c
 ## Deliberate implementation gap
 
 The current schema is a migration-safe foundation for the **reduced-scope V1**, not the full original
-target model. Fixed project roles, the fixed workflow, boards, attachments, and the REST API surface are
-defined in `REDUCED_SCOPE_DATA_MODEL.md` and introduced only in their roadmap phases
+target model. Fixed project roles and project lifecycle (Phase 2) are now enforced; the fixed workflow,
+boards, and attachments remain future phases defined in `REDUCED_SCOPE_DATA_MODEL.md`
 (`REDUCED_SCOPE_ROADMAP.md`). Permission schemes, workflow versions/drafts, custom fields, saved filters,
 sprints, notifications schemes, jobs, event log, and webhooks are not part of the V1 plan at all -- see
 `docs/REMOVED_AND_DEFERRED_FEATURES.md`.

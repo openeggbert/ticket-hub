@@ -284,34 +284,226 @@ void registerApiRoutes(crow::SimpleApp& app,
         return jsonResponse(200, principalJson(*principal));
     });
 
-    CROW_ROUTE(app, "/api/projects")([service] {
+    CROW_ROUTE(app, "/api/projects")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& project : service->listProjects()) {
+            for (const auto& project : service->listProjects(resolvePrincipal(request, authService))) {
                 items.emplace_back(projectJson(project));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/projects")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::CreateProjectRequest create;
+            create.key = requiredString(body, "key");
+            create.name = requiredString(body, "name");
+            create.description = optionalString(body, "description").value_or("");
+            return jsonResponse(201, projectJson(service->createProject(std::move(create), *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/projects/<string>/archived")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& projectKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body || !body.has("archived") || (body["archived"].t() != crow::json::type::True
+                                                  && body["archived"].t() != crow::json::type::False)) {
+                return errorResponse(400, "archived must be a boolean");
+            }
+            const bool archived = body["archived"].b();
+            if (!service->setProjectArchived(projectKey, archived, *principal)) {
+                return errorResponse(404, "Project not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Moves a project to the recycle bin (soft delete, D88/D89) -- not a
+    // permanent delete. See DELETE /api/projects/<key>/permanent below.
+    CROW_ROUTE(app, "/api/projects/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& projectKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->deleteProject(projectKey, *principal)) {
+                return errorResponse(404, "Project not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/projects/deleted")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& project : service->listDeletedProjects(*principal)) {
+                items.emplace_back(projectJson(project));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/projects/<string>/restore")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& projectKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->restoreProject(projectKey, *principal)) {
+                return errorResponse(404, "Project not found in recycle bin");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/projects/<string>/permanent")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& projectKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->permanentlyDeleteProject(projectKey, *principal)) {
+                return errorResponse(404, "Project not found in recycle bin");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Installation-wide anonymous read-access toggle (D59, off by default).
+    CROW_ROUTE(app, "/api/settings/anonymous-read")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        crow::json::wvalue body;
+        body["enabled"] = service->isAnonymousReadEnabled();
+        return jsonResponse(200, std::move(body));
+    });
+
+    CROW_ROUTE(app, "/api/settings/anonymous-read")
+    .methods(crow::HTTPMethod::Put)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body || !body.has("enabled") || (body["enabled"].t() != crow::json::type::True
+                                                 && body["enabled"].t() != crow::json::type::False)) {
+                return errorResponse(400, "enabled must be a boolean");
+            }
+            service->setAnonymousReadEnabled(body["enabled"].b(), *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }
     });
 
     CROW_ROUTE(app, "/api/issues")
-    .methods(crow::HTTPMethod::Get)([service](const crow::request& request) {
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {
             Domain::IssueFilter filter;
             filter.projectKey = queryParameter(request, "project");
             filter.statusKey = queryParameter(request, "status");
             filter.search = queryParameter(request, "q");
             crow::json::wvalue::list items;
-            for (const auto& issue : service->listIssues(filter)) {
+            for (const auto& issue : service->listIssues(filter, resolvePrincipal(request, authService))) {
                 items.emplace_back(issueJson(issue));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }
@@ -357,10 +549,12 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>")([service](const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/issues/<string>")([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
-            auto issue = service->findIssue(issueKey);
+            auto issue = service->findIssue(issueKey, resolvePrincipal(request, authService));
             return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }
@@ -388,7 +582,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!service->changeStatus(issueKey, statusKey, *principal, expectedVersion)) {
                 return errorResponse(404, "Issue not found");
             }
-            auto issue = service->findIssue(issueKey);
+            auto issue = service->findIssue(issueKey, principal);
             return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
         } catch (const Domain::ConcurrencyConflict& error) {
             return errorResponse(409, error.what());
@@ -400,15 +594,17 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     CROW_ROUTE(app, "/api/issues/<string>/comments")
-    .methods(crow::HTTPMethod::Get)([service](const std::string& issueKey) {
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& comment : service->listComments(issueKey)) {
+            for (const auto& comment : service->listComments(issueKey, resolvePrincipal(request, authService))) {
                 items.emplace_back(commentJson(comment));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }
@@ -436,9 +632,9 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/dashboard")([service] {
+    CROW_ROUTE(app, "/api/dashboard")([service, authService](const crow::request& request) {
         try {
-            const auto stats = service->dashboard();
+            const auto stats = service->dashboard(resolvePrincipal(request, authService));
             crow::json::wvalue body;
             body["totalIssues"] = stats.totalIssues;
             body["todoIssues"] = stats.todoIssues;
@@ -450,6 +646,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             }
             body["recentIssues"] = std::move(recent);
             return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

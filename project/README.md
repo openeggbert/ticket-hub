@@ -9,8 +9,8 @@ Main namespace: `TicketHub`.
 
 The current build target is the **reduced-scope V1** (see `REDUCED_SCOPE_SPECIFICATION.md`), not the
 original full Jira-like plan in `SPECIFICATION.md`, which remains only as a long-term aspirational
-reference. It is **not yet production-ready**: role-based authorization, the Kanban board, attachments,
-and the REST API surface are future phases (`docs/REDUCED_SCOPE_ROADMAP.md`).
+reference. It is **not yet production-ready**: the Kanban board and attachments are future phases
+(`docs/REDUCED_SCOPE_ROADMAP.md`).
 
 Implemented now:
 
@@ -21,15 +21,22 @@ Implemented now:
   (`AuthService` — Phase 1 of `docs/REDUCED_SCOPE_ROADMAP.md`),
 - **administrator-only account creation via `ticket-hub-cli create-user`** — there is no
   self-registration or invitation flow in V1,
-- every issue/comment write now takes an explicit `Principal` instead of a fixed demo user,
+- **fixed project roles (Viewer/Member/Admin) and a global administrator flag, enforced on every issue
+  and project write** (`TicketService::requireProjectRole`/`requireGlobalAdmin` — Phase 2 of
+  `docs/REDUCED_SCOPE_ROADMAP.md`),
+- **project lifecycle: create (global admin), archive/unarchive (project admin), recycle bin with fixed
+  90-day on-demand retention, restore, and permanent delete (global admin)**,
+- **installation-wide anonymous read-access toggle, off by default** — every read use case takes an
+  optional `Principal`; an anonymous caller is rejected unless the toggle is on,
+- every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
 - PostgreSQL migration advisory lock,
 - issue optimistic-lock versioning for status updates,
 - permanent issue/project key-alias schema foundations,
 - recycle-bin schema foundations and live-query filtering,
-- domain, migration, crypto, and SQLite integration tests (see "Known verification limitation" below
-  for what is *not* yet compiled/tested in this environment).
+- domain, migration, crypto, SQLite integration, identity, and authorization tests (see "Known
+  verification limitation" below for what is *not* yet compiled/tested in this environment).
 
 Authoritative documents:
 
@@ -170,16 +177,26 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `POST` | `/api/auth/login` | no | `{email,password}` → sets session + CSRF cookies |
 | `POST` | `/api/auth/logout` | no | clears session (safe to call unauthenticated) |
 | `GET` | `/api/auth/me` | session | current principal, or 401 |
-| `GET` | `/api/dashboard` | no | counts and recent issues |
-| `GET` | `/api/projects` | no | active project summaries |
-| `GET` | `/api/issues` | no | filter by `project`, `status`, `q` |
-| `POST` | `/api/issues` | session + CSRF | create issue (`assigneeEmail`, not username) |
-| `GET` | `/api/issues/{key}` | no | current key or permanent alias |
-| `PATCH` | `/api/issues/{key}/status` | session + CSRF | status update; accepts `expectedVersion` |
-| `GET` | `/api/issues/{key}/comments` | no | live comments |
-| `POST` | `/api/issues/{key}/comments` | session + CSRF | add comment |
+| `GET` | `/api/dashboard` | session, or anon if enabled | counts and recent issues |
+| `GET` | `/api/projects` | session, or anon if enabled | active project summaries |
+| `POST` | `/api/projects` | session + CSRF, global admin | create project |
+| `PATCH` | `/api/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |
+| `DELETE` | `/api/projects/{key}` | session + CSRF, project admin | move to recycle bin |
+| `GET` | `/api/projects/deleted` | session, global admin | list recycle bin |
+| `POST` | `/api/projects/{key}/restore` | session + CSRF, global admin | restore from recycle bin |
+| `DELETE` | `/api/projects/{key}/permanent` | session + CSRF, global admin | permanently delete |
+| `GET` | `/api/settings/anonymous-read` | session | current toggle value |
+| `PUT` | `/api/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
+| `GET` | `/api/issues` | session, or anon if enabled | filter by `project`, `status`, `q` |
+| `POST` | `/api/issues` | session + CSRF, project member | create issue (`assigneeEmail`, not username) |
+| `GET` | `/api/issues/{key}` | session, or anon if enabled | current key or permanent alias |
+| `PATCH` | `/api/issues/{key}/status` | session + CSRF, project member | status update; accepts `expectedVersion` |
+| `GET` | `/api/issues/{key}/comments` | session, or anon if enabled | live comments |
+| `POST` | `/api/issues/{key}/comments` | session + CSRF, project member | add comment |
 
-Issue responses include `version`. A stale `expectedVersion` returns HTTP 409.
+Issue responses include `version`. A stale `expectedVersion` returns HTTP 409. A missing/insufficient
+project role or global-admin requirement returns HTTP 403. An anonymous read while the toggle is off
+returns HTTP 401.
 
 Session-authenticated writes require the `X-CSRF-Token` header to match the readable `th_csrf` cookie
 set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has not been compiled in any
@@ -200,21 +217,31 @@ prototype in `handoff/IMPLEMENTATION_STATE.md`.
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
-- `ticket-hub-core` (domain, application, infrastructure/database — including the new identity/session
-  code and both database adapters),
-- `ticket-hub-cli` (including the new `create-user` command),
-- all five test binaries (`ctest --output-on-failure`), including new `crypto_tests` (SHA-256 known-answer
-  vectors, Argon2id round-trip) and `identity_integration_tests` (create-user, login success/failure,
-  generic-error anti-enumeration check, minimal lockout, session validate/expire/logout) — all passing.
+- `ticket-hub-core` (domain, application, infrastructure/database — including the identity/session code,
+  fixed project-role authorization, project lifecycle, and the anonymous-read-access toggle, in both
+  database adapters),
+- `ticket-hub-cli` (including `create-user`),
+- all six test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
+  `sqlite_integration_tests`, `identity_integration_tests` (create-user, login success/failure,
+  generic-error anti-enumeration check, minimal lockout, session validate/expire/logout),
+  `authorization_integration_tests` (new — project-role gating on issue writes, not-found semantics
+  under authorization, the anonymous-read-access toggle, and the full project lifecycle: create/archive/
+  soft-delete/restore/permanently-delete, each checked against both the project-admin and
+  global-administrator authorization paths), and `crypto_tests` — all passing.
 - Additionally, migrations, seed data, `create-user`, and a full login → validate-session → logout cycle
-  were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite),
-  confirming the PostgreSQL adapter's identity code path independent of the SQLite one.
+  were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite) in
+  Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code with a
+  dedicated smoke test exercising `createProject`, `setProjectArchived`, `softDeleteProject`,
+  `listDeletedProjects` (the `LATERAL`-join query and the on-demand 90-day purge), `restoreProject`,
+  `permanentlyDeleteProject`, and the `installation_settings` get/set-with-upsert methods against a real
+  server — all passing.
 
 What was **not** compiled or tested: `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the
-`ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp` follows the exact patterns
-already used by the surrounding (previously-verified) route handlers, but it has not been built or
-exercised against a real HTTP client. Build and smoke-test the server target in an environment with
-network access to `github.com` (or a preinstalled Crow package) before trusting it in production.
+`ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, and the new Phase 2 project-CRUD
+and anonymous-read-toggle routes, follow the exact patterns already used by the surrounding
+(previously-verified) route handlers, but none of it has been built or exercised against a real HTTP
+client. Build and smoke-test the server target in an environment with network access to `github.com` (or
+a preinstalled Crow package) before trusting it in production.
 
 Schema migrations are files such as `001_initial.sql` and `003_product_foundation.sql`. The runner:
 

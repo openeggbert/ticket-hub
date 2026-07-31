@@ -24,4 +24,6 @@ std::vector<std::string> validatePassword(const std::string& password,
                                           const std::string& displayName);
 std::vector<std::string> validateCreateUser(const CreateUserRequest& request);
 
+std::vector<std::string> validateCreateProject(const CreateProjectRequest& request);
+
 } // namespace TicketHub::Domain

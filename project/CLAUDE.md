@@ -56,18 +56,27 @@ feature from `docs/REMOVED_AND_DEFERRED_FEATURES.md` without a new, explicit pro
 
 ## Current objective
 
-Continue Phase 1 of `docs/REDUCED_SCOPE_ROADMAP.md`: identity and sessions (reduced scope).
+Phase 1 (identity and sessions) and Phase 2 (authorization and projects) of
+`docs/REDUCED_SCOPE_ROADMAP.md` are complete at the core/CLI/test layer — see `NEXT.md` for exact
+status. Both phases still share one open item: the Crow-based `ticket-hub` server target has never been
+compiled in this environment (network access to `github.com` is blocked); `src/web/Api.cpp` has been
+updated to match each phase's application-layer signatures but is unverified. Verifying the server
+target is the immediate next step before either phase's exit gate can close for real.
 
-- Introduce an explicit `Principal`/actor context.
-- Remove fixed demo-user assumptions from write signatures and routes.
-- Add migration-safe identity tables (`users`, `local_credentials`, `sessions`) and repository/domain
-  contracts — **no** `groups`, `invitations`, `oidc_providers`, or `external_identities`; those are
-  permanently removed for V1 (`docs/REMOVED_AND_DEFERRED_FEATURES.md`).
-- Implement the smallest complete local-session authentication vertical slice, including an
-  administrator-only "create user with temporary password" action (this is the entire
-  registration/reset story for V1).
-- Define the fixed project-role authorization check (Admin/Member/Viewer) before adding broad project
-  administration — this replaces the original configurable permission-scheme plan.
+After that, continue with Phase 3 of `docs/REDUCED_SCOPE_ROADMAP.md`: issue core and the fixed workflow
+(fixed statuses/transitions/resolutions, Epic/Sub-task hierarchy enforcement, full issue edit building on
+the existing optimistic-locking foundation).
+
+Phase 1/2 scope, for reference:
+
+- Explicit `Principal`/actor context threaded through every write use case (done).
+- Migration-safe identity tables (`users`, `local_credentials`, `sessions`) — **no** `groups`,
+  `invitations`, `oidc_providers`, or `external_identities`; those are permanently removed for V1
+  (`docs/REMOVED_AND_DEFERRED_FEATURES.md`) (done).
+- Administrator-only "create user with a password set directly by the admin" action — the entire
+  registration/reset story for V1 (done).
+- Fixed project-role authorization check (Admin/Member/Viewer) plus a global-administrator bypass,
+  project lifecycle (create/archive/recycle bin), and the anonymous-read-access toggle (done).
 
 ## Architecture rules
 

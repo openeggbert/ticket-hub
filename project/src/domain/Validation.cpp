@@ -147,4 +147,20 @@ std::vector<std::string> validateCreateUser(const CreateUserRequest& request) {
     return errors;
 }
 
+std::vector<std::string> validateCreateProject(const CreateProjectRequest& request) {
+    std::vector<std::string> errors;
+    if (!isValidProjectKey(normalizeProjectKey(request.key))) {
+        errors.emplace_back("key must contain 2-12 uppercase letters or digits and start with a letter");
+    }
+    if (request.name.empty()) {
+        errors.emplace_back("name is required");
+    } else if (request.name.size() > 160) {
+        errors.emplace_back("name must not exceed 160 characters");
+    }
+    if (request.description.size() > 10000) {
+        errors.emplace_back("description must not exceed 10000 characters");
+    }
+    return errors;
+}
+
 } // namespace TicketHub::Domain

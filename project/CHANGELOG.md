@@ -1,6 +1,38 @@
 # Changelog
 
-## Unreleased — Phase 1: identity and sessions (reduced scope)
+## Unreleased — Phase 2: authorization and projects (reduced scope)
+
+- Added fixed project roles (`Domain::ProjectRoleViewer`/`Member`/`Admin`, `Domain::projectRoleRank`) and
+  a global-administrator bypass, enforced in `TicketService` via new `requireProjectRole`/
+  `requireGlobalAdmin` helpers that throw `Domain::Forbidden` (HTTP 403). `createIssue`, `changeStatus`,
+  and `addComment` now require Member-or-above on the issue's project.
+- Added project lifecycle to `IDatabase`/`SqliteDatabase`/`PostgresDatabase` and wrapped it in
+  `TicketService`: `createProject` (global admin), `setProjectArchived` (project admin), `deleteProject`
+  (project admin, soft delete to the recycle bin), `restoreProject`/`listDeletedProjects`/
+  `permanentlyDeleteProject` (global admin only, per D88's "admin restore or permanent delete"). The
+  recycle bin purges anything past the fixed 90-day retention on access; there is no background job
+  (D89, D51).
+- Added migration `005_authorization.sql` (both backends): `installation_settings` generic key/value
+  table for the small number of remaining installation-level toggles.
+- Added the installation-wide anonymous read-access toggle (D59, off by default,
+  `TicketService::isAnonymousReadEnabled`/`setAnonymousReadEnabled`). Every read use case
+  (`listProjects`, `listIssues`, `findIssue`, `listComments`, `dashboard`) now takes an
+  `std::optional<Principal>`; an anonymous caller is rejected with the new `Domain::AuthenticationRequired`
+  (HTTP 401) unless the toggle is on. Any authenticated user still sees all projects regardless of
+  membership — roles gate writes only (D58).
+- Added `POST /api/projects`, `PATCH /api/projects/{key}/archived`, `DELETE /api/projects/{key}`,
+  `GET /api/projects/deleted`, `POST /api/projects/{key}/restore`, `DELETE /api/projects/{key}/permanent`,
+  and `GET`/`PUT /api/settings/anonymous-read` to `src/web/Api.cpp`; updated every existing read route to
+  resolve an optional `Principal` and pass it through (**not yet compiled** — see "Known verification
+  limitation" in `README.md`).
+- Added `authorization_integration_tests` (SQLite): non-member vs. member vs. project-admin issue writes,
+  not-found semantics under authorization, the anonymous-read-access toggle, and the full project
+  lifecycle authorization matrix (project-admin vs. global-admin-only actions).
+- Manually verified `createProject`, `setProjectArchived`, `softDeleteProject`, `listDeletedProjects`
+  (`LATERAL` join + on-demand purge), `restoreProject`, `permanentlyDeleteProject`, and the
+  `installation_settings` get/set-with-upsert methods against a live local PostgreSQL 16 server.
+
+## Phase 1: identity and sessions (reduced scope)
 
 - Re-reviewed all 142 original product decisions with the product owner and produced a reduced V1
   scope (`REDUCED_SCOPE_SPECIFICATION.md` and friends); this is now the build target instead of the

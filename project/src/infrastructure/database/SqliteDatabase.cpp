@@ -489,6 +489,182 @@ void SqliteDatabase::deleteExpiredSessions() {
     executeScript("DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP;");
 }
 
+// --- Authorization and project lifecycle ---
+
+namespace {
+constexpr const char* ProjectSelectSql = R"SQL(
+SELECT p.id, p.project_key, p.name, p.description,
+       lead.id, lead.display_name, lead.email,
+       COUNT(i.id),
+       SUM(CASE WHEN s.category <> 'done' THEN 1 ELSE 0 END),
+       p.archived
+FROM projects p
+LEFT JOIN users lead ON lead.id = p.lead_user_id
+LEFT JOIN issues i ON i.project_id = p.id AND i.deleted_at IS NULL
+LEFT JOIN issue_statuses s ON s.id = i.status_id
+)SQL";
+} // namespace
+
+std::optional<std::string> SqliteDatabase::findProjectRoleByKey(const std::string& projectKey,
+                                                                 const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT pm.role_key
+FROM project_members pm
+JOIN projects p ON p.id = pm.project_id
+WHERE p.project_key = ? AND pm.user_id = ?
+)SQL");
+    statement.bind(1, projectKey);
+    statement.bind(2, userId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return text(statement.get(), 0);
+}
+
+Domain::Project SqliteDatabase::createProject(const Domain::CreateProjectRequest& request,
+                                              const std::string& creatorUserId) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        const std::string projectId = Common::uuidV4();
+        Statement insert(database_, R"SQL(
+INSERT INTO projects(id, project_key, name, description, lead_user_id, next_issue_number, archived, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL");
+        insert.bind(1, projectId);
+        insert.bind(2, request.key);
+        insert.bind(3, request.name);
+        insert.bind(4, request.description);
+        insert.bind(5, creatorUserId);
+        if (insert.step() != SQLITE_DONE) {
+            throw std::invalid_argument("Project key is already in use: " + request.key);
+        }
+
+        Statement member(database_, "INSERT INTO project_members(project_id, user_id, role_key) VALUES (?, ?, ?)");
+        member.bind(1, projectId);
+        member.bind(2, creatorUserId);
+        member.bind(3, std::string(Domain::ProjectRoleAdmin));
+        expectDone(database_, member, "Insert project creator membership");
+
+        executeScript("COMMIT;");
+
+        Statement read(database_, std::string(ProjectSelectSql) + " WHERE p.id = ? GROUP BY p.id");
+        read.bind(1, projectId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Created project could not be read back");
+        }
+        Domain::Project project;
+        project.id = text(read.get(), 0);
+        project.key = text(read.get(), 1);
+        project.name = text(read.get(), 2);
+        project.description = text(read.get(), 3);
+        if (sqlite3_column_type(read.get(), 4) != SQLITE_NULL) {
+            project.lead = readUserSummary(read.get(), 4);
+        }
+        project.issueCount = sqlite3_column_int64(read.get(), 7);
+        project.openIssueCount = sqlite3_column_int64(read.get(), 8);
+        project.archived = boolColumn(read.get(), 9);
+        return project;
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool SqliteDatabase::setProjectArchived(const std::string& projectKey, const bool archived) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE projects SET archived = ?, archived_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, updated_at = CURRENT_TIMESTAMP
+WHERE project_key = ? AND deleted_at IS NULL
+)SQL");
+    statement.bind(1, static_cast<std::int64_t>(archived ? 1 : 0));
+    statement.bind(2, static_cast<std::int64_t>(archived ? 1 : 0));
+    statement.bind(3, projectKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+bool SqliteDatabase::softDeleteProject(const std::string& projectKey, const std::string& actorUserId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE projects SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE project_key = ? AND deleted_at IS NULL
+)SQL");
+    statement.bind(1, actorUserId);
+    statement.bind(2, projectKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+bool SqliteDatabase::restoreProject(const std::string& projectKey) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE projects SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE project_key = ? AND deleted_at IS NOT NULL
+)SQL");
+    statement.bind(1, projectKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+std::vector<Domain::Project> SqliteDatabase::listDeletedProjects() {
+    std::scoped_lock lock(mutex_);
+    // Fixed 90-day retention, checked on demand -- there is no background
+    // job to purge proactively (D89/D51).
+    executeScript("DELETE FROM projects WHERE deleted_at IS NOT NULL AND deleted_at <= datetime('now', '-90 days');");
+
+    Statement statement(database_, std::string(ProjectSelectSql) + " WHERE p.deleted_at IS NOT NULL GROUP BY p.id ORDER BY p.deleted_at DESC");
+    std::vector<Domain::Project> projects;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        Domain::Project project;
+        project.id = text(statement.get(), 0);
+        project.key = text(statement.get(), 1);
+        project.name = text(statement.get(), 2);
+        project.description = text(statement.get(), 3);
+        if (sqlite3_column_type(statement.get(), 4) != SQLITE_NULL) {
+            project.lead = readUserSummary(statement.get(), 4);
+        }
+        project.issueCount = sqlite3_column_int64(statement.get(), 7);
+        project.openIssueCount = sqlite3_column_int64(statement.get(), 8);
+        project.archived = boolColumn(statement.get(), 9);
+        projects.push_back(std::move(project));
+    }
+    return projects;
+}
+
+bool SqliteDatabase::permanentlyDeleteProject(const std::string& projectKey) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "DELETE FROM projects WHERE project_key = ? AND deleted_at IS NOT NULL");
+    statement.bind(1, projectKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+std::optional<std::string> SqliteDatabase::getSetting(const std::string& key) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "SELECT value FROM installation_settings WHERE setting_key = ?");
+    statement.bind(1, key);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return text(statement.get(), 0);
+}
+
+void SqliteDatabase::setSetting(const std::string& key, const std::string& value) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+INSERT INTO installation_settings(setting_key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+ON CONFLICT(setting_key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+)SQL");
+    statement.bind(1, key);
+    statement.bind(2, value);
+    expectDone(database_, statement, "Set installation setting");
+}
+
 // --- Issue tracker ---
 
 std::vector<Domain::Project> SqliteDatabase::listProjects() {
