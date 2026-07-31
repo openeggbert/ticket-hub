@@ -111,6 +111,44 @@ struct IssueType {
     std::string color;
 };
 
+// Fixed issue types and the fixed hierarchy they imply (D5, D29, D64-D66):
+// Epic -> Story/Task/Bug -> Sub-task, with nothing above Epic and nothing
+// below Sub-task. There are no custom types in V1, so this is a hardcoded
+// table rather than driven by the `issue_types.hierarchy_level` column.
+constexpr const char* IssueTypeEpic = "epic";
+constexpr const char* IssueTypeStory = "story";
+constexpr const char* IssueTypeTask = "task";
+constexpr const char* IssueTypeBug = "bug";
+constexpr const char* IssueTypeSubTask = "sub-task";
+
+// 1 = Epic, 0 = Story/Task/Bug (or any unrecognized type, which the database
+// FK lookup will reject anyway), -1 = Sub-task.
+inline int issueTypeHierarchyLevel(const std::string& issueTypeKey) {
+    if (issueTypeKey == IssueTypeEpic) {
+        return 1;
+    }
+    if (issueTypeKey == IssueTypeSubTask) {
+        return -1;
+    }
+    return 0;
+}
+
+// Fixed resolutions (D27/D28), matching the `issues.resolution` CHECK
+// constraint in migrations/*/001_initial.sql. Required on the transition to
+// a Done-category status and cleared automatically on reopen (D68-D70) --
+// there is no other way to set or clear it.
+constexpr const char* ResolutionFixed = "fixed";
+constexpr const char* ResolutionDone = "done";
+constexpr const char* ResolutionWontFix = "wont-fix";
+constexpr const char* ResolutionDuplicate = "duplicate";
+constexpr const char* ResolutionCannotReproduce = "cannot-reproduce";
+
+inline bool isValidResolution(const std::string& resolutionKey) {
+    return resolutionKey == ResolutionFixed || resolutionKey == ResolutionDone
+        || resolutionKey == ResolutionWontFix || resolutionKey == ResolutionDuplicate
+        || resolutionKey == ResolutionCannotReproduce;
+}
+
 struct Status {
     std::string key;
     std::string name;
@@ -150,6 +188,7 @@ struct Issue {
     std::optional<std::string> parentIssueKey;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
+    std::optional<std::string> resolution;
     std::vector<std::string> labels;
     std::string createdAt;
     std::string updatedAt;
@@ -169,6 +208,9 @@ struct CreateIssueRequest {
     std::string issueTypeKey{"task"};
     std::string priorityKey{"medium"};
     std::optional<std::string> assigneeEmail;
+    // Epic link (for Story/Task/Bug) or required parent (for Sub-task) --
+    // see Domain::issueTypeHierarchyLevel and TicketService::createIssue.
+    std::optional<std::string> parentIssueKey;
     std::vector<std::string> labels;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;

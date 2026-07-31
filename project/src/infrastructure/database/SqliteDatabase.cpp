@@ -135,6 +135,7 @@ Domain::Issue readIssue(sqlite3_stmt* statement) {
     issue.createdAt = text(statement, 29);
     issue.updatedAt = text(statement, 30);
     issue.version = sqlite3_column_int64(statement, 31);
+    issue.resolution = optionalText(statement, 32);
     return issue;
 }
 
@@ -151,7 +152,7 @@ SELECT
     parent.issue_key,
     i.story_points, i.due_date,
     COALESCE(GROUP_CONCAT(DISTINCT l.name), ''),
-    i.created_at, i.updated_at, i.version
+    i.created_at, i.updated_at, i.version, i.resolution
 FROM issues i
 JOIN projects p ON p.id = i.project_id
 JOIN issue_types it ON it.id = i.issue_type_id
@@ -766,12 +767,16 @@ Domain::Issue SqliteDatabase::createIssue(const Domain::CreateIssueRequest& requ
         if (request.assigneeEmail.has_value() && !request.assigneeEmail->empty()) {
             assigneeId = lookupId(database_, "users", "email", *request.assigneeEmail);
         }
+        std::optional<std::string> parentId;
+        if (request.parentIssueKey.has_value() && !request.parentIssueKey->empty()) {
+            parentId = lookupIssueId(database_, *request.parentIssueKey);
+        }
 
         Statement insert(database_, R"SQL(
 INSERT INTO issues(id, project_id, issue_number, issue_key, summary, description,
                    issue_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
-                   story_points, due_date, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   parent_issue_id, story_points, due_date, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL");
         insert.bind(1, issueId);
         insert.bind(2, projectId);
@@ -784,8 +789,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMEST
         insert.bind(9, priorityId);
         insert.bind(10, reporterId);
         assigneeId ? insert.bind(11, *assigneeId) : insert.bindNull(11);
-        request.storyPoints ? insert.bind(12, *request.storyPoints) : insert.bindNull(12);
-        request.dueDate ? insert.bind(13, *request.dueDate) : insert.bindNull(13);
+        parentId ? insert.bind(12, *parentId) : insert.bindNull(12);
+        request.storyPoints ? insert.bind(13, *request.storyPoints) : insert.bindNull(13);
+        request.dueDate ? insert.bind(14, *request.dueDate) : insert.bindNull(14);
         expectDone(database_, insert, "Issue insert");
 
         for (const auto& labelName : request.labels) {
@@ -824,12 +830,13 @@ SELECT ?, id FROM labels WHERE name = ?
 bool SqliteDatabase::changeIssueStatus(const std::string& issueKey,
                                        const std::string& statusKey,
                                        const std::string& actorUserId,
+                                       const std::optional<std::string> resolution,
                                        const std::optional<std::int64_t> expectedVersion) {
     std::scoped_lock lock(mutex_);
     executeScript("BEGIN IMMEDIATE;");
     try {
         Statement current(database_, R"SQL(
-SELECT i.id, s.status_key, i.version
+SELECT i.id, s.status_key, s.category, i.version
 FROM issues i JOIN issue_statuses s ON s.id = i.status_id
 WHERE i.deleted_at IS NULL
   AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
@@ -841,7 +848,8 @@ WHERE i.deleted_at IS NULL
         }
         const std::string issueId = text(current.get(), 0);
         const std::string oldStatus = text(current.get(), 1);
-        const std::int64_t currentVersion = sqlite3_column_int64(current.get(), 2);
+        const std::string oldCategory = text(current.get(), 2);
+        const std::int64_t currentVersion = sqlite3_column_int64(current.get(), 3);
         if (expectedVersion && *expectedVersion != currentVersion) {
             throw Domain::ConcurrencyConflict("Issue was modified by another user");
         }
@@ -849,13 +857,62 @@ WHERE i.deleted_at IS NULL
             executeScript("COMMIT;");
             return true;
         }
-        const std::string statusId = lookupId(database_, "issue_statuses", "status_key", statusKey);
+
+        Statement targetStatus(database_, "SELECT id, category FROM issue_statuses WHERE status_key = ?");
+        targetStatus.bind(1, statusKey);
+        if (targetStatus.step() != SQLITE_ROW) {
+            throw std::invalid_argument("Unknown issue_statuses key: " + statusKey);
+        }
+        const std::string statusId = text(targetStatus.get(), 0);
+        const std::string targetCategory = text(targetStatus.get(), 1);
         const std::string actorId = requireUserId(database_, actorUserId);
 
-        Statement update(database_, "UPDATE issues SET status_id = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
-        update.bind(1, statusId);
-        update.bind(2, issueId);
-        expectDone(database_, update, "Issue status update");
+        // The fixed workflow rules (D68-D70): completing an issue requires a
+        // resolution and is blocked while any sub-task is unfinished;
+        // reopening (leaving Done) always clears resolution and never
+        // cascades to sub-tasks; any other transition leaves resolution
+        // alone.
+        bool touchResolution = false;
+        std::optional<std::string> resolutionValue;
+        if (targetCategory == "done") {
+            if (!resolution || resolution->empty()) {
+                throw Domain::WorkflowViolation("resolution is required when transitioning to a Done-category status");
+            }
+            if (!Domain::isValidResolution(*resolution)) {
+                throw Domain::WorkflowViolation("Unknown resolution: " + *resolution);
+            }
+            Statement unfinishedChild(database_, R"SQL(
+SELECT 1
+FROM issues child
+JOIN issue_statuses cs ON cs.id = child.status_id
+WHERE child.parent_issue_id = ? AND child.deleted_at IS NULL AND cs.category <> 'done'
+LIMIT 1
+)SQL");
+            unfinishedChild.bind(1, issueId);
+            if (unfinishedChild.step() == SQLITE_ROW) {
+                throw Domain::WorkflowViolation("Cannot complete an issue while it has unfinished sub-tasks");
+            }
+            touchResolution = true;
+            resolutionValue = resolution;
+        } else if (oldCategory == "done") {
+            touchResolution = true;
+            resolutionValue = std::nullopt;
+        }
+
+        if (touchResolution) {
+            Statement update(database_, R"SQL(
+UPDATE issues SET status_id = ?, resolution = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+)SQL");
+            update.bind(1, statusId);
+            resolutionValue ? update.bind(2, *resolutionValue) : update.bindNull(2);
+            update.bind(3, issueId);
+            expectDone(database_, update, "Issue status update");
+        } else {
+            Statement update(database_, "UPDATE issues SET status_id = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+            update.bind(1, statusId);
+            update.bind(2, issueId);
+            expectDone(database_, update, "Issue status update");
+        }
 
         Statement history(database_, R"SQL(
 INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)

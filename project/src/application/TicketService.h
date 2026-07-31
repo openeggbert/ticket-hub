@@ -38,10 +38,20 @@ public:
     // fallback. Callers (the web layer, once wired to Crow) are responsible
     // for resolving a Principal from an authenticated session or PAT before
     // calling these.
+    // Validates the fixed Epic/Sub-task hierarchy rules (D64-D66) against
+    // `request.parentIssueKey` before creating the issue, throwing
+    // std::invalid_argument on a violation (same as any other input
+    // validation failure -- these are structural rules on the request, not a
+    // Domain::WorkflowViolation, which is reserved for rules that depend on
+    // an issue's current, mutable state).
     Domain::Issue createIssue(Domain::CreateIssueRequest request, const Domain::Principal& actor);
+    // `resolution` is required exactly when `statusKey` names a Done-category
+    // status, ignored otherwise, and forced to null when leaving a
+    // Done-category status (D68-D70); see IDatabase::changeIssueStatus.
     bool changeStatus(const std::string& issueKey,
                       const std::string& statusKey,
                       const Domain::Principal& actor,
+                      std::optional<std::string> resolution = std::nullopt,
                       std::optional<std::int64_t> expectedVersion = std::nullopt);
     Domain::Comment addComment(const std::string& issueKey, const std::string& body, const Domain::Principal& actor);
 
@@ -66,6 +76,7 @@ private:
     void requireProjectRole(const Domain::Principal& actor, const std::string& projectKey, int minimumRank) const;
     void requireGlobalAdmin(const Domain::Principal& actor) const;
     void requireReadAccess(const std::optional<Domain::Principal>& actor);
+    void requireValidHierarchy(Domain::CreateIssueRequest& request);
 };
 
 } // namespace TicketHub::Application

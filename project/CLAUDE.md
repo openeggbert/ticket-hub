@@ -57,17 +57,17 @@ feature from `docs/REMOVED_AND_DEFERRED_FEATURES.md` without a new, explicit pro
 ## Current objective
 
 Phase 1 (identity and sessions) and Phase 2 (authorization and projects) of
-`docs/REDUCED_SCOPE_ROADMAP.md` are complete at the core/CLI/test layer — see `NEXT.md` for exact
-status. Both phases still share one open item: the Crow-based `ticket-hub` server target has never been
-compiled in this environment (network access to `github.com` is blocked); `src/web/Api.cpp` has been
-updated to match each phase's application-layer signatures but is unverified. Verifying the server
-target is the immediate next step before either phase's exit gate can close for real.
+`docs/REDUCED_SCOPE_ROADMAP.md` are complete at the core/CLI/test layer. Phase 3 (issue core and the
+fixed workflow) is **partially** complete: the fixed Epic/Sub-task hierarchy and the fixed workflow's
+hardcoded transition rules (resolution required/cleared, sub-task completion gate) are done; full issue
+edit beyond status, cloning, issue links, watchers, voting, bulk actions, and the rank/renumber
+migration are not — see `NEXT.md` for the exact remaining list. All three phases share one open item:
+the Crow-based `ticket-hub` server target has never been compiled in this environment (network access
+to `github.com` is blocked); `src/web/Api.cpp` has been updated to match each phase's application-layer
+signatures but is unverified. Verifying the server target is the immediate next step before any phase's
+exit gate can close for real.
 
-After that, continue with Phase 3 of `docs/REDUCED_SCOPE_ROADMAP.md`: issue core and the fixed workflow
-(fixed statuses/transitions/resolutions, Epic/Sub-task hierarchy enforcement, full issue edit building on
-the existing optimistic-locking foundation).
-
-Phase 1/2 scope, for reference:
+Phase 1/2/3-so-far scope, for reference:
 
 - Explicit `Principal`/actor context threaded through every write use case (done).
 - Migration-safe identity tables (`users`, `local_credentials`, `sessions`) — **no** `groups`,
@@ -77,6 +77,8 @@ Phase 1/2 scope, for reference:
   registration/reset story for V1 (done).
 - Fixed project-role authorization check (Admin/Member/Viewer) plus a global-administrator bypass,
   project lifecycle (create/archive/recycle bin), and the anonymous-read-access toggle (done).
+- Fixed Epic/Sub-task hierarchy enforcement on issue creation, and the fixed workflow's hardcoded
+  resolution/sub-task-completion rules on status changes (done); the rest of Phase 3 is not.
 
 ## Architecture rules
 

@@ -75,11 +75,27 @@ public:
     virtual std::vector<Domain::Project> listProjects() = 0;
     virtual std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter) = 0;
     virtual std::optional<Domain::Issue> findIssueByKey(const std::string& issueKey) = 0;
+    // `parentIssueKey` inside `request`, if present, must already have been
+    // validated by the caller against the fixed hierarchy rules (D64-D66) --
+    // this method only resolves the key to a row and persists the link.
     virtual Domain::Issue createIssue(const Domain::CreateIssueRequest& request,
                                       const std::string& reporterUserId) = 0;
+    // The fixed workflow rules (D68-D70) are enforced here, transactionally
+    // with the status update, since they depend on the current database
+    // state (sibling sub-task statuses, the outgoing status's category) and
+    // must not race with a concurrent change:
+    //  - a transition to a Done-category status requires `resolution` (one
+    //    of Domain::isValidResolution) and throws Domain::WorkflowViolation
+    //    if it is missing, or if this issue has any non-deleted child issue
+    //    whose status is not Done-category yet;
+    //  - a transition away from a Done-category status ("reopening") clears
+    //    `resolution` to null regardless of what was passed;
+    //  - any other transition leaves `resolution` untouched, and `resolution`
+    //    is ignored entirely when the status does not actually change.
     virtual bool changeIssueStatus(const std::string& issueKey,
                                    const std::string& statusKey,
                                    const std::string& actorUserId,
+                                   std::optional<std::string> resolution = std::nullopt,
                                    std::optional<std::int64_t> expectedVersion = std::nullopt) = 0;
     virtual std::vector<Domain::Comment> listComments(const std::string& issueKey) = 0;
     virtual Domain::Comment addComment(const Domain::AddCommentRequest& request,

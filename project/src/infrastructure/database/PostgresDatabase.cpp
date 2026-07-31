@@ -168,6 +168,7 @@ Domain::Issue readIssue(PGresult* result, int row) {
     issue.createdAt = value(result, row, 29);
     issue.updatedAt = value(result, row, 30);
     issue.version = int64Value(result, row, 31);
+    issue.resolution = optionalValue(result, row, 32);
     return issue;
 }
 
@@ -184,7 +185,7 @@ SELECT
     parent.issue_key,
     i.story_points, i.due_date::text,
     labels.names,
-    i.created_at::text, i.updated_at::text, i.version
+    i.created_at::text, i.updated_at::text, i.version, i.resolution
 FROM issues i
 JOIN projects p ON p.id = i.project_id
 JOIN issue_types it ON it.id = i.issue_type_id
@@ -736,13 +737,17 @@ Domain::Issue PostgresDatabase::createIssue(const Domain::CreateIssueRequest& re
         if (request.assigneeEmail && !request.assigneeEmail->empty()) {
             assigneeId = lookupId(connection.get(), "users", "email", *request.assigneeEmail);
         }
+        std::optional<std::string> parentId;
+        if (request.parentIssueKey && !request.parentIssueKey->empty()) {
+            parentId = lookupIssueId(connection.get(), *request.parentIssueKey);
+        }
 
         execParams(connection.get(), R"SQL(
 INSERT INTO issues(id, project_id, issue_number, issue_key, summary, description,
                    issue_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
-                   story_points, due_date, created_at, updated_at)
+                   parent_issue_id, story_points, due_date, created_at, updated_at)
 VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
-        $12::double precision, $13::date, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        $12, $13::double precision, $14::date, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL",
                    {issueId,
                     projectId,
@@ -755,6 +760,7 @@ VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
                     priorityId,
                     reporterId,
                     assigneeId,
+                    parentId,
                     request.storyPoints ? std::optional<std::string>(std::to_string(*request.storyPoints)) : std::nullopt,
                     request.dueDate},
                    "Insert issue");
@@ -791,12 +797,13 @@ ON CONFLICT DO NOTHING
 bool PostgresDatabase::changeIssueStatus(const std::string& issueKey,
                                          const std::string& statusKey,
                                          const std::string& actorUserId,
+                                         const std::optional<std::string> resolution,
                                          const std::optional<std::int64_t> expectedVersion) {
     auto connection = connect(connectionString_);
     exec(connection.get(), "BEGIN", "Begin status transaction");
     try {
         auto current = execParams(connection.get(), R"SQL(
-SELECT i.id, s.status_key, i.version
+SELECT i.id, s.status_key, s.category, i.version
 FROM issues i JOIN issue_statuses s ON s.id = i.status_id
 WHERE i.deleted_at IS NULL
   AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
@@ -810,7 +817,8 @@ FOR UPDATE OF i
         }
         const std::string issueId = value(current.get(), 0, 0);
         const std::string oldStatus = value(current.get(), 0, 1);
-        const std::int64_t currentVersion = int64Value(current.get(), 0, 2);
+        const std::string oldCategory = value(current.get(), 0, 2);
+        const std::int64_t currentVersion = int64Value(current.get(), 0, 3);
         if (expectedVersion && *expectedVersion != currentVersion) {
             throw Domain::ConcurrencyConflict("Issue was modified by another user");
         }
@@ -818,13 +826,62 @@ FOR UPDATE OF i
             exec(connection.get(), "COMMIT", "Commit unchanged status transaction");
             return true;
         }
-        const std::string statusId = lookupId(connection.get(), "issue_statuses", "status_key", statusKey);
+
+        auto targetStatus = execParams(connection.get(),
+                                       "SELECT id, category FROM issue_statuses WHERE status_key = $1",
+                                       {statusKey},
+                                       "Lookup target status");
+        if (PQntuples(targetStatus.get()) != 1) {
+            throw std::invalid_argument("Unknown issue_statuses key: " + statusKey);
+        }
+        const std::string statusId = value(targetStatus.get(), 0, 0);
+        const std::string targetCategory = value(targetStatus.get(), 0, 1);
         const std::string actorId = requireUserId(connection.get(), actorUserId);
 
-        execParams(connection.get(),
-                   "UPDATE issues SET status_id = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
-                   {statusId, issueId},
-                   "Update issue status");
+        // The fixed workflow rules (D68-D70): completing an issue requires a
+        // resolution and is blocked while any sub-task is unfinished;
+        // reopening (leaving Done) always clears resolution and never
+        // cascades to sub-tasks; any other transition leaves resolution
+        // alone.
+        bool touchResolution = false;
+        std::optional<std::string> resolutionValue;
+        if (targetCategory == "done") {
+            if (!resolution || resolution->empty()) {
+                throw Domain::WorkflowViolation("resolution is required when transitioning to a Done-category status");
+            }
+            if (!Domain::isValidResolution(*resolution)) {
+                throw Domain::WorkflowViolation("Unknown resolution: " + *resolution);
+            }
+            auto unfinishedChild = execParams(connection.get(), R"SQL(
+SELECT 1
+FROM issues child
+JOIN issue_statuses cs ON cs.id = child.status_id
+WHERE child.parent_issue_id = $1 AND child.deleted_at IS NULL AND cs.category <> 'done'
+LIMIT 1
+)SQL",
+                                              {issueId},
+                                              "Check unfinished sub-tasks");
+            if (PQntuples(unfinishedChild.get()) != 0) {
+                throw Domain::WorkflowViolation("Cannot complete an issue while it has unfinished sub-tasks");
+            }
+            touchResolution = true;
+            resolutionValue = resolution;
+        } else if (oldCategory == "done") {
+            touchResolution = true;
+            resolutionValue = std::nullopt;
+        }
+
+        if (touchResolution) {
+            execParams(connection.get(),
+                       "UPDATE issues SET status_id = $1, resolution = $2, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+                       {statusId, resolutionValue, issueId},
+                       "Update issue status");
+        } else {
+            execParams(connection.get(),
+                       "UPDATE issues SET status_id = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+                       {statusId, issueId},
+                       "Update issue status");
+        }
         execParams(connection.get(), R"SQL(
 INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
 VALUES ($1, $2, $3, 'status', $4, $5)

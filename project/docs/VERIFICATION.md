@@ -1,5 +1,67 @@
 # Verification record
 
+## 2026-07-31 — Phase 3, partial (fixed workflow and hierarchy, reduced scope)
+
+Verified in the same session/environment as Phases 1-2 below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
+libpq 16.14, and a live local PostgreSQL 16.14 server (freshly created for this batch's verification and
+dropped afterward, as in Phase 2).
+
+### Core configuration
+
+```bash
+cmake -S . -B build -DTICKETHUB_BUILD_SERVER=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel 4
+ctest --test-dir build --output-on-failure
+```
+
+All warnings enabled (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`); zero warnings, including after
+the `IDatabase::changeIssueStatus` signature change forced updates through `TicketService` and both
+adapters, and after the `Domain::Issue`/`CreateIssueRequest` field additions.
+
+### Passing tests (7/7)
+
+1. `ticket-hub-domain-tests`, `ticket-hub-migration-tests`, `ticket-hub-identity-tests`,
+   `ticket-hub-authorization-tests`, `ticket-hub-crypto-tests` — unchanged from Phase 1/2, all still
+   passing.
+2. `ticket-hub-sqlite-integration-tests` — updated: the existing `changeIssueStatus` call to transition
+   an issue to `done` now passes a `resolution` (the call would otherwise fail Phase 3's new
+   requirement), and asserts the resolution is stored; the deliberately-stale-version call that exercises
+   `ConcurrencyConflict` was updated for the new parameter position but is otherwise unchanged.
+3. `ticket-hub-workflow-tests` (new) — SQLite, exercised through `TicketService`:
+   - hierarchy: a sub-task without a parent is rejected; an epic cannot have a parent; a story's parent
+     must be an epic, not another story; a story can link to an epic in the same project; a sub-task's
+     parent must be a story/task/bug, not an epic; a parent issue must be in the same project;
+   - workflow: transitioning to Done without a resolution is rejected (`Domain::WorkflowViolation`); an
+     unknown resolution key is rejected; a valid resolution is stored on completion; reopening does not
+     require a resolution and clears the stored one (D70); a parent cannot complete while a sub-task is
+     unfinished (D68) and can once the sub-task is done; reopening a completed parent leaves its
+     sub-task's status untouched (D69).
+
+### Additional verification beyond the automated suite
+
+- **Live PostgreSQL 16 server**: created a scratch `tickethub` database/role (the server itself needed
+  restarting first -- it was not still running from the Phase 2 session), ran `ticket-hub-cli
+  migrate`/`seed-demo`, then compiled and ran a standalone program (`pg_phase3_smoke.cpp`, not committed)
+  linking directly against `PostgresDatabase`: created an Epic and a Story linked to it (verifying
+  `parent_issue_id` round-trips through `createIssue`/`findIssueByKey`), confirmed the Done-without-
+  resolution rejection, confirmed a valid resolution is stored and then cleared on reopen, created a
+  Sub-task under the Story and confirmed the parent cannot complete while it's unfinished, confirmed
+  completing the Sub-task then lets the parent complete, and confirmed reopening the parent afterward
+  leaves the Sub-task's status untouched. All 12 assertions passed. The scratch database and role were
+  dropped after verification.
+- Both SQLite and PostgreSQL adapters, `ticket-hub-core`, `ticket-hub-cli`, and all seven test binaries
+  compile and link cleanly, including in the SQLite-only and PostgreSQL-only build configurations
+  (`-DTICKETHUB_WITH_POSTGRES=OFF` / `-DTICKETHUB_WITH_SQLITE=OFF`).
+
+### Environment limitations (unchanged from Phase 1-2)
+
+`src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) still
+could not be compiled -- outbound access to `github.com`, needed for CMake `FetchContent` to fetch Crow,
+remains blocked. The Phase 3 route changes (`parentIssueKey` on `POST /api/issues`, `resolution` on
+`PATCH /api/issues/{key}/status`, `Domain::WorkflowViolation` mapped to HTTP 422, `resolution` added to
+issue JSON responses) follow the same patterns as the already-unverified Phase 1/2 routes and carry the
+same caveat.
+
 ## 2026-07-31 — Phase 2 (authorization and projects, reduced scope)
 
 Verified in the same session/environment as Phase 1 below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
