@@ -349,9 +349,18 @@ testing caught a genuine CSS layout bug — a link row could overflow into the d
 block clicks on whatever sat underneath it there (`.link-list`, a CSS grid container, was letting its
 items claim their full content width instead of shrinking) — fixed with an explicit `min-width: 0`.
 
-The issue drawer now covers the full single-issue lifecycle. Still missing from `web/`: project-management
-UI (create/archive/recycle-bin), the issue recycle bin, bulk actions, and reorder/move UI. Those routes
-are all live-verified via `curl` (above) but still not reachable from the demo UI.
+The issue drawer now covers the full single-issue lifecycle. A fourth follow-up batch then added
+project-management UI: a "New project" modal, per-card Archive/Unarchive and Delete buttons, and a
+recycle-bin view (visible and usable only for global administrators, matching D88). Browser-verified the
+same way, including a non-admin seeing neither the recycle-bin toggle nor a working create-project action
+(inline 403). This testing also caught a real state-management bug — `state` (current view, selected
+project, filters) was never reset on logout, so a second user in the same browser tab could land on
+whatever the first user last had open, including a project they can't access or one just
+archived/deleted — fixed by resetting all of `state` on every login-screen transition, not just the
+signed-in user.
+
+Still missing from `web/`: the issue recycle bin, bulk actions, and reorder/move UI. Those routes are all
+live-verified via `curl` (above) but still not reachable from the demo UI.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

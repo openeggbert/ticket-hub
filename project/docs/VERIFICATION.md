@@ -1,5 +1,64 @@
 # Verification record
 
+## 2026-07-31 — Project-management UI added: create, archive, recycle bin
+
+Added the next missing `web/` area: project lifecycle management. Previously the Projects view was purely
+read-only (a grid of cards, click-to-open-board) with no way to create, archive, delete, restore, or
+permanently purge a project from the UI at all.
+
+### What changed
+
+- `web/index.html`: a `#project-modal` (key/name/description) matching the create-issue modal's pattern.
+- `web/app.js`: `renderProjects()` now delegates to `renderProjectsView(showingDeleted)`, which renders
+  either the active project grid (with Archive/Unarchive and Delete buttons per card, plus a "New project"
+  button, plus a "Recycle bin" toggle visible only to global administrators) or the recycle bin (Restore
+  and Delete-permanently buttons per card, fetched from `GET /api/projects/deleted`). `renderCurrentView()`
+  now awaits `renderProjects()` (previously fire-and-forget).
+- Generalized the modal-close (`[data-close-modal]`) wiring to close whichever `.modal-backdrop` ancestor
+  the clicked button belongs to, instead of being hardcoded to the create-issue modal only, so the new
+  project modal's own close button works without duplicating logic.
+
+### A real bug caught by this batch's own browser testing (not project-management-specific)
+
+Testing "does a non-admin see the recycle-bin toggle" required logging out of the global-admin demo
+account and into a non-admin one (`sam`) within the same page. After that switch, the app hung
+indefinitely on a loading spinner instead of showing sam's dashboard. Network tracing (`page.on('request'
+/'response')`) showed the login itself succeeded (`/api/auth/me` returned 200 for sam), but the very next
+call was `GET /api/projects` followed by nothing -- no `/api/dashboard` call at all. The cause: `state`
+(including `state.view`) is a single module-level object that was never reset on logout, so it still held
+`'projects'` from the demo session; `renderCurrentView()` correctly rendered the Projects view for sam
+(not a bug in that function), but the test's assumption that any fresh login lands on the dashboard was
+false -- and, more importantly, this is a genuine product issue for a shared browser tab: a second user
+could land on a project they don't have access to, or one already archived/deleted by the first user.
+Fixed by having `showLoginScreen()` (used for both explicit logout and session-expiry) reset all of
+`state` via a new shared `initialState()` function, not just clear `state.principal`.
+
+### Verification
+
+Standalone Playwright/Chromium scripts (same approach as prior UI batches), against a locally running
+server, SQLite, demo-seeded, as the global-admin `demo` user unless noted:
+
+1. Created project `QA`; card appears in the grid immediately.
+2. Attempted a duplicate key (`qa` again); inline error shows the server's exact message ("Project key is
+   already in use: QA").
+3. Archived `QA`; it drops out of both the active project grid and the sidebar's project shortcuts (D87:
+   archiving is not a soft-delete, but it does leave the active-projects view).
+4. Created `QA2`, deleted it (moved to recycle bin), toggled to the recycle-bin view (found there),
+   restored it (gone from the bin), toggled back to active (found there again), deleted it again, toggled
+   to the recycle bin, permanently deleted it (gone from the bin for good).
+5. Logged out and into `sam` (a non-admin): the recycle-bin toggle is absent entirely (not just
+   disabled); attempting to create a project produces an inline 403 ("This action requires global
+   administrator privileges") without ever creating anything -- confirming the client defers entirely to
+   the server's authorization check rather than second-guessing it.
+6. Re-ran the login and hierarchy/resolution-picker browser tests from the two prior batches to confirm no
+   regression from the `state` reset change -- both still pass unchanged.
+
+All checks passed after the state-reset fix; no committed test files or screenshots (scratchpad only).
+
+### What is still not built
+
+The issue recycle bin, bulk actions, and reorder/move still have no UI in `web/` -- see `NEXT.md`.
+
 ## 2026-07-31 — Full edit, clone, links, and watch/vote UI added to the issue drawer
 
 Added the next slice of `web/` UI identified as missing: everything the issue drawer could reach through

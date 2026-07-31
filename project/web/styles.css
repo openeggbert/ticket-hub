@@ -164,6 +164,8 @@ button { cursor: pointer; }
 .project-card-stats { display: flex; gap: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .project-card-stats strong, .project-card-stats span { display: block; }
 .project-card-stats span { color: var(--muted); font-size: 11px; }
+.project-card-actions { display: flex; gap: 8px; margin-top: 14px; }
+.project-card-actions .secondary-button { padding: 6px 10px; font-size: 12px; }
 
 .modal-backdrop, .drawer-backdrop { position: fixed; inset: 0; z-index: 80; background: rgba(9,30,66,.54); }
 .modal { position: absolute; top: 50%; left: 50%; width: min(720px, calc(100vw - 28px)); max-height: calc(100vh - 40px); overflow-y: auto; transform: translate(-50%, -50%); border-radius: 12px; background: white; box-shadow: var(--shadow); }
