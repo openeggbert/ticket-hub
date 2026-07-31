@@ -1,7 +1,16 @@
-INSERT INTO users(id, username, display_name, email) VALUES
-('00000000-0000-4000-8000-000000000001', 'demo', 'Demo User', 'demo@ticket-hub.local'),
-('00000000-0000-4000-8000-000000000002', 'alex', 'Alex Morgan', 'alex@ticket-hub.local'),
-('00000000-0000-4000-8000-000000000003', 'sam', 'Sam Lee', 'sam@ticket-hub.local')
+INSERT INTO users(id, display_name, email, is_admin) VALUES
+('00000000-0000-4000-8000-000000000001', 'Demo User', 'demo@ticket-hub.local', 1),
+('00000000-0000-4000-8000-000000000002', 'Alex Morgan', 'alex@ticket-hub.local', 0),
+('00000000-0000-4000-8000-000000000003', 'Sam Lee', 'sam@ticket-hub.local', 0)
+ON CONFLICT DO NOTHING;
+
+-- Dev-only password for all three demo accounts: "demo12345". Never reuse
+-- this hash pattern for a real deployment -- seed data is not a substitute
+-- for `ticket-hub-cli create-user`.
+INSERT INTO local_credentials(user_id, password_hash) VALUES
+('00000000-0000-4000-8000-000000000001', '$argon2id$v=19$m=19456,t=2,p=1$dGlja2V0LWh1Yi1kZW1v$UiNKUcQUS+BCnY19q1+xT7afkIyooZ0ZM0BsJ0rK+4Q'),
+('00000000-0000-4000-8000-000000000002', '$argon2id$v=19$m=19456,t=2,p=1$dGlja2V0LWh1Yi1kZW1v$UiNKUcQUS+BCnY19q1+xT7afkIyooZ0ZM0BsJ0rK+4Q'),
+('00000000-0000-4000-8000-000000000003', '$argon2id$v=19$m=19456,t=2,p=1$dGlja2V0LWh1Yi1kZW1v$UiNKUcQUS+BCnY19q1+xT7afkIyooZ0ZM0BsJ0rK+4Q')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO issue_types(id, type_key, name, icon, color, hierarchy_level) VALUES

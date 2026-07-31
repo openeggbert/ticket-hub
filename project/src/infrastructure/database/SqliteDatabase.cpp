@@ -74,6 +74,10 @@ std::optional<std::string> optionalText(sqlite3_stmt* statement, int column) {
     return text(statement, column);
 }
 
+bool boolColumn(sqlite3_stmt* statement, int column) {
+    return sqlite3_column_int(statement, column) != 0;
+}
+
 std::vector<std::string> splitLabels(const std::string& labels) {
     std::vector<std::string> result;
     std::istringstream stream(labels);
@@ -86,13 +90,25 @@ std::vector<std::string> splitLabels(const std::string& labels) {
     return result;
 }
 
-Domain::UserSummary readUser(sqlite3_stmt* statement, int offset) {
-    return Domain::UserSummary{
-        text(statement, offset),
-        text(statement, offset + 1),
-        text(statement, offset + 2),
-        text(statement, offset + 3)};
+Domain::UserSummary readUserSummary(sqlite3_stmt* statement, int offset) {
+    return Domain::UserSummary{text(statement, offset), text(statement, offset + 1), text(statement, offset + 2)};
 }
+
+Domain::User readUser(sqlite3_stmt* statement) {
+    Domain::User user;
+    user.id = text(statement, 0);
+    user.email = text(statement, 1);
+    user.displayName = text(statement, 2);
+    user.timeZone = text(statement, 3);
+    user.clockFormat = text(statement, 4);
+    user.active = boolColumn(statement, 5);
+    user.isAdmin = boolColumn(statement, 6);
+    user.createdAt = text(statement, 7);
+    return user;
+}
+
+constexpr const char* UserSelect =
+    "SELECT id, email, display_name, time_zone, clock_format, active, is_admin, created_at FROM users";
 
 Domain::Issue readIssue(sqlite3_stmt* statement) {
     Domain::Issue issue;
@@ -106,19 +122,19 @@ Domain::Issue readIssue(sqlite3_stmt* statement) {
     issue.type = {text(statement, 7), text(statement, 8), text(statement, 9), text(statement, 10)};
     issue.status = {text(statement, 11), text(statement, 12), text(statement, 13), sqlite3_column_int(statement, 14)};
     issue.priority = {text(statement, 15), text(statement, 16), sqlite3_column_int(statement, 17), text(statement, 18)};
-    issue.reporter = readUser(statement, 19);
-    if (sqlite3_column_type(statement, 23) != SQLITE_NULL) {
-        issue.assignee = readUser(statement, 23);
+    issue.reporter = readUserSummary(statement, 19);
+    if (sqlite3_column_type(statement, 22) != SQLITE_NULL) {
+        issue.assignee = readUserSummary(statement, 22);
     }
-    issue.parentIssueKey = optionalText(statement, 27);
-    if (sqlite3_column_type(statement, 28) != SQLITE_NULL) {
-        issue.storyPoints = sqlite3_column_double(statement, 28);
+    issue.parentIssueKey = optionalText(statement, 25);
+    if (sqlite3_column_type(statement, 26) != SQLITE_NULL) {
+        issue.storyPoints = sqlite3_column_double(statement, 26);
     }
-    issue.dueDate = optionalText(statement, 29);
-    issue.labels = splitLabels(text(statement, 30));
-    issue.createdAt = text(statement, 31);
-    issue.updatedAt = text(statement, 32);
-    issue.version = sqlite3_column_int64(statement, 33);
+    issue.dueDate = optionalText(statement, 27);
+    issue.labels = splitLabels(text(statement, 28));
+    issue.createdAt = text(statement, 29);
+    issue.updatedAt = text(statement, 30);
+    issue.version = sqlite3_column_int64(statement, 31);
     return issue;
 }
 
@@ -130,8 +146,8 @@ SELECT
     it.type_key, it.name, it.icon, it.color,
     s.status_key, s.name, s.category, s.sort_order,
     pr.priority_key, pr.name, pr.rank, pr.color,
-    reporter.id, reporter.username, reporter.display_name, reporter.email,
-    assignee.id, assignee.username, assignee.display_name, assignee.email,
+    reporter.id, reporter.display_name, reporter.email,
+    assignee.id, assignee.display_name, assignee.email,
     parent.issue_key,
     i.story_points, i.due_date,
     COALESCE(GROUP_CONCAT(DISTINCT l.name), ''),
@@ -158,6 +174,10 @@ std::string lookupId(sqlite3* database,
         throw std::invalid_argument("Unknown " + table + " key: " + key);
     }
     return text(statement.get(), 0);
+}
+
+std::string requireUserId(sqlite3* database, const std::string& userId) {
+    return lookupId(database, "users", "id", userId);
 }
 
 std::string lookupIssueId(sqlite3* database, const std::string& issueKey) {
@@ -257,6 +277,15 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
             continue;
         }
 
+        // Foreign keys are disabled for the duration of each migration and
+        // re-enabled (with an explicit integrity check) immediately after.
+        // This is SQLite's own documented pattern for schema changes that
+        // require a table rebuild (e.g. dropping a column that participates
+        // in a UNIQUE constraint, which ALTER TABLE DROP COLUMN refuses to
+        // do directly) -- see migrations/sqlite/004_identity.sql. The
+        // PRAGMA is a no-op inside a transaction, so it must be toggled
+        // outside the BEGIN/COMMIT pair.
+        executeScript("PRAGMA foreign_keys = OFF;");
         executeScript("BEGIN IMMEDIATE;");
         try {
             executeScript(sql);
@@ -271,7 +300,15 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
                 executeScript("ROLLBACK;");
             } catch (...) {
             }
+            executeScript("PRAGMA foreign_keys = ON;");
             throw;
+        }
+        executeScript("PRAGMA foreign_keys = ON;");
+        {
+            Statement check(database_, "PRAGMA foreign_key_check");
+            if (check.step() == SQLITE_ROW) {
+                throw std::runtime_error("Migration " + migration.version + " left dangling foreign keys");
+            }
         }
     }
 }
@@ -281,11 +318,184 @@ void SqliteDatabase::seedDemoData() {
     executeScript(Common::readTextFile(seedPath_));
 }
 
+// --- Identity ---
+
+Domain::User SqliteDatabase::createUser(const Domain::CreateUserRequest& request,
+                                        const std::string& passwordHash) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        const std::string userId = Common::uuidV4();
+        Statement insertUser(database_, R"SQL(
+INSERT INTO users(id, email, display_name, is_admin, created_at, updated_at)
+VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL");
+        insertUser.bind(1, userId);
+        insertUser.bind(2, request.email);
+        insertUser.bind(3, request.displayName);
+        insertUser.bind(4, static_cast<std::int64_t>(request.isAdmin ? 1 : 0));
+        if (insertUser.step() != SQLITE_DONE) {
+            throw std::invalid_argument("Email is already in use: " + request.email);
+        }
+
+        Statement insertCredentials(database_, R"SQL(
+INSERT INTO local_credentials(user_id, password_hash, created_at, updated_at)
+VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL");
+        insertCredentials.bind(1, userId);
+        insertCredentials.bind(2, passwordHash);
+        expectDone(database_, insertCredentials, "Insert local credentials");
+
+        executeScript("COMMIT;");
+
+        Statement read(database_, std::string(UserSelect) + " WHERE id = ?");
+        read.bind(1, userId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Created user could not be read back");
+        }
+        return readUser(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+std::optional<Domain::User> SqliteDatabase::findUserByEmail(const std::string& email) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(UserSelect) + " WHERE email = ?");
+    statement.bind(1, email);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readUser(statement.get());
+}
+
+std::optional<Domain::User> SqliteDatabase::findUserById(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(UserSelect) + " WHERE id = ?");
+    statement.bind(1, userId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readUser(statement.get());
+}
+
+std::vector<Domain::User> SqliteDatabase::listUsers() {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(UserSelect) + " ORDER BY display_name");
+    std::vector<Domain::User> users;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        users.push_back(readUser(statement.get()));
+    }
+    return users;
+}
+
+std::optional<std::string> SqliteDatabase::findPasswordHash(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "SELECT password_hash FROM local_credentials WHERE user_id = ?");
+    statement.bind(1, userId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return text(statement.get(), 0);
+}
+
+void SqliteDatabase::recordFailedLogin(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE local_credentials
+SET failed_login_count = failed_login_count + 1,
+    locked_until = CASE
+        WHEN failed_login_count + 1 >= ? THEN datetime('now', '+15 minutes')
+        ELSE locked_until
+    END,
+    updated_at = CURRENT_TIMESTAMP
+WHERE user_id = ?
+)SQL");
+    statement.bind(1, static_cast<std::int64_t>(IDatabase::MaxFailedLoginAttempts));
+    statement.bind(2, userId);
+    expectDone(database_, statement, "Record failed login");
+}
+
+void SqliteDatabase::resetFailedLogin(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE local_credentials
+SET failed_login_count = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE user_id = ?
+)SQL");
+    statement.bind(1, userId);
+    expectDone(database_, statement, "Reset failed login");
+}
+
+bool SqliteDatabase::isLoginLocked(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_,
+                        "SELECT 1 FROM local_credentials WHERE user_id = ? AND locked_until IS NOT NULL AND locked_until > CURRENT_TIMESTAMP");
+    statement.bind(1, userId);
+    return statement.step() == SQLITE_ROW;
+}
+
+Domain::Session SqliteDatabase::createSession(const std::string& userId,
+                                              const std::string& tokenHash,
+                                              const std::string& expiresAtIso8601) {
+    std::scoped_lock lock(mutex_);
+    const std::string sessionId = Common::uuidV4();
+    Statement insert(database_, R"SQL(
+INSERT INTO sessions(id, user_id, token_hash, created_at, expires_at)
+VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+)SQL");
+    insert.bind(1, sessionId);
+    insert.bind(2, userId);
+    insert.bind(3, tokenHash);
+    insert.bind(4, expiresAtIso8601);
+    expectDone(database_, insert, "Create session");
+
+    Statement read(database_, "SELECT id, user_id, created_at, expires_at FROM sessions WHERE id = ?");
+    read.bind(1, sessionId);
+    if (read.step() != SQLITE_ROW) {
+        throw std::runtime_error("Created session could not be read back");
+    }
+    return Domain::Session{text(read.get(), 0), text(read.get(), 1), text(read.get(), 2), text(read.get(), 3)};
+}
+
+std::optional<Domain::Session> SqliteDatabase::findSessionByTokenHash(const std::string& tokenHash) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT id, user_id, created_at, expires_at
+FROM sessions
+WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP
+)SQL");
+    statement.bind(1, tokenHash);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return Domain::Session{
+        text(statement.get(), 0), text(statement.get(), 1), text(statement.get(), 2), text(statement.get(), 3)};
+}
+
+void SqliteDatabase::deleteSession(const std::string& sessionId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "DELETE FROM sessions WHERE id = ?");
+    statement.bind(1, sessionId);
+    expectDone(database_, statement, "Delete session");
+}
+
+void SqliteDatabase::deleteExpiredSessions() {
+    std::scoped_lock lock(mutex_);
+    executeScript("DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP;");
+}
+
+// --- Issue tracker ---
+
 std::vector<Domain::Project> SqliteDatabase::listProjects() {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(
 SELECT p.id, p.project_key, p.name, p.description,
-       lead.id, lead.username, lead.display_name, lead.email,
+       lead.id, lead.display_name, lead.email,
        COUNT(i.id),
        SUM(CASE WHEN s.category <> 'done' THEN 1 ELSE 0 END)
 FROM projects p
@@ -305,10 +515,10 @@ ORDER BY p.name
         project.name = text(statement.get(), 2);
         project.description = text(statement.get(), 3);
         if (sqlite3_column_type(statement.get(), 4) != SQLITE_NULL) {
-            project.lead = readUser(statement.get(), 4);
+            project.lead = readUserSummary(statement.get(), 4);
         }
-        project.issueCount = sqlite3_column_int64(statement.get(), 8);
-        project.openIssueCount = sqlite3_column_int64(statement.get(), 9);
+        project.issueCount = sqlite3_column_int64(statement.get(), 7);
+        project.openIssueCount = sqlite3_column_int64(statement.get(), 8);
         projects.push_back(std::move(project));
     }
     return projects;
@@ -354,7 +564,7 @@ GROUP BY i.id
 }
 
 Domain::Issue SqliteDatabase::createIssue(const Domain::CreateIssueRequest& request,
-                                          const std::string& reporterUsername) {
+                                          const std::string& reporterUserId) {
     std::scoped_lock lock(mutex_);
     executeScript("BEGIN IMMEDIATE;");
     try {
@@ -375,10 +585,10 @@ Domain::Issue SqliteDatabase::createIssue(const Domain::CreateIssueRequest& requ
         const std::string issueTypeId = lookupId(database_, "issue_types", "type_key", request.issueTypeKey);
         const std::string statusId = lookupId(database_, "issue_statuses", "status_key", "backlog");
         const std::string priorityId = lookupId(database_, "priorities", "priority_key", request.priorityKey);
-        const std::string reporterId = lookupId(database_, "users", "username", reporterUsername);
+        const std::string reporterId = requireUserId(database_, reporterUserId);
         std::optional<std::string> assigneeId;
-        if (request.assigneeUsername.has_value() && !request.assigneeUsername->empty()) {
-            assigneeId = lookupId(database_, "users", "username", *request.assigneeUsername);
+        if (request.assigneeEmail.has_value() && !request.assigneeEmail->empty()) {
+            assigneeId = lookupId(database_, "users", "email", *request.assigneeEmail);
         }
 
         Statement insert(database_, R"SQL(
@@ -437,7 +647,7 @@ SELECT ?, id FROM labels WHERE name = ?
 
 bool SqliteDatabase::changeIssueStatus(const std::string& issueKey,
                                        const std::string& statusKey,
-                                       const std::string& actorUsername,
+                                       const std::string& actorUserId,
                                        const std::optional<std::int64_t> expectedVersion) {
     std::scoped_lock lock(mutex_);
     executeScript("BEGIN IMMEDIATE;");
@@ -464,7 +674,7 @@ WHERE i.deleted_at IS NULL
             return true;
         }
         const std::string statusId = lookupId(database_, "issue_statuses", "status_key", statusKey);
-        const std::string actorId = lookupId(database_, "users", "username", actorUsername);
+        const std::string actorId = requireUserId(database_, actorUserId);
 
         Statement update(database_, "UPDATE issues SET status_id = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
         update.bind(1, statusId);
@@ -495,7 +705,7 @@ VALUES (?, ?, ?, 'status', ?, ?)
 std::vector<Domain::Comment> SqliteDatabase::listComments(const std::string& issueKey) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(
-SELECT c.id, c.issue_id, u.id, u.username, u.display_name, u.email,
+SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
        c.body, c.created_at, c.updated_at
 FROM comments c
 JOIN issues i ON i.id = c.issue_id
@@ -511,19 +721,19 @@ ORDER BY c.created_at
         comments.push_back(Domain::Comment{
             text(statement.get(), 0),
             text(statement.get(), 1),
-            readUser(statement.get(), 2),
+            readUserSummary(statement.get(), 2),
+            text(statement.get(), 5),
             text(statement.get(), 6),
-            text(statement.get(), 7),
-            text(statement.get(), 8)});
+            text(statement.get(), 7)});
     }
     return comments;
 }
 
 Domain::Comment SqliteDatabase::addComment(const Domain::AddCommentRequest& request,
-                                           const std::string& authorUsername) {
+                                           const std::string& authorUserId) {
     std::scoped_lock lock(mutex_);
     const std::string issueId = lookupIssueId(database_, request.issueKey);
-    const std::string authorId = lookupId(database_, "users", "username", authorUsername);
+    const std::string authorId = requireUserId(database_, authorUserId);
     const std::string commentId = Common::uuidV4();
 
     Statement insert(database_, R"SQL(
@@ -537,7 +747,7 @@ VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     expectDone(database_, insert, "Comment insert");
 
     Statement read(database_, R"SQL(
-SELECT c.id, c.issue_id, u.id, u.username, u.display_name, u.email,
+SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
        c.body, c.created_at, c.updated_at
 FROM comments c JOIN users u ON u.id = c.author_user_id
 WHERE c.id = ?
@@ -547,8 +757,8 @@ WHERE c.id = ?
         throw std::runtime_error("Created comment could not be read back");
     }
     return Domain::Comment{
-        text(read.get(), 0), text(read.get(), 1), readUser(read.get(), 2), text(read.get(), 6),
-        text(read.get(), 7), text(read.get(), 8)};
+        text(read.get(), 0), text(read.get(), 1), readUserSummary(read.get(), 2), text(read.get(), 5),
+        text(read.get(), 6), text(read.get(), 7)};
 }
 
 Domain::DashboardStats SqliteDatabase::dashboardStats() {

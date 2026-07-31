@@ -25,9 +25,10 @@ crow::response staticResponse(const std::string& path, const std::string& conten
 } // namespace
 
 void runHttpServer(const Config::AppConfig& config,
-                   const std::shared_ptr<Application::TicketService>& service) {
+                   const std::shared_ptr<Application::TicketService>& service,
+                   const std::shared_ptr<Application::AuthService>& authService) {
     crow::SimpleApp app;
-    registerApiRoutes(app, service);
+    registerApiRoutes(app, service, authService);
 
     CROW_ROUTE(app, "/")([root = config.webRoot] {
         return staticResponse(root + "/index.html", "text/html; charset=utf-8");

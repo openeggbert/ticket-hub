@@ -17,9 +17,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+find_package(Argon2 REQUIRED)
+
 set(TICKETHUB_CORE_SOURCES
+    src/application/AuthService.cpp
     src/application/TicketService.cpp
     src/common/FileUtil.cpp
+    src/common/PasswordHash.cpp
+    src/common/RandomToken.cpp
+    src/common/Sha256.cpp
     src/common/Uuid.cpp
     src/config/Config.cpp
     src/domain/Validation.cpp
@@ -52,6 +59,8 @@ if(TICKETHUB_WITH_POSTGRES)
     target_compile_definitions(ticket-hub-core PUBLIC TICKETHUB_WITH_POSTGRES=1)
     target_link_libraries(ticket-hub-core PUBLIC PostgreSQL::PostgreSQL)
 endif()
+
+target_link_libraries(ticket-hub-core PUBLIC Argon2::Argon2)
 
 if(MSVC)
     target_compile_options(ticket-hub-core PRIVATE /W4 /permissive-)
@@ -128,5 +137,16 @@ if(TICKETHUB_BUILD_TESTS)
             TICKETHUB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
         )
         add_test(NAME ticket-hub-sqlite-integration-tests COMMAND ticket-hub-sqlite-integration-tests)
+
+        add_executable(ticket-hub-identity-tests tests/identity_integration_tests.cpp)
+        target_link_libraries(ticket-hub-identity-tests PRIVATE ticket-hub-core)
+        target_compile_definitions(ticket-hub-identity-tests PRIVATE
+            TICKETHUB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        )
+        add_test(NAME ticket-hub-identity-tests COMMAND ticket-hub-identity-tests)
     endif()
+
+    add_executable(ticket-hub-crypto-tests tests/crypto_tests.cpp)
+    target_link_libraries(ticket-hub-crypto-tests PRIVATE ticket-hub-core)
+    add_test(NAME ticket-hub-crypto-tests COMMAND ticket-hub-crypto-tests)
 endif()

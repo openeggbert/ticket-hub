@@ -35,8 +35,11 @@ std::optional<Domain::Issue> TicketService::findIssue(const std::string& issueKe
     return database_->findIssueByKey(Domain::normalizeIssueKey(issueKey));
 }
 
-Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request) {
+Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, const Domain::Principal& actor) {
     request.projectKey = Domain::normalizeProjectKey(request.projectKey);
+    if (request.assigneeEmail) {
+        request.assigneeEmail = Domain::normalizeEmail(*request.assigneeEmail);
+    }
     for (auto& label : request.labels) {
         label = Domain::normalizeLabel(label);
     }
@@ -53,30 +56,31 @@ Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request) {
         }
         throw std::invalid_argument(message.str());
     }
-    return database_->createIssue(request, DemoUser);
+    return database_->createIssue(request, actor.userId);
 }
 
 bool TicketService::changeStatus(const std::string& issueKey,
                                  const std::string& statusKey,
+                                 const Domain::Principal& actor,
                                  const std::optional<std::int64_t> expectedVersion) {
     if (issueKey.empty() || statusKey.empty()) {
         throw std::invalid_argument("issueKey and statusKey are required");
     }
-    return database_->changeIssueStatus(Domain::normalizeIssueKey(issueKey), statusKey, DemoUser, expectedVersion);
+    return database_->changeIssueStatus(Domain::normalizeIssueKey(issueKey), statusKey, actor.userId, expectedVersion);
 }
 
 std::vector<Domain::Comment> TicketService::listComments(const std::string& issueKey) {
     return database_->listComments(Domain::normalizeIssueKey(issueKey));
 }
 
-Domain::Comment TicketService::addComment(const std::string& issueKey, const std::string& body) {
+Domain::Comment TicketService::addComment(const std::string& issueKey, const std::string& body, const Domain::Principal& actor) {
     if (body.empty()) {
         throw std::invalid_argument("comment body is required");
     }
     if (body.size() > 100000) {
         throw std::invalid_argument("comment body must not exceed 100000 characters");
     }
-    return database_->addComment(Domain::AddCommentRequest{Domain::normalizeIssueKey(issueKey), body}, DemoUser);
+    return database_->addComment(Domain::AddCommentRequest{Domain::normalizeIssueKey(issueKey), body}, actor.userId);
 }
 
 Domain::DashboardStats TicketService::dashboard() {

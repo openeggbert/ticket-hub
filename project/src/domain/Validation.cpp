@@ -93,4 +93,58 @@ std::vector<std::string> validateCreateIssue(const CreateIssueRequest& request) 
     return errors;
 }
 
+std::string normalizeEmail(const std::string& value) {
+    std::string result = trim(value);
+    std::transform(result.begin(), result.end(), result.begin(), [](const unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return result;
+}
+
+bool isValidEmail(const std::string& value) {
+    // Deliberately conservative rather than RFC 5322-complete: this only
+    // needs to catch obviously-wrong input, since the real check that
+    // matters is uniqueness plus the user actually being able to receive
+    // administrator communication out of band (there is no verification
+    // email in V1 -- see docs/REMOVED_AND_DEFERRED_FEATURES.md).
+    static const std::regex pattern(R"(^[^\s@]+@[^\s@]+\.[^\s@]{2,}$)");
+    const auto normalized = normalizeEmail(value);
+    return normalized.size() <= 320 && std::regex_match(normalized, pattern);
+}
+
+std::vector<std::string> validatePassword(const std::string& password,
+                                          const std::string& email,
+                                          const std::string& displayName) {
+    std::vector<std::string> errors;
+    if (password.size() < 10) {
+        errors.emplace_back("password must be at least 10 characters");
+    }
+    if (password.size() > 256) {
+        errors.emplace_back("password must not exceed 256 characters");
+    }
+    const auto normalizedPassword = normalizeEmail(password);
+    if (!email.empty() && normalizedPassword == normalizeEmail(email)) {
+        errors.emplace_back("password must not be the same as the email address");
+    }
+    if (!displayName.empty() && normalizedPassword == normalizeEmail(displayName)) {
+        errors.emplace_back("password must not be the same as the display name");
+    }
+    return errors;
+}
+
+std::vector<std::string> validateCreateUser(const CreateUserRequest& request) {
+    std::vector<std::string> errors;
+    if (!isValidEmail(request.email)) {
+        errors.emplace_back("email must be a valid address");
+    }
+    if (request.displayName.empty()) {
+        errors.emplace_back("displayName is required");
+    } else if (request.displayName.size() > 160) {
+        errors.emplace_back("displayName must not exceed 160 characters");
+    }
+    const auto passwordErrors = validatePassword(request.password, request.email, request.displayName);
+    errors.insert(errors.end(), passwordErrors.begin(), passwordErrors.end());
+    return errors;
+}
+
 } // namespace TicketHub::Domain
