@@ -1,8 +1,9 @@
 # Ticket Hub next work
 
 Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, and UI; Phase 4
-(Collaboration) in progress -- comment editing/tombstone delete, fixed emoji reactions, @mention
-handles/the fixed in-app notification set, and the Markdown editor toolbar/preview are done — see below)
+(Collaboration) nearly done -- comment editing/tombstone delete, fixed emoji reactions, @mention
+handles/the fixed in-app notification set, the Markdown editor toolbar/preview, and simplified worklogs
+are done; only the audit log (D23) remains — see below)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -231,8 +232,25 @@ anything from the removed/deferred list without an explicit new product conversa
   description edit renders its heading/bold correctly. Re-ran the reaction, comment-editing, and
   mentions/notifications browser tests to confirm no regression from `.comment-body-text` changing from
   `<p>` to `<div>` (needed to legally contain the new block-level Markdown output). Full detail in
-  `docs/VERIFICATION.md`. Rest of Phase 4 (D13, D23) is not yet implemented -- see "Not yet built" in
-  `docs/SCOPE.md`.
+  `docs/VERIFICATION.md`.
+- **Phase 4 continued (simplified worklogs, D12/D13), this batch:** migration `011_worklogs.sql` adds
+  `worklogs` (`id`, `issue_id`, `author_user_id`, `work_date`, `time_spent_seconds`, `comment` nullable,
+  plus the same tombstone-delete/`version` columns comments already use) -- no remaining-estimate
+  linkage, since D12 dropped time estimates entirely, so there is nothing for a worklog to adjust.
+  `IDatabase::listWorklogs`/`addWorklog`/`findWorklogById`/`editWorklog`/`deleteWorklog` in both
+  adapters; `editWorklog` shares `editComment`/`editIssue`'s optimistic-locking contract. Matching
+  `TicketService` methods deliberately drop D83's author-or-admin permission split: add/edit/delete all
+  require only project-Member-or-above, so any project member may edit or delete *any* worklog on an
+  issue they can access, not just their own (D13's explicit simplification). New
+  `GET`/`POST /api/issues/{key}/worklogs` and `PATCH`/`DELETE /api/issues/{key}/worklogs/{id}` routes.
+  `web/` gained a "Time tracking" section in the issue drawer: a list of logged entries with a Delete
+  button on every one (shown unconditionally, no author check, matching the server's more permissive
+  rule) and a log-time form accepting a free-text duration ("1h 30m", "45m") parsed client-side. New
+  SQLite-integration (full CRUD, stale-version conflict, tombstone semantics), authorization-integration
+  (a non-member rejected, a different project member editing/deleting someone else's worklog succeeds --
+  the no-own-vs-others-split behavior explicitly asserted), and live-PostgreSQL test coverage. Full detail
+  in `docs/VERIFICATION.md`. Only D23 (the append-only admin/security audit log) remains open in Phase 4
+  -- see "Not yet built" in `docs/SCOPE.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) has started. Immediate next step: continue Phase 4
 
@@ -254,13 +272,13 @@ drawer on click.
 
 There is no remaining gap between what the API exposes (for Phases 1-3) and what the demo UI can reach.
 Comment editing/tombstone delete (D81/D82/D83), fixed emoji reactions (D84), @mention handles/the
-fixed in-app notification set (D56/D80/D14), and the Markdown editor toolbar/live preview (D16) are the
-first four Phase 4 slices, and all four are also already fully covered in the UI. What's left is the
-rest of Phase 4, Phase 5, or optional UX polish:
+fixed in-app notification set (D56/D80/D14), the Markdown editor toolbar/live preview (D16), and
+simplified worklogs (D12/D13) are the first five Phase 4 slices, and all five are also already fully
+covered in the UI. What's left is the rest of Phase 4, Phase 5, or optional UX polish:
 
-1. Continue Phase 4 (Collaboration) per `docs/REDUCED_SCOPE_ROADMAP.md`: D13 (simplified worklogs -- the
-   next most self-contained slice) and D23 (the append-only admin/security audit log). Then Phase 5
-   (Attachments and Kanban board).
+1. Continue Phase 4 (Collaboration) per `docs/REDUCED_SCOPE_ROADMAP.md`: D23 (the append-only
+   admin/security audit log), the last open item in Phase 4. Then Phase 5 (Attachments and Kanban
+   board).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (today's board is read-only, clicking a card just opens the drawer; the Issues table's
    up/down buttons are the only reorder UI); a friendlier bulk-status picker that also supports
@@ -286,7 +304,7 @@ later-phase features early, and do not implement anything from `docs/REMOVED_AND
 
 Core, CLI, all seven test binaries, and the `ticket-hub` server target itself all compile and pass/run
 cleanly on both SQLite and PostgreSQL, in every supported build configuration, including a live HTTP
-smoke test of essentially every route across all three completed phases and, across ten batches, a
+smoke test of essentially every route across all three completed phases and, across eleven batches, a
 real-browser (Playwright/Chromium) test of every write route the demo UI now exposes: login/logout,
 hierarchy/resolution pickers, full edit/clone/links/watch-vote/delete in the issue drawer, project
 management, the issue recycle bin, reorder/move/bulk actions, comment editing/tombstone delete
@@ -299,10 +317,12 @@ matching handle and notifies the mentioned user, and the notification panel/badg
 flow), and now the Markdown editor toolbar and live preview (toolbar buttons producing correctly-rendered
 `<strong>`/`<em>`/`<code>`/`<a>`/list/`<blockquote>` output, the preview toggle, and -- security-focused
 -- confirming a `<script>`/`onerror`-`<img>` payload never executes and a `javascript:`-scheme link never
-becomes clickable). The long-standing "server target unverified because `github.com` is unreachable"
-limitation recorded in every prior session no longer applies in this environment, and there is no longer
-a gap between what the API exposes for Phases 1-3 (plus the comment-editing, reactions, mentions/
-notifications, and Markdown-rendering slices of Phase 4) and what the demo UI can reach.
+becomes clickable), and now simplified worklogs (logging time shows the correct formatted duration and
+comment, deleting an entry removes it, an unparseable duration is rejected before it reaches the server).
+The long-standing "server target unverified because `github.com` is unreachable" limitation recorded in
+every prior session no longer applies in this environment, and there is no longer a gap between what the
+API exposes for Phases 1-3 (plus the comment-editing, reactions, mentions/notifications, Markdown-
+rendering, and worklog slices of Phase 4) and what the demo UI can reach.
 `findCommentById`/`editComment`/`deleteComment` gained dedicated SQLite-integration coverage (success,
 version-increment, `edited_at` set, stale-version conflict, unknown-comment no-op) and
 authorization-integration coverage (non-author-non-admin Forbidden, self-edit succeeds, global-admin can

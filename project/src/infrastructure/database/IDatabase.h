@@ -162,6 +162,22 @@ public:
     virtual bool markNotificationRead(const std::string& notificationId, const std::string& userId) = 0;
     virtual bool markAllNotificationsRead(const std::string& userId) = 0;
 
+    // --- Simplified worklogs (Phase 4, D12/D13) ---
+    // No remaining-estimate linkage (D12) and no own-vs-others permission
+    // split (D13) at this layer either -- TicketService enforces only that
+    // the actor has project-Member-or-above on the issue, the same level
+    // for add/edit/delete alike. editWorklog shares editComment/editIssue's
+    // optimistic-locking contract (`expectedVersion` -> Domain::
+    // ConcurrencyConflict). deleteWorklog is a tombstone delete, same
+    // mechanism as comments/issues/projects.
+    virtual std::vector<Domain::Worklog> listWorklogs(const std::string& issueKey) = 0;
+    virtual Domain::Worklog addWorklog(const Domain::AddWorklogRequest& request, const std::string& authorUserId) = 0;
+    virtual std::optional<Domain::Worklog> findWorklogById(const std::string& worklogId) = 0;
+    virtual std::optional<Domain::Worklog> editWorklog(const std::string& worklogId,
+                                                        const Domain::EditWorklogRequest& request,
+                                                        std::optional<std::int64_t> expectedVersion = std::nullopt) = 0;
+    virtual bool deleteWorklog(const std::string& worklogId, const std::string& actorUserId) = 0;
+
     virtual Domain::DashboardStats dashboardStats() = 0;
 
     // --- Manual ordering (Phase 3, D31) ---

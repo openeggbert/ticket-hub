@@ -111,6 +111,20 @@ crow::json::wvalue commentJson(const Domain::Comment& comment) {
     return json;
 }
 
+crow::json::wvalue worklogJson(const Domain::Worklog& worklog) {
+    crow::json::wvalue json;
+    json["id"] = worklog.id;
+    json["issueId"] = worklog.issueId;
+    json["author"] = userJson(worklog.author);
+    json["workDate"] = worklog.workDate;
+    json["timeSpentSeconds"] = worklog.timeSpentSeconds;
+    json["comment"] = worklog.comment ? crow::json::wvalue(*worklog.comment) : crow::json::wvalue(nullptr);
+    json["createdAt"] = worklog.createdAt;
+    json["updatedAt"] = worklog.updatedAt;
+    json["version"] = worklog.version;
+    return json;
+}
+
 crow::json::wvalue commentReactionJson(const Domain::CommentReaction& reaction) {
     crow::json::wvalue json;
     json["reactionKey"] = reaction.reactionKey;
@@ -972,6 +986,115 @@ void registerApiRoutes(crow::SimpleApp& app,
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Simplified worklogs (D12/D13): no own-vs-others permission split --
+    // any project member (the same project-Member-or-above level as any
+    // other issue write) may edit or delete any worklog on the issue.
+    CROW_ROUTE(app, "/api/issues/<string>/worklogs")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& worklog : service->listWorklogs(issueKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(worklogJson(worklog));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/worklogs")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            if (!body.has("timeSpentSeconds") || body["timeSpentSeconds"].t() != crow::json::type::Number) {
+                return errorResponse(400, "timeSpentSeconds must be a number");
+            }
+            const auto worklog = service->addWorklog(issueKey, requiredString(body, "workDate"),
+                body["timeSpentSeconds"].i(), optionalString(body, "comment"), *principal);
+            return jsonResponse(201, worklogJson(worklog));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/worklogs/<string>")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& worklogId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            if (!body.has("timeSpentSeconds") || body["timeSpentSeconds"].t() != crow::json::type::Number) {
+                return errorResponse(400, "timeSpentSeconds must be a number");
+            }
+            std::optional<std::int64_t> expectedVersion;
+            if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
+                expectedVersion = body["expectedVersion"].i();
+            }
+            auto worklog = service->editWorklog(issueKey, worklogId, requiredString(body, "workDate"),
+                body["timeSpentSeconds"].i(), optionalString(body, "comment"), *principal, expectedVersion);
+            return worklog ? jsonResponse(200, worklogJson(*worklog)) : errorResponse(404, "Worklog not found");
+        } catch (const Domain::ConcurrencyConflict& error) {
+            return errorResponse(409, error.what());
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/worklogs/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& worklogId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->deleteWorklog(issueKey, worklogId, *principal)) {
+                return errorResponse(404, "Worklog not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {

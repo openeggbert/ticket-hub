@@ -305,6 +305,44 @@ int main() {
         require(scalarInt(databasePath, "SELECT COUNT(*) FROM comments WHERE id = '" + comment.id + "'") == 1,
                "the soft-deleted comment's row (and original body) still physically exists");
 
+        // --- Simplified worklogs (D12/D13) ---
+        const auto worklog = database.addWorklog({created.key, "2026-07-30", 3600, std::string("Initial investigation")}, demoUserId);
+        require(!worklog.id.empty(), "a worklog receives an id");
+        require(worklog.workDate == "2026-07-30", "the work date round-trips");
+        require(worklog.timeSpentSeconds == 3600, "the time spent round-trips");
+        require(worklog.comment.has_value() && *worklog.comment == "Initial investigation", "the comment round-trips");
+        require(worklog.version == 1, "a new worklog starts at version 1");
+
+        database.addWorklog({created.key, "2026-07-31", 1800, std::nullopt}, alexUserId);
+        require(database.listWorklogs(created.key).size() == 2, "both worklogs are listed");
+
+        const auto foundWorklog = database.findWorklogById(worklog.id);
+        require(foundWorklog.has_value() && foundWorklog->id == worklog.id, "findWorklogById resolves the worklog");
+
+        const auto editedWorklog = database.editWorklog(worklog.id, {"2026-07-30", 7200, std::string("Updated estimate")}, worklog.version);
+        require(editedWorklog.has_value(), "editWorklog succeeds");
+        require(editedWorklog->timeSpentSeconds == 7200, "the time spent is updated");
+        require(editedWorklog->comment.has_value() && *editedWorklog->comment == "Updated estimate", "the comment is updated");
+        require(editedWorklog->version == worklog.version + 1, "editing increments the optimistic-lock version");
+
+        bool worklogEditConflictDetected = false;
+        try {
+            database.editWorklog(worklog.id, {"2026-07-30", 100, std::nullopt}, worklog.version);
+        } catch (const TicketHub::Domain::ConcurrencyConflict&) {
+            worklogEditConflictDetected = true;
+        }
+        require(worklogEditConflictDetected, "a stale worklog edit is rejected");
+
+        require(!database.editWorklog("00000000-0000-4000-8000-00000000dead", {"2026-07-30", 100, std::nullopt}, std::nullopt).has_value(),
+               "editing an unknown worklog returns nullopt");
+
+        require(database.deleteWorklog(worklog.id, demoUserId), "a worklog can be soft-deleted");
+        require(database.listWorklogs(created.key).size() == 1, "a soft-deleted worklog no longer appears in the list");
+        require(!database.findWorklogById(worklog.id).has_value(), "a soft-deleted worklog is not found by findWorklogById");
+        require(!database.deleteWorklog(worklog.id, demoUserId), "deleting an already-deleted worklog is a no-op");
+        require(scalarInt(databasePath, "SELECT COUNT(*) FROM worklogs WHERE id = '" + worklog.id + "'") == 1,
+               "the soft-deleted worklog's row still physically exists");
+
         const auto dashboard = database.dashboardStats();
         require(dashboard.totalIssues == 9, "dashboard includes newly created issue");
         require(!dashboard.recentIssues.empty() && dashboard.recentIssues.front().key == created.key,

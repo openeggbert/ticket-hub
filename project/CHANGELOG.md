@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Simplified worklogs (D12/D13)
+
+- **Simplified worklogs (D12/D13)**: log time spent on an issue via `POST /api/issues/{key}/worklogs`
+  (`workDate`, `timeSpentSeconds`, optional `comment`). No remaining-estimate linkage (D12 dropped time
+  estimates from V1 entirely) and no own-vs-others edit/delete permission split (D13): any project member
+  with issue access (project-Member-or-above, the same level as any other issue write) may edit or delete
+  *any* worklog on that issue, not just the one they logged themselves -- deliberately more permissive
+  than comments' author-or-admin rule (D83).
+- New migration `011_worklogs.sql` (both backends): `worklogs` table with a tombstone delete
+  (`deleted_at`/`deleted_by_user_id`, mirroring comments/issues/projects) and the same optimistic-locking
+  contract as comment/issue edits (`expectedVersion` -> `Domain::ConcurrencyConflict`, 409).
+- New `GET`/`POST /api/issues/{key}/worklogs` and `PATCH`/`DELETE /api/issues/{key}/worklogs/{id}` routes.
+- `web/`: a "Time tracking" section in the issue drawer listing logged time (duration, author, date,
+  optional comment) with a delete button on every entry (any project member, not just the author -- no
+  client-side author check, matching the server's more permissive D13 rule), and a log-time form
+  (date, a free-text duration like "1h 30m", optional comment).
+
 ## Unreleased — Markdown editor toolbar, live preview, and sanitized rendering (D16)
 
 - **Rendered Markdown (D16)**: comment bodies and issue descriptions now render as formatted HTML

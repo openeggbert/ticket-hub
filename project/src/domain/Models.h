@@ -375,6 +375,38 @@ struct AddCommentRequest {
     std::string body;
 };
 
+// Simplified worklogs (Phase 4, D12/D13): time spent + an optional comment
+// only -- no remaining-estimate linkage (D12 dropped time estimates from
+// V1 entirely, so there is nothing for a worklog to adjust) and no
+// separate own-vs-others edit/delete permission split (D13: any project
+// member with issue access may edit or delete any worklog on that issue,
+// not just the one they logged -- see TicketService::editWorklog/
+// deleteWorklog).
+struct Worklog {
+    std::string id;
+    std::string issueId;
+    UserSummary author;
+    std::string workDate; // ISO date, "YYYY-MM-DD"
+    std::int64_t timeSpentSeconds{};
+    std::optional<std::string> comment;
+    std::string createdAt;
+    std::string updatedAt;
+    std::int64_t version{1};
+};
+
+struct AddWorklogRequest {
+    std::string issueKey;
+    std::string workDate;
+    std::int64_t timeSpentSeconds{};
+    std::optional<std::string> comment;
+};
+
+struct EditWorklogRequest {
+    std::string workDate;
+    std::int64_t timeSpentSeconds{};
+    std::optional<std::string> comment;
+};
+
 struct DashboardStats {
     std::int64_t totalIssues{};
     std::int64_t todoIssues{};

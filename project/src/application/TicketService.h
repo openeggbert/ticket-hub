@@ -94,6 +94,27 @@ public:
                                                                const std::string& commentId,
                                                                const std::optional<Domain::Principal>& actor);
 
+    // --- Simplified worklogs (Phase 4, D12/D13) ---
+    // No own-vs-others permission split (D13): add/edit/delete all require
+    // the same project-Member-or-above level as any other issue write --
+    // any project member may edit or delete any worklog on an issue they
+    // can access, not just the one they logged themselves. edit/delete
+    // return nullopt/false if the worklog (or its issue) does not exist.
+    std::vector<Domain::Worklog> listWorklogs(const std::string& issueKey, const std::optional<Domain::Principal>& actor);
+    Domain::Worklog addWorklog(const std::string& issueKey,
+                               const std::string& workDate,
+                               std::int64_t timeSpentSeconds,
+                               std::optional<std::string> comment,
+                               const Domain::Principal& actor);
+    std::optional<Domain::Worklog> editWorklog(const std::string& issueKey,
+                                               const std::string& worklogId,
+                                               const std::string& workDate,
+                                               std::int64_t timeSpentSeconds,
+                                               std::optional<std::string> comment,
+                                               const Domain::Principal& actor,
+                                               std::optional<std::int64_t> expectedVersion = std::nullopt);
+    bool deleteWorklog(const std::string& issueKey, const std::string& worklogId, const Domain::Principal& actor);
+
     // Simple field-copy clone (D60): summary/description/type/priority/labels
     // into a new issue in the same project, plus a `clones`/`is cloned by`
     // link back to the original. Assignee, story points, due date, and

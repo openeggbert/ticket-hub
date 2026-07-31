@@ -254,6 +254,26 @@ SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
 FROM comments c JOIN users u ON u.id = c.author_user_id
 )SQL";
 
+Domain::Worklog readWorklog(PGresult* result, int row) {
+    Domain::Worklog worklog;
+    worklog.id = value(result, row, 0);
+    worklog.issueId = value(result, row, 1);
+    worklog.author = readUserSummary(result, row, 2);
+    worklog.workDate = value(result, row, 5);
+    worklog.timeSpentSeconds = int64Value(result, row, 6);
+    worklog.comment = optionalValue(result, row, 7);
+    worklog.createdAt = value(result, row, 8);
+    worklog.updatedAt = value(result, row, 9);
+    worklog.version = int64Value(result, row, 10);
+    return worklog;
+}
+
+constexpr const char* WorklogSelect = R"SQL(
+SELECT w.id, w.issue_id, u.id, u.display_name, u.email,
+       w.work_date::text, w.time_spent_seconds, w.comment, w.created_at::text, w.updated_at::text, w.version
+FROM worklogs w JOIN users u ON u.id = w.author_user_id
+)SQL";
+
 } // namespace
 
 PostgresDatabase::PostgresDatabase(std::string connectionString,
@@ -1467,6 +1487,108 @@ bool PostgresDatabase::markAllNotificationsRead(const std::string& userId) {
                              "UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND read_at IS NULL",
                              {userId},
                              "Mark all notifications read");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::vector<Domain::Worklog> PostgresDatabase::listWorklogs(const std::string& issueKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(WorklogSelect) + R"SQL(
+JOIN issues i ON i.id = w.issue_id
+WHERE w.deleted_at IS NULL
+  AND i.deleted_at IS NULL
+  AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
+ORDER BY w.work_date DESC, w.created_at DESC
+)SQL",
+                             {issueKey},
+                             "List worklogs");
+    std::vector<Domain::Worklog> worklogs;
+    const int rowCount = PQntuples(result.get());
+    for (int row = 0; row < rowCount; ++row) {
+        worklogs.push_back(readWorklog(result.get(), row));
+    }
+    return worklogs;
+}
+
+Domain::Worklog PostgresDatabase::addWorklog(const Domain::AddWorklogRequest& request, const std::string& authorUserId) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), request.issueKey);
+    const std::string authorId = requireUserId(connection.get(), authorUserId);
+    const std::string worklogId = Common::uuidV4();
+
+    execParams(connection.get(), R"SQL(
+INSERT INTO worklogs(id, issue_id, author_user_id, work_date, time_spent_seconds, comment, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL",
+               {worklogId, issueId, authorId, request.workDate, std::to_string(request.timeSpentSeconds), request.comment},
+               "Insert worklog");
+
+    auto result = execParams(connection.get(), std::string(WorklogSelect) + "WHERE w.id = $1", {worklogId}, "Read created worklog");
+    if (PQntuples(result.get()) != 1) {
+        throw std::runtime_error("Created worklog could not be read back");
+    }
+    return readWorklog(result.get(), 0);
+}
+
+std::optional<Domain::Worklog> PostgresDatabase::findWorklogById(const std::string& worklogId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(WorklogSelect) + "WHERE w.id = $1 AND w.deleted_at IS NULL",
+                             {worklogId}, "Find worklog");
+    if (PQntuples(result.get()) != 1) {
+        return std::nullopt;
+    }
+    return readWorklog(result.get(), 0);
+}
+
+std::optional<Domain::Worklog> PostgresDatabase::editWorklog(const std::string& worklogId,
+                                                              const Domain::EditWorklogRequest& request,
+                                                              const std::optional<std::int64_t> expectedVersion) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin edit worklog transaction");
+    try {
+        auto current = execParams(connection.get(),
+                                  "SELECT version FROM worklogs WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+                                  {worklogId},
+                                  "Lock worklog for edit");
+        if (PQntuples(current.get()) == 0) {
+            exec(connection.get(), "ROLLBACK", "Rollback missing worklog transaction");
+            return std::nullopt;
+        }
+        const std::int64_t currentVersion = int64Value(current.get(), 0, 0);
+        if (expectedVersion && *expectedVersion != currentVersion) {
+            throw Domain::ConcurrencyConflict("Worklog was modified by another user");
+        }
+
+        execParams(connection.get(), R"SQL(
+UPDATE worklogs SET work_date = $1, time_spent_seconds = $2, comment = $3, version = version + 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = $4
+)SQL",
+                   {request.workDate, std::to_string(request.timeSpentSeconds), request.comment, worklogId},
+                   "Update worklog");
+
+        exec(connection.get(), "COMMIT", "Commit edit worklog transaction");
+        auto result = execParams(connection.get(), std::string(WorklogSelect) + "WHERE w.id = $1", {worklogId}, "Read edited worklog");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Edited worklog could not be read back");
+        }
+        return readWorklog(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback edit worklog transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool PostgresDatabase::deleteWorklog(const std::string& worklogId, const std::string& actorUserId) {
+    auto connection = connect(connectionString_);
+    const std::string actorId = requireUserId(connection.get(), actorUserId);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE worklogs SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = $1, updated_at = CURRENT_TIMESTAMP
+WHERE id = $2 AND deleted_at IS NULL
+)SQL",
+                             {actorId, worklogId},
+                             "Delete worklog");
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 

@@ -201,4 +201,40 @@ std::vector<std::string> validateCreateProject(const CreateProjectRequest& reque
     return errors;
 }
 
+namespace {
+// D12/D13: no time-estimate linkage, so the only bound on timeSpentSeconds
+// is sanity -- reject zero/negative (meaningless) and an implausibly large
+// single entry (1000 hours), not a business rule.
+constexpr std::int64_t MaxWorklogTimeSpentSeconds = 1000LL * 3600;
+
+void appendWorklogContentErrors(std::vector<std::string>& errors,
+                                const std::string& workDate,
+                                const std::int64_t timeSpentSeconds,
+                                const std::optional<std::string>& comment) {
+    if (workDate.empty()) {
+        errors.emplace_back("workDate is required");
+    }
+    if (timeSpentSeconds <= 0) {
+        errors.emplace_back("timeSpentSeconds must be greater than zero");
+    } else if (timeSpentSeconds > MaxWorklogTimeSpentSeconds) {
+        errors.emplace_back("timeSpentSeconds must not exceed 3600000 (1000 hours)");
+    }
+    if (comment && comment->size() > 10000) {
+        errors.emplace_back("comment must not exceed 10000 characters");
+    }
+}
+} // namespace
+
+std::vector<std::string> validateAddWorklog(const AddWorklogRequest& request) {
+    std::vector<std::string> errors;
+    appendWorklogContentErrors(errors, request.workDate, request.timeSpentSeconds, request.comment);
+    return errors;
+}
+
+std::vector<std::string> validateEditWorklog(const EditWorklogRequest& request) {
+    std::vector<std::string> errors;
+    appendWorklogContentErrors(errors, request.workDate, request.timeSpentSeconds, request.comment);
+    return errors;
+}
+
 } // namespace TicketHub::Domain

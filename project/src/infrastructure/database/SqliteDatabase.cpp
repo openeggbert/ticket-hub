@@ -222,6 +222,26 @@ SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
 FROM comments c JOIN users u ON u.id = c.author_user_id
 )SQL";
 
+Domain::Worklog readWorklog(sqlite3_stmt* statement) {
+    Domain::Worklog worklog;
+    worklog.id = text(statement, 0);
+    worklog.issueId = text(statement, 1);
+    worklog.author = readUserSummary(statement, 2);
+    worklog.workDate = text(statement, 5);
+    worklog.timeSpentSeconds = sqlite3_column_int64(statement, 6);
+    worklog.comment = optionalText(statement, 7);
+    worklog.createdAt = text(statement, 8);
+    worklog.updatedAt = text(statement, 9);
+    worklog.version = sqlite3_column_int64(statement, 10);
+    return worklog;
+}
+
+constexpr const char* WorklogSelect = R"SQL(
+SELECT w.id, w.issue_id, u.id, u.display_name, u.email,
+       w.work_date, w.time_spent_seconds, w.comment, w.created_at, w.updated_at, w.version
+FROM worklogs w JOIN users u ON u.id = w.author_user_id
+)SQL";
+
 } // namespace
 
 SqliteDatabase::SqliteDatabase(std::string databasePath, std::string migrationsDirectory, std::string seedPath)
@@ -1525,6 +1545,119 @@ bool SqliteDatabase::markAllNotificationsRead(const std::string& userId) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, "UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE user_id = ? AND read_at IS NULL");
     statement.bind(1, userId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+std::vector<Domain::Worklog> SqliteDatabase::listWorklogs(const std::string& issueKey) {
+    std::scoped_lock lock(mutex_);
+    const std::string sql = std::string(WorklogSelect) + R"SQL(
+JOIN issues i ON i.id = w.issue_id
+WHERE w.deleted_at IS NULL
+  AND i.deleted_at IS NULL
+  AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
+ORDER BY w.work_date DESC, w.created_at DESC
+)SQL";
+    Statement statement(database_, sql);
+    statement.bind(1, issueKey);
+    std::vector<Domain::Worklog> worklogs;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        worklogs.push_back(readWorklog(statement.get()));
+    }
+    return worklogs;
+}
+
+Domain::Worklog SqliteDatabase::addWorklog(const Domain::AddWorklogRequest& request, const std::string& authorUserId) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, request.issueKey);
+    const std::string authorId = requireUserId(database_, authorUserId);
+    const std::string worklogId = Common::uuidV4();
+
+    Statement insert(database_, R"SQL(
+INSERT INTO worklogs(id, issue_id, author_user_id, work_date, time_spent_seconds, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL");
+    insert.bind(1, worklogId);
+    insert.bind(2, issueId);
+    insert.bind(3, authorId);
+    insert.bind(4, request.workDate);
+    insert.bind(5, request.timeSpentSeconds);
+    request.comment ? insert.bind(6, *request.comment) : insert.bindNull(6);
+    expectDone(database_, insert, "Worklog insert");
+
+    const std::string sql = std::string(WorklogSelect) + "WHERE w.id = ?";
+    Statement read(database_, sql);
+    read.bind(1, worklogId);
+    if (read.step() != SQLITE_ROW) {
+        throw std::runtime_error("Created worklog could not be read back");
+    }
+    return readWorklog(read.get());
+}
+
+std::optional<Domain::Worklog> SqliteDatabase::findWorklogById(const std::string& worklogId) {
+    std::scoped_lock lock(mutex_);
+    const std::string sql = std::string(WorklogSelect) + "WHERE w.id = ? AND w.deleted_at IS NULL";
+    Statement statement(database_, sql);
+    statement.bind(1, worklogId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readWorklog(statement.get());
+}
+
+std::optional<Domain::Worklog> SqliteDatabase::editWorklog(const std::string& worklogId,
+                                                            const Domain::EditWorklogRequest& request,
+                                                            const std::optional<std::int64_t> expectedVersion) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        Statement current(database_, "SELECT version FROM worklogs WHERE id = ? AND deleted_at IS NULL");
+        current.bind(1, worklogId);
+        if (current.step() != SQLITE_ROW) {
+            executeScript("ROLLBACK;");
+            return std::nullopt;
+        }
+        const std::int64_t currentVersion = sqlite3_column_int64(current.get(), 0);
+        if (expectedVersion && *expectedVersion != currentVersion) {
+            throw Domain::ConcurrencyConflict("Worklog was modified by another user");
+        }
+
+        Statement update(database_, R"SQL(
+UPDATE worklogs SET work_date = ?, time_spent_seconds = ?, comment = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+)SQL");
+        update.bind(1, request.workDate);
+        update.bind(2, request.timeSpentSeconds);
+        request.comment ? update.bind(3, *request.comment) : update.bindNull(3);
+        update.bind(4, worklogId);
+        expectDone(database_, update, "Worklog edit update");
+
+        executeScript("COMMIT;");
+        const std::string sql = std::string(WorklogSelect) + "WHERE w.id = ?";
+        Statement read(database_, sql);
+        read.bind(1, worklogId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Edited worklog could not be read back");
+        }
+        return readWorklog(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool SqliteDatabase::deleteWorklog(const std::string& worklogId, const std::string& actorUserId) {
+    std::scoped_lock lock(mutex_);
+    const std::string actorId = requireUserId(database_, actorUserId);
+    Statement statement(database_, R"SQL(
+UPDATE worklogs SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ? AND deleted_at IS NULL
+)SQL");
+    statement.bind(1, actorId);
+    statement.bind(2, worklogId);
     statement.step();
     return sqlite3_changes(database_) > 0;
 }

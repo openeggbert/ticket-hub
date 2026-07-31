@@ -346,6 +346,40 @@ int main() {
                "markAllNotificationsRead is a no-op (returns false) once everything is already read");
     }
 
+    // --- Simplified worklogs: no own-vs-others permission split (D12/D13) ---
+    {
+        require(throwsForbidden([&] { tickets.addWorklog("WEB-1", "2026-07-30", 3600, std::nullopt, sam); }),
+               "a non-member cannot log work on another project's issue");
+
+        const auto samWorklog = tickets.addWorklog("TH-1", "2026-07-30", 3600, std::string("Sam's work"), sam);
+        require(samWorklog.timeSpentSeconds == 3600, "a TH member can log work on a TH issue");
+
+        // Unlike comments (D83's author-or-admin rule), any project member
+        // may edit or delete *anyone's* worklog -- D13 deliberately dropped
+        // the own-vs-others split.
+        const auto editedByAlex = tickets.editWorklog("TH-1", samWorklog.id, "2026-07-31", 7200,
+                                                       std::string("Edited by alex"), alex);
+        require(editedByAlex.has_value() && editedByAlex->timeSpentSeconds == 7200,
+               "a different project member can edit someone else's worklog (no own-vs-others split)");
+
+        require(throwsForbidden([&] { tickets.editWorklog("WEB-1", "00000000-0000-4000-8000-00000000dead", "2026-07-31", 100, std::nullopt, sam); }),
+               "the project-role check runs before the worklog lookup, so a non-member is still rejected "
+               "even for a worklog id that doesn't exist");
+
+        require(tickets.deleteWorklog("TH-1", samWorklog.id, alex),
+               "a different project member can delete someone else's worklog");
+        const auto worklogsAfterDelete = tickets.listWorklogs("TH-1", demo);
+        require(std::none_of(worklogsAfterDelete.begin(), worklogsAfterDelete.end(),
+                             [&](const auto& w) { return w.id == samWorklog.id; }),
+               "the deleted worklog no longer appears in the list");
+
+        require(!tickets.editWorklog("TH-1", "00000000-0000-4000-8000-00000000dead", "2026-07-30", 100, std::nullopt, demo)
+                   .has_value(),
+               "editing an unknown worklog returns nullopt rather than throwing");
+        require(!tickets.deleteWorklog("TH-1", "00000000-0000-4000-8000-00000000dead", demo),
+               "deleting an unknown worklog returns false rather than throwing");
+    }
+
     // --- User directory for @mention autocomplete (D80) ---
     {
         const auto users = tickets.listUsers(sam);
