@@ -1,5 +1,69 @@
 # Verification record
 
+## 2026-07-31 — Resolution picker and Epic/parent picker added to the demo UI
+
+Fixed two broken UI paths identified while planning the next batch of `web/` work: completing an issue
+via the drawer's status `<select>` always 422'd (no `resolution` was ever sent), and the create-issue
+modal had no field for `parentIssueKey` at all (and was even missing "Sub-task" from the issue-type
+list), so a Sub-task could never be created from the UI and a Story/Task/Bug could never be linked to an
+Epic from the UI.
+
+### What changed
+
+- `web/app.js`: `RESOLUTIONS` catalog and `resolutionLabel()`; `issueTypeHierarchyLevel()` (mirrors
+  `Domain::issueTypeHierarchyLevel` for client-side picker narrowing only -- the server remains the actual
+  source of truth); `applyStatusChange()` helper; `refreshCreateParentOptions()` which fetches the
+  selected project's issues and filters them by hierarchy level to populate the Epic/parent picker.
+- `web/index.html`: added `sub-task` to the create-issue-type `<select>`; added the Epic/parent `<select>`
+  (`#create-parent`), hidden/shown and relabeled based on the selected issue type.
+- `web/app.js` (drawer): the status `<select>`'s change handler now checks the target status's category;
+  for a Done-category target it reveals an inline resolution row (select + Confirm/Cancel) instead of
+  calling the API immediately; Confirm calls `applyStatusChange` with the chosen resolution. The drawer
+  also now displays the issue's resolution (once set, read-only) and its parent issue key (once linked,
+  clickable -- scoped with a dedicated `#drawer-parent-link` id and a single listener, deliberately
+  *not* reusing the page-wide `bindIssueLinks()` helper, which would have re-registered duplicate click
+  listeners on every background view element still mounted behind the drawer).
+- `web/styles.css`: small additions for the resolution `<select>` and its Confirm/Cancel button row.
+
+### A real bug caught during this batch's own browser testing
+
+The project (`#create-project`) and issue-type (`#create-issue-type`) `<select>` elements both trigger
+`refreshCreateParentOptions()` on `change`. A Playwright test that selected project then issue type in
+quick succession (`page.selectOption` twice with no wait between) produced a duplicated Epic entry in the
+picker -- two in-flight async calls interleaved: the first call's fetch resolved and appended options
+*after* the second call had already reset and re-populated the list. Fixed with a monotonically
+increasing request-id guard (`createParentRequestId`) that makes a call's `select.innerHTML +=` a no-op
+once a newer call has started, so only the most recent selection's results ever get applied. The fix was
+verified by re-running the same test and confirming exactly one option per matching issue.
+
+### Verification
+
+Standalone Playwright/Chromium scripts (same approach as the login-screen batch) against a locally running
+server, SQLite, demo-seeded:
+
+1. Selecting "Epic" as the issue type hides the Epic/parent picker entirely (an Epic cannot have a
+   parent, D64); created an Epic issue successfully.
+2. Selecting "Story" shows "Epic (optional)" and the picker's options include the just-created Epic
+   (exactly once, confirming the race-condition fix); created a Story with that Epic as parent; the
+   drawer showed a "Parent" row linking to the Epic; clicking it navigated to the Epic's own drawer.
+3. Selecting "Sub-task" shows "Parent (required)"; submitting without picking one produced the server's
+   exact validation message (`A sub-task must have a parent issue`) inline in the create-error banner,
+   confirming the client correctly defers to server-side validation rather than duplicating it.
+4. Created a fresh Task issue, then selected "Done" in the drawer's status picker: the resolution row was
+   hidden before the selection and visible after; picking "Fixed" and clicking Confirm applied the status
+   change with the resolution, which then displayed read-only in the drawer's Resolution row.
+5. Reopening that same issue (selecting a non-Done status) cleared the resolution (server-side, D68-D70)
+   and hid the resolution row again for that direction, with no picker shown (resolution is only required
+   moving *into* a Done-category status, never out of one).
+
+All checks passed after the request-id fix; no committed test files or screenshots (scratchpad only, per
+the established pattern from the login-screen batch).
+
+### What is still not built
+
+Full edit, links, clone, watch/vote, the issue recycle bin, bulk actions, reorder/move, and
+project-management UI still don't exist in `web/` -- see `NEXT.md`.
+
 ## 2026-07-31 — Minimal login screen added to the demo UI, verified with a real headless browser
 
 Added a login screen to `web/index.html`/`app.js`/`styles.css` (the "Immediate next step" identified in

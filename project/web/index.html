@@ -101,11 +101,12 @@
         </label>
         <label>
           Issue type
-          <select name="issueTypeKey">
+          <select name="issueTypeKey" id="create-issue-type">
             <option value="task">Task</option>
             <option value="story">Story</option>
             <option value="bug">Bug</option>
             <option value="epic">Epic</option>
+            <option value="sub-task">Sub-task</option>
           </select>
         </label>
         <label class="wide">
@@ -115,6 +116,10 @@
         <label class="wide">
           Description
           <textarea name="description" rows="6" placeholder="Add context, acceptance criteria, or reproduction steps"></textarea>
+        </label>
+        <label class="wide" id="create-parent-label">
+          <span id="create-parent-label-text">Epic</span>
+          <select name="parentIssueKey" id="create-parent"><option value="">None</option></select>
         </label>
         <label>
           Priority
