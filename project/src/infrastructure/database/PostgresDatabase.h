@@ -63,6 +63,11 @@ public:
                                const std::string& authorUserId) override;
     Domain::DashboardStats dashboardStats() override;
 
+    Domain::Issue reorderIssue(const std::string& issueKey, std::optional<std::string> beforeIssueKey) override;
+    Domain::Issue moveIssue(const std::string& issueKey,
+                            const std::string& targetProjectKey,
+                            const std::string& actorUserId) override;
+
     Domain::IssueLink createIssueLink(const std::string& sourceIssueKey,
                                       const std::string& targetIssueKey,
                                       const std::string& linkType) override;

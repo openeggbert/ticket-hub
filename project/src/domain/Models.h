@@ -260,6 +260,12 @@ struct Issue {
     std::string createdAt;
     std::string updatedAt;
     std::int64_t version{1};
+    // Simple integer manual order within its project (D31), replacing the
+    // never-used LexoRank-style string rank. New issues are appended
+    // (highest existing rankOrder + 1); TicketService::reorderIssue
+    // renumbers the issues between the old and new position by 1 each,
+    // rather than using fractional/string ranks.
+    std::int64_t rankOrder{0};
 };
 
 struct IssueFilter {

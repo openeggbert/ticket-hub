@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased — Phase 3 (complete at the core/CLI/test layer): manual ordering and moving issues between projects (reduced scope)
+
+- Added migration `007_ranking.sql` (both backends): drops the never-used `rank_value TEXT` LexoRank
+  placeholder (added in `003_product_foundation.sql`, safe to drop directly since it carried no
+  UNIQUE/CHECK/index/FK) and adds `rank_order INTEGER NOT NULL DEFAULT 0`, backfilled from
+  `issue_number`. This backfill only reaches rows that already exist at migration-apply time; the demo
+  seed (`002_seed_demo.sql`, applied separately from the checksummed migration flow since its filename
+  matches `discoverMigrationFiles`'s `_seed_` exclusion) now sets `rank_order` explicitly in its own
+  `INSERT` so seeded issues get a correct rank regardless of run order.
+- Added `IDatabase::reorderIssue` in both adapters (D31): a simple integer rank with a full renumbering
+  pass on every move (not a minimal-diff/fractional scheme) -- justified directly by D31's own "sufficient
+  for small per-project issue counts" rationale. Moves an issue to immediately before another issue in
+  the same project, or to the end of the project when no anchor is given; rejects an anchor in a
+  different project or the issue itself as the anchor with `std::invalid_argument`.
+- Added `IDatabase::moveIssue` in both adapters (D37): moves an issue to a different project. D37 needs
+  no compatibility check (every project shares the same fixed types/workflow/fields), so a move is just
+  a `project_id` change plus a freshly allocated key/number in the target project, exactly like creating
+  a new issue there. Rejected with `std::invalid_argument` if the issue has a parent, has any children,
+  is already in the target project, or the target project is unknown. The vacated key becomes a
+  permanent alias (D38) -- the first code path that actually writes to `issue_key_aliases`, which
+  previously existed only as an unused schema foundation -- and the move writes one `issue_history` row
+  (`field_name = 'project'`).
+- Added matching `TicketService::reorderIssue` (project-Member-or-above on the issue's own project) and
+  `TicketService::moveIssue` (project-Member-or-above on **both** the source and target projects,
+  mirroring `createIssueLink`'s two-project-role-check pattern).
+- Added `POST /api/issues/{key}/reorder` and `POST /api/issues/{key}/move` to `Api.cpp`, and `rankOrder`
+  to the issue JSON representation (**not yet compiled** -- see "Known verification limitation" in
+  `README.md`).
+- Extended `sqlite_integration_tests` (renumbering correctness on reorder-before-anchor and
+  reorder-to-end, cross-project and self-anchor rejection, move mechanics including the target project's
+  rank/counter, alias creation and resolution, `issue_history` write, and rejection of same-project moves,
+  unknown-project moves, and moves of an issue with a parent or with children) and
+  `authorization_integration_tests` (reorder/move authorization, including the "member of source but not
+  target project" case for move). Manually verified `reorderIssue` and `moveIssue` (through
+  `PostgresDatabase` directly) against a live local PostgreSQL 16 server.
+- This closes Phase 3's remaining core-layer scope; re-typing and re-parenting an issue after creation
+  remain deliberately out of scope (see `NEXT.md`).
+
 ## Unreleased — Phase 3 (partial, continued): issue recycle bin and bulk actions (reduced scope)
 
 - Added `IDatabase::softDeleteIssue`/`restoreIssue`/`listDeletedIssues`/`permanentlyDeleteIssue` in both

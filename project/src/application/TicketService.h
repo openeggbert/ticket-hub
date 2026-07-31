@@ -74,6 +74,22 @@ public:
     // hierarchy" in the sense the decision excludes.
     Domain::Issue cloneIssue(const std::string& issueKey, const Domain::Principal& actor);
 
+    // --- Manual ordering (Phase 3, D31) ---
+    // Requires project-Member-or-above on the issue's own project. A
+    // `beforeIssueKey` in a different project is rejected by the database
+    // layer with std::invalid_argument before any role check on it would be
+    // meaningful (reordering is always a single-project operation).
+    Domain::Issue reorderIssue(const std::string& issueKey,
+                               std::optional<std::string> beforeIssueKey,
+                               const Domain::Principal& actor);
+
+    // --- Move between projects (Phase 3, D37) ---
+    // Requires project-Member-or-above on both the source and target
+    // projects, mirroring createIssueLink's two-project-role-check pattern.
+    Domain::Issue moveIssue(const std::string& issueKey,
+                            const std::string& targetProjectKey,
+                            const Domain::Principal& actor);
+
     // --- Issue links (Phase 3, D17) ---
     // Both ends of a link must be project-Member-or-above for the actor,
     // since a link write touches two issues that may be in different

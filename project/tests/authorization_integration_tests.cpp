@@ -148,6 +148,28 @@ int main() {
                "a member of both linked projects (TH member, WEB admin) can delete the link");
     }
 
+    // --- Manual ordering and moving between projects respect the same fixed project roles (D31, D37) ---
+    {
+        require(throwsForbidden([&] { tickets.reorderIssue("WEB-1", std::nullopt, sam); }),
+               "non-member cannot reorder another project's issue");
+
+        const auto reordered = tickets.reorderIssue("TH-1", std::string("TH-2"), alex);
+        require(reordered.key == "TH-1", "a TH member can reorder a TH issue");
+
+        CreateIssueRequest moveTarget;
+        moveTarget.projectKey = "TH";
+        moveTarget.summary = "Move-authorization test issue";
+        const auto toMove = tickets.createIssue(moveTarget, demo);
+
+        require(throwsForbidden([&] { tickets.moveIssue(toMove.key, "WEB", sam); }),
+               "moving requires access to the target project; sam is not a WEB member");
+        require(throwsForbidden([&] { tickets.moveIssue("WEB-1", "TH", sam); }),
+               "moving also requires access to the source project");
+
+        const auto moved = tickets.moveIssue(toMove.key, "WEB", alex);
+        require(moved.projectKey == "WEB", "a member of both projects (TH member, WEB admin) can move an issue");
+    }
+
     // --- Watching and voting are self-service and require no project role (D20, D79) ---
     {
         // Sam is not a WEB member at all, unlike every other write tested

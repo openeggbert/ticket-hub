@@ -246,6 +246,37 @@ Domain::Issue TicketService::cloneIssue(const std::string& issueKey, const Domai
     return created;
 }
 
+Domain::Issue TicketService::reorderIssue(const std::string& issueKey,
+                                          std::optional<std::string> beforeIssueKey,
+                                          const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    if (beforeIssueKey.has_value() && !beforeIssueKey->empty()) {
+        beforeIssueKey = Domain::normalizeIssueKey(*beforeIssueKey);
+    } else {
+        beforeIssueKey = std::nullopt;
+    }
+    return database_->reorderIssue(normalizedKey, beforeIssueKey);
+}
+
+Domain::Issue TicketService::moveIssue(const std::string& issueKey,
+                                       const std::string& targetProjectKey,
+                                       const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const std::string normalizedTargetProjectKey = Domain::normalizeProjectKey(targetProjectKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, normalizedTargetProjectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    return database_->moveIssue(normalizedKey, normalizedTargetProjectKey, actor.userId);
+}
+
 Domain::IssueLink TicketService::createIssueLink(const std::string& sourceIssueKey,
                                                   const std::string& targetIssueKey,
                                                   const std::string& linkType,

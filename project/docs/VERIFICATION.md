@@ -1,5 +1,65 @@
 # Verification record
 
+## 2026-07-31 — Phase 3 complete at the core/CLI/test layer (manual ordering and moving between projects, reduced scope)
+
+Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
+libpq 16.14, and a live local PostgreSQL 16.14 server (restarted first, as in every prior batch this
+session; freshly created scratch database/role, dropped afterward).
+
+### Core configuration
+
+```bash
+cmake -S . -B build -DTICKETHUB_BUILD_SERVER=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel "$(nproc)"
+ctest --test-dir build --output-on-failure
+```
+
+New `IDatabase::reorderIssue`/`moveIssue` methods in both adapters, plus `TicketService::reorderIssue`/
+`moveIssue`, compiled cleanly. Also verified the SQLite-only (`-DTICKETHUB_WITH_POSTGRES=OFF`) and
+PostgreSQL-only (`-DTICKETHUB_WITH_SQLITE=OFF`) configurations build clean, both with
+`-DTICKETHUB_BUILD_SERVER=OFF`.
+
+A migration bug was caught during this batch and fixed before it reached a committed test failure: the
+`007_ranking.sql` backfill (`UPDATE issues SET rank_order = issue_number`) only reaches rows that exist at
+migration-apply time, but `002_seed_demo.sql` is applied through a separate, non-checksummed code path
+(`discoverMigrationFiles` excludes `_seed_` filenames from the ordered migration run) that in practice
+runs *after* `migrate()` completes -- so every seeded issue was getting the column's `DEFAULT 0` instead
+of a real rank. Fixed by setting `rank_order` explicitly in the seed `INSERT` (both backends) rather than
+relying on the migration backfill for seed data.
+
+### Passing tests (7/7 — same binaries, extended coverage)
+
+1. `ticket-hub-domain-tests`, `ticket-hub-migration-tests`, `ticket-hub-identity-tests`,
+   `ticket-hub-workflow-tests`, `ticket-hub-crypto-tests` — unchanged, all still passing.
+2. `ticket-hub-sqlite-integration-tests` — extended: reordering TH-3 before TH-1 renumbers the whole
+   project so TH-3 ranks lower than TH-1; reordering TH-3 with no anchor appends it to the end (ranks
+   higher than every other TH issue); reordering relative to an issue in a different project and
+   reordering an issue before itself are both rejected; moving TH-2 into WEB allocates `WEB-3`, appends
+   its rank after WEB's existing issues, and the vacated `TH-2` key resolves via `issue_key_aliases` back
+   to `WEB-3`, with one `issue_history` row (`field_name = 'project'`); moving to the issue's own project,
+   to an unknown project, an issue that has children, and an issue that has a parent are all rejected.
+3. `ticket-hub-authorization-tests` — extended: a non-member cannot reorder another project's issue; a TH
+   member can reorder a TH issue; moving an issue requires project-Member-or-above on **both** the source
+   and target projects -- a TH member who is not a WEB member is rejected moving either direction, while a
+   member of both (TH member, WEB admin) succeeds.
+
+### Additional verification beyond the automated suite
+
+- **Live PostgreSQL 16 server**: ran a standalone program (`pg_rank_move_smoke.cpp`, not committed)
+  against `PostgresDatabase` directly, covering the same renumbering, cross-project-anchor-rejection,
+  move/alias/history, same-project-rejection, and parent/children-rejection cases as the SQLite test. All
+  assertions passed. The scratch database and role were dropped after verification.
+- Both SQLite and PostgreSQL adapters, `ticket-hub-core`, `ticket-hub-cli`, and all seven test binaries
+  compile and link cleanly, including in the SQLite-only and PostgreSQL-only build configurations.
+
+### Environment limitations (unchanged)
+
+`src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) still
+could not be compiled -- outbound access to `github.com` remains blocked. The new
+`POST /api/issues/{key}/reorder` and `POST /api/issues/{key}/move` routes, and the new `rankOrder` field
+on the issue JSON representation, follow the same patterns as the already-unverified Phase 1-3 routes and
+carry the same caveat.
+
 ## 2026-07-31 — Phase 3, partial continued (issue recycle bin and bulk actions, reduced scope)
 
 Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,

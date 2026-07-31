@@ -7,6 +7,7 @@
 
 #include <libpq-fe.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
@@ -169,6 +170,7 @@ Domain::Issue readIssue(PGresult* result, int row) {
     issue.updatedAt = value(result, row, 30);
     issue.version = int64Value(result, row, 31);
     issue.resolution = optionalValue(result, row, 32);
+    issue.rankOrder = int64Value(result, row, 33);
     return issue;
 }
 
@@ -185,7 +187,7 @@ SELECT
     parent.issue_key,
     i.story_points, i.due_date::text,
     labels.names,
-    i.created_at::text, i.updated_at::text, i.version, i.resolution
+    i.created_at::text, i.updated_at::text, i.version, i.resolution, i.rank_order
 FROM issues i
 JOIN projects p ON p.id = i.project_id
 JOIN issue_types it ON it.id = i.issue_type_id
@@ -742,12 +744,22 @@ Domain::Issue PostgresDatabase::createIssue(const Domain::CreateIssueRequest& re
             parentId = lookupIssueId(connection.get(), *request.parentIssueKey);
         }
 
+        // Simple integer manual order (D31): new issues are appended after
+        // the highest existing rank within their project. The project row is
+        // already FOR-UPDATE-locked above, which serializes this alongside
+        // concurrent creates in the same project.
+        auto maxRank = execParams(connection.get(),
+                                  "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM issues WHERE project_id = $1 AND deleted_at IS NULL",
+                                  {projectId},
+                                  "Compute next rank order");
+        const std::int64_t rankOrder = int64Value(maxRank.get(), 0, 0);
+
         execParams(connection.get(), R"SQL(
 INSERT INTO issues(id, project_id, issue_number, issue_key, summary, description,
                    issue_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
-                   parent_issue_id, story_points, due_date, created_at, updated_at)
+                   parent_issue_id, story_points, due_date, rank_order, created_at, updated_at)
 VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
-        $12, $13::double precision, $14::date, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        $12, $13::double precision, $14::date, $15::bigint, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL",
                    {issueId,
                     projectId,
@@ -762,7 +774,8 @@ VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
                     assigneeId,
                     parentId,
                     request.storyPoints ? std::optional<std::string>(std::to_string(*request.storyPoints)) : std::nullopt,
-                    request.dueDate},
+                    request.dueDate,
+                    std::to_string(rankOrder)},
                    "Insert issue");
 
         for (const auto& labelName : request.labels) {
@@ -1013,6 +1026,175 @@ VALUES ($1, $2, $3, $4, $5, $6)
     } catch (...) {
         try {
             exec(connection.get(), "ROLLBACK", "Rollback edit issue transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+Domain::Issue PostgresDatabase::reorderIssue(const std::string& issueKey,
+                                             std::optional<std::string> beforeIssueKey) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin reorder issue transaction");
+    try {
+        const std::string issueId = lookupIssueId(connection.get(), issueKey);
+        auto projectRow = execParams(connection.get(),
+                                     "SELECT project_id FROM issues WHERE id = $1 FOR UPDATE",
+                                     {issueId},
+                                     "Lock issue for reorder");
+        const std::string projectId = value(projectRow.get(), 0, 0);
+
+        std::optional<std::string> beforeIssueId;
+        if (beforeIssueKey.has_value() && !beforeIssueKey->empty()) {
+            const std::string resolvedBeforeId = lookupIssueId(connection.get(), *beforeIssueKey);
+            if (resolvedBeforeId == issueId) {
+                throw std::invalid_argument("Cannot reorder an issue before itself");
+            }
+            auto beforeProjectRow = execParams(connection.get(),
+                                               "SELECT project_id FROM issues WHERE id = $1",
+                                               {resolvedBeforeId},
+                                               "Read reorder anchor project");
+            if (value(beforeProjectRow.get(), 0, 0) != projectId) {
+                throw std::invalid_argument("Cannot reorder relative to an issue in a different project");
+            }
+            beforeIssueId = resolvedBeforeId;
+        }
+
+        // Full renumbering pass (D31): sufficient for small per-project issue
+        // counts, and simpler than a minimal-diff fractional/shift scheme.
+        auto listResult = execParams(connection.get(),
+                                     "SELECT id FROM issues WHERE project_id = $1 AND deleted_at IS NULL ORDER BY rank_order, issue_number",
+                                     {projectId},
+                                     "List project issues for reorder");
+        std::vector<std::string> orderedIds;
+        orderedIds.reserve(static_cast<std::size_t>(PQntuples(listResult.get())));
+        for (int row = 0; row < PQntuples(listResult.get()); ++row) {
+            orderedIds.push_back(value(listResult.get(), row, 0));
+        }
+
+        orderedIds.erase(std::remove(orderedIds.begin(), orderedIds.end(), issueId), orderedIds.end());
+        if (beforeIssueId.has_value()) {
+            const auto position = std::find(orderedIds.begin(), orderedIds.end(), *beforeIssueId);
+            orderedIds.insert(position, issueId);
+        } else {
+            orderedIds.push_back(issueId);
+        }
+
+        for (std::size_t index = 0; index < orderedIds.size(); ++index) {
+            const std::int64_t newRank = static_cast<std::int64_t>(index) + 1;
+            execParams(connection.get(),
+                       "UPDATE issues SET rank_order = $1::bigint WHERE id = $2 AND rank_order <> $1::bigint",
+                       {std::to_string(newRank), orderedIds[index]},
+                       "Update issue rank order");
+        }
+
+        exec(connection.get(), "COMMIT", "Commit reorder issue transaction");
+        auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
+                                 {issueId}, "Read reordered issue");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Reordered issue could not be read back");
+        }
+        return readIssue(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback reorder issue transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+Domain::Issue PostgresDatabase::moveIssue(const std::string& issueKey,
+                                          const std::string& targetProjectKey,
+                                          const std::string& actorUserId) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin move issue transaction");
+    try {
+        const std::string issueId = lookupIssueId(connection.get(), issueKey);
+        auto current = execParams(connection.get(), R"SQL(
+SELECT i.project_id, p.project_key, i.issue_key, i.parent_issue_id
+FROM issues i JOIN projects p ON p.id = i.project_id
+WHERE i.id = $1
+FOR UPDATE OF i
+)SQL",
+                                  {issueId},
+                                  "Lock issue for move");
+        const std::string currentProjectId = value(current.get(), 0, 0);
+        const std::string currentProjectKey = value(current.get(), 0, 1);
+        const std::string currentIssueKey = value(current.get(), 0, 2);
+        const bool hasParent = PQgetisnull(current.get(), 0, 3) == 0;
+        if (hasParent) {
+            throw std::invalid_argument("Cannot move an issue that has a parent");
+        }
+
+        auto childCheck = execParams(connection.get(),
+                                     "SELECT COUNT(*) FROM issues WHERE parent_issue_id = $1 AND deleted_at IS NULL",
+                                     {issueId},
+                                     "Count child issues");
+        if (int64Value(childCheck.get(), 0, 0) > 0) {
+            throw std::invalid_argument("Cannot move an issue that has child issues");
+        }
+
+        auto project = execParams(connection.get(),
+                                  "SELECT id, next_issue_number FROM projects WHERE project_key = $1 AND archived = FALSE AND deleted_at IS NULL FOR UPDATE",
+                                  {targetProjectKey},
+                                  "Lock target project");
+        if (PQntuples(project.get()) != 1) {
+            throw std::invalid_argument("Unknown project: " + targetProjectKey);
+        }
+        const std::string targetProjectId = value(project.get(), 0, 0);
+        if (targetProjectId == currentProjectId) {
+            throw std::invalid_argument("Issue is already in project: " + targetProjectKey);
+        }
+        const std::int64_t issueNumber = int64Value(project.get(), 0, 1);
+        const std::string newIssueKey = targetProjectKey + "-" + std::to_string(issueNumber);
+
+        execParams(connection.get(),
+                   "UPDATE projects SET next_issue_number = next_issue_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                   {targetProjectId},
+                   "Increment target project issue counter");
+
+        // Append-at-end within the target project, same as createIssue (D31).
+        auto maxRank = execParams(connection.get(),
+                                  "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM issues WHERE project_id = $1 AND deleted_at IS NULL",
+                                  {targetProjectId},
+                                  "Compute next rank order for move");
+        const std::int64_t rankOrder = int64Value(maxRank.get(), 0, 0);
+
+        execParams(connection.get(), R"SQL(
+UPDATE issues
+SET project_id = $1, issue_number = $2::bigint, issue_key = $3, rank_order = $4::bigint, updated_at = CURRENT_TIMESTAMP
+WHERE id = $5
+)SQL",
+                   {targetProjectId, std::to_string(issueNumber), newIssueKey, std::to_string(rankOrder), issueId},
+                   "Update issue for move");
+
+        // The vacated key becomes a permanent alias (D38); safe because
+        // issue_key_aliases.alias_key is a PRIMARY KEY (no collision) and
+        // issue numbers/keys are never reused.
+        execParams(connection.get(),
+                   "INSERT INTO issue_key_aliases(alias_key, issue_id) VALUES ($1, $2)",
+                   {currentIssueKey, issueId},
+                   "Insert issue key alias");
+
+        const std::string actorId = requireUserId(connection.get(), actorUserId);
+        execParams(connection.get(), R"SQL(
+INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+VALUES ($1, $2, $3, 'project', $4, $5)
+)SQL",
+                   {Common::uuidV4(), issueId, actorId, currentProjectKey, targetProjectKey},
+                   "Insert move history");
+
+        exec(connection.get(), "COMMIT", "Commit move issue transaction");
+        auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
+                                 {issueId}, "Read moved issue");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Moved issue could not be read back");
+        }
+        return readIssue(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback move issue transaction");
         } catch (...) {
         }
         throw;
