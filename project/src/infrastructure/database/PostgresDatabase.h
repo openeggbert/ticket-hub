@@ -70,6 +70,13 @@ public:
     std::optional<Domain::IssueLinkDetail> findIssueLinkById(const std::string& linkId) override;
     bool deleteIssueLink(const std::string& linkId) override;
 
+    bool watchIssue(const std::string& issueKey, const std::string& userId) override;
+    bool unwatchIssue(const std::string& issueKey, const std::string& userId) override;
+    std::vector<Domain::UserSummary> listWatchers(const std::string& issueKey) override;
+    bool voteIssue(const std::string& issueKey, const std::string& userId) override;
+    bool unvoteIssue(const std::string& issueKey, const std::string& userId) override;
+    std::vector<Domain::UserSummary> listVoters(const std::string& issueKey) override;
+
 private:
     std::string connectionString_;
     std::string migrationsDirectory_;

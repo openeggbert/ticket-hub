@@ -1192,4 +1192,77 @@ bool PostgresDatabase::deleteIssueLink(const std::string& linkId) {
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
+namespace {
+// Shared by the two structurally-identical watch/vote tables (issue_watchers,
+// issue_votes: both (issue_id, user_id) composite-PK many-to-many tables with
+// no other columns worth reading back). `table` is always a fixed internal
+// literal, never caller input, matching the existing `lookupId` pattern.
+bool insertMembership(PGconn* connection, const char* table, const std::string& issueId, const std::string& userId) {
+    auto result = execParams(connection,
+                             std::string("INSERT INTO ") + table + "(issue_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                             {issueId, userId},
+                             std::string("Insert into ") + table);
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool deleteMembership(PGconn* connection, const char* table, const std::string& issueId, const std::string& userId) {
+    auto result = execParams(connection,
+                             std::string("DELETE FROM ") + table + " WHERE issue_id = $1 AND user_id = $2",
+                             {issueId, userId},
+                             std::string("Delete from ") + table);
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::vector<Domain::UserSummary> listMembers(PGconn* connection, const char* table, const std::string& issueId) {
+    auto result = execParams(connection,
+                             std::string("SELECT u.id, u.display_name, u.email FROM ") + table
+                                 + " t JOIN users u ON u.id = t.user_id WHERE t.issue_id = $1 ORDER BY u.display_name",
+                             {issueId},
+                             std::string("List ") + table);
+    std::vector<Domain::UserSummary> users;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        users.push_back(readUserSummary(result.get(), row, 0));
+    }
+    return users;
+}
+} // namespace
+
+bool PostgresDatabase::watchIssue(const std::string& issueKey, const std::string& userId) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    const std::string resolvedUserId = requireUserId(connection.get(), userId);
+    return insertMembership(connection.get(), "issue_watchers", issueId, resolvedUserId);
+}
+
+bool PostgresDatabase::unwatchIssue(const std::string& issueKey, const std::string& userId) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    return deleteMembership(connection.get(), "issue_watchers", issueId, userId);
+}
+
+std::vector<Domain::UserSummary> PostgresDatabase::listWatchers(const std::string& issueKey) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    return listMembers(connection.get(), "issue_watchers", issueId);
+}
+
+bool PostgresDatabase::voteIssue(const std::string& issueKey, const std::string& userId) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    const std::string resolvedUserId = requireUserId(connection.get(), userId);
+    return insertMembership(connection.get(), "issue_votes", issueId, resolvedUserId);
+}
+
+bool PostgresDatabase::unvoteIssue(const std::string& issueKey, const std::string& userId) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    return deleteMembership(connection.get(), "issue_votes", issueId, userId);
+}
+
+std::vector<Domain::UserSummary> PostgresDatabase::listVoters(const std::string& issueKey) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    return listMembers(connection.get(), "issue_votes", issueId);
+}
+
 } // namespace TicketHub::Infrastructure::Database

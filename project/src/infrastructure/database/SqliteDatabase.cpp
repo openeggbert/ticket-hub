@@ -1244,4 +1244,75 @@ bool SqliteDatabase::deleteIssueLink(const std::string& linkId) {
     return sqlite3_changes(database_) > 0;
 }
 
+namespace {
+// Shared by the two structurally-identical watch/vote tables (issue_watchers,
+// issue_votes: both (issue_id, user_id) composite-PK many-to-many tables with
+// no other columns worth reading back). `table` is always a fixed internal
+// literal, never caller input, matching the existing `lookupId` pattern.
+bool insertMembership(sqlite3* database, const char* table, const std::string& issueId, const std::string& userId) {
+    Statement statement(database, std::string("INSERT OR IGNORE INTO ") + table + "(issue_id, user_id) VALUES (?, ?)");
+    statement.bind(1, issueId);
+    statement.bind(2, userId);
+    statement.step();
+    return sqlite3_changes(database) > 0;
+}
+
+bool deleteMembership(sqlite3* database, const char* table, const std::string& issueId, const std::string& userId) {
+    Statement statement(database, std::string("DELETE FROM ") + table + " WHERE issue_id = ? AND user_id = ?");
+    statement.bind(1, issueId);
+    statement.bind(2, userId);
+    statement.step();
+    return sqlite3_changes(database) > 0;
+}
+
+std::vector<Domain::UserSummary> listMembers(sqlite3* database, const char* table, const std::string& issueId) {
+    Statement statement(database, std::string("SELECT u.id, u.display_name, u.email FROM ") + table
+        + " t JOIN users u ON u.id = t.user_id WHERE t.issue_id = ? ORDER BY u.display_name");
+    statement.bind(1, issueId);
+    std::vector<Domain::UserSummary> users;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        users.push_back(readUserSummary(statement.get(), 0));
+    }
+    return users;
+}
+} // namespace
+
+bool SqliteDatabase::watchIssue(const std::string& issueKey, const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+    const std::string resolvedUserId = requireUserId(database_, userId);
+    return insertMembership(database_, "issue_watchers", issueId, resolvedUserId);
+}
+
+bool SqliteDatabase::unwatchIssue(const std::string& issueKey, const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+    return deleteMembership(database_, "issue_watchers", issueId, userId);
+}
+
+std::vector<Domain::UserSummary> SqliteDatabase::listWatchers(const std::string& issueKey) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+    return listMembers(database_, "issue_watchers", issueId);
+}
+
+bool SqliteDatabase::voteIssue(const std::string& issueKey, const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+    const std::string resolvedUserId = requireUserId(database_, userId);
+    return insertMembership(database_, "issue_votes", issueId, resolvedUserId);
+}
+
+bool SqliteDatabase::unvoteIssue(const std::string& issueKey, const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+    return deleteMembership(database_, "issue_votes", issueId, userId);
+}
+
+std::vector<Domain::UserSummary> SqliteDatabase::listVoters(const std::string& issueKey) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+    return listMembers(database_, "issue_votes", issueId);
+}
+
 } // namespace TicketHub::Infrastructure::Database

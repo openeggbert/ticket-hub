@@ -272,6 +272,34 @@ bool TicketService::deleteIssueLink(const std::string& linkId, const Domain::Pri
     return database_->deleteIssueLink(linkId);
 }
 
+bool TicketService::watchIssue(const std::string& issueKey, const Domain::Principal& actor) {
+    return database_->watchIssue(Domain::normalizeIssueKey(issueKey), actor.userId);
+}
+
+bool TicketService::unwatchIssue(const std::string& issueKey, const Domain::Principal& actor) {
+    return database_->unwatchIssue(Domain::normalizeIssueKey(issueKey), actor.userId);
+}
+
+std::vector<Domain::UserSummary> TicketService::listWatchers(const std::string& issueKey,
+                                                              const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listWatchers(Domain::normalizeIssueKey(issueKey));
+}
+
+bool TicketService::voteIssue(const std::string& issueKey, const Domain::Principal& actor) {
+    return database_->voteIssue(Domain::normalizeIssueKey(issueKey), actor.userId);
+}
+
+bool TicketService::unvoteIssue(const std::string& issueKey, const Domain::Principal& actor) {
+    return database_->unvoteIssue(Domain::normalizeIssueKey(issueKey), actor.userId);
+}
+
+std::vector<Domain::UserSummary> TicketService::listVoters(const std::string& issueKey,
+                                                            const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listVoters(Domain::normalizeIssueKey(issueKey));
+}
+
 Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
     return database_->dashboardStats();

@@ -54,6 +54,13 @@ anything from the removed/deferred list without an explicit new product conversa
   `createIssue` + the new `createIssueLink` (summary/description/type/priority/labels copied, an
   automatic `clones` link created; assignee/story points/due date/attachments/sub-tasks/other links not
   copied; a cloned Sub-task keeps its original parent since it cannot exist without one).
+- **Phase 3, partial continued (watchers and voting), this batch:** migration `006_collaboration.sql`
+  adds `issue_watchers`/`issue_votes` (both backends). `IDatabase::watchIssue`/`unwatchIssue`/
+  `listWatchers` and `voteIssue`/`unvoteIssue`/`listVoters` (D20, D79) in both adapters, and matching
+  `TicketService` methods -- deliberately with **no project-role check**, the one exception among issue
+  writes, since watch/vote are self-referential and Jira itself gates them by "browse" access rather
+  than a write-capable role; any authenticated user may watch/vote on any issue. Idempotent: watching
+  twice (or unwatching a non-watch) is a no-op, reported via the return value rather than an error.
 - Tested: `ctest --output-on-failure` is 7/7 green (`domain`, `migration`, `sqlite-integration`,
   `identity`, `authorization`, `workflow`, `crypto`) on SQLite, in all three build configurations (full,
   SQLite-only, PostgreSQL-only). Every Phase 2/3 core-layer addition was additionally verified manually
@@ -63,15 +70,17 @@ anything from the removed/deferred list without an explicit new product conversa
   Phase 1's `/api/auth/login|logout|me` and session-cookie/CSRF protection, Phase 2's project CRUD
   routes and every read route resolving an optional `Principal`, Phase 3's `parentIssueKey` on issue
   creation, `resolution` on status changes, `Domain::WorkflowViolation` mapped to HTTP 422, the
-  `PATCH /api/issues/{key}` full-edit route, and the new `POST /api/issues/{key}/clone`,
-  `GET`/`POST /api/issues/{key}/links`, and `DELETE /api/issue-links/{id}` routes. While adding the edit
-  route (prior batch), fixed a real bug found by inspection: three existing routes (`POST /api/issues`,
-  `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments`) were missing a
-  `catch (const Domain::Forbidden&)` handler, so a project-role authorization failure would have fallen
-  through to the generic 500 handler instead of 403. **None of `Api.cpp` has been compiled** — Crow is
-  unavailable in this sandbox (network to `github.com` blocked). See "Known verification limitation"
-  below; this is still the actual next thing to close out, now covering three phases' worth of route
-  changes.
+  `PATCH /api/issues/{key}` full-edit route, `POST /api/issues/{key}/clone`,
+  `GET`/`POST /api/issues/{key}/links`, `DELETE /api/issue-links/{id}`, and the new
+  `POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
+  `POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters` routes. While adding the edit
+  route (an earlier batch), fixed a real bug found by inspection: three existing routes
+  (`POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments`) were missing
+  a `catch (const Domain::Forbidden&)` handler, so a project-role authorization failure would have
+  fallen through to the generic 500 handler instead of 403. **None of `Api.cpp` has been compiled** —
+  Crow is unavailable in this sandbox (network to `github.com` blocked). See "Known verification
+  limitation" below; this is still the actual next thing to close out, now covering three phases' worth
+  of route changes.
 
 ## Immediate next step: verify the server target
 
@@ -100,7 +109,10 @@ for the same environment reason, not skipped:
    `linkType` (expect 400), with a target in a project the actor cannot access (expect 403), and with a
    valid same-accessible-project target (expect 201); `GET /api/issues/{key}/links` on both ends of the
    new link; `DELETE /api/issue-links/{id}` as a non-member of either project (expect 403) and as a
-   member of both (expect 200).
+   member of both (expect 200); `POST /api/issues/{key}/watch` and `POST /api/issues/{key}/vote` as a
+   non-member of the issue's project (expect 200, not 403 -- confirming the deliberate no-project-role
+   exception actually holds through the real HTTP layer) and confirm `GET .../watchers`/`.../voters`
+   reflect it.
 5. Add a minimal login page (and, ideally, project-management and hierarchy/resolution UI) to `web/`
    (there isn't one yet) so the demo UI can actually authenticate and exercise the newer routes instead
    of hitting 401s/blank forms once the session check is live.
@@ -112,7 +124,6 @@ Phase 3 is only partially done. Still open, in `docs/REDUCED_SCOPE_ROADMAP.md`'s
 
 - Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation --
   `TicketService::editIssue` deliberately does not touch either field yet.
-- Self-only watchers (D20) and voting (D79) — no schema yet for either.
 - Simple bulk actions (D36: multi-select + one action + confirm) and always-allowed project moves (D37).
 - The integer rank/renumber migration (D31), which needs a **new** migration (not an edit to
   `003_product_foundation.sql`, which is already applied and immutable) to introduce the real ordering

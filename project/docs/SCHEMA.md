@@ -19,6 +19,8 @@ Current schema migrations:
   `REDUCED_SCOPE_ROADMAP.md`). Adds the `installation_settings` key/value table; no column changes to
   existing tables (`project_members.role_key` and the `archived`/`deleted_at` columns on `projects`
   already existed).
+- `006_collaboration.sql` — self-service watchers and voting (Phase 3 of `REDUCED_SCOPE_ROADMAP.md`,
+  D20/D79). Adds `issue_watchers` and `issue_votes`.
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users.
 
@@ -171,6 +173,19 @@ rejects an exact-duplicate `(source, target, linkType)` triple; `TicketService::
 additionally requires project-Member-or-above on **both** issues' projects, since a link write touches
 two issues that may be in different projects. `TicketService::cloneIssue` (D60) creates one automatically
 (`clones`, clone -> original) whenever an issue is cloned.
+
+### `issue_watchers` and `issue_votes`
+
+Both: `issue_id`, `user_id`, `created_at`; composite PK `(issue_id, user_id)`; `ON DELETE CASCADE` on
+both foreign keys. Structurally identical -- no other columns, since D20/D79 keep both features to
+exactly "who is watching/voting", with no priority-change side effect from votes and no
+authorized-user-manages-others-watchers flow. `TicketService::watchIssue`/`voteIssue` and their
+`unwatch`/`unvote` counterparts are the entire write surface, and deliberately have **no project-role
+check** -- unlike every other issue write, only project-Member-or-above -- since Jira itself gates
+watch/vote by "browse" access rather than a write-capable role, and this reduced model's closest
+equivalent is simply being an authenticated user (D58). `watchIssue`/`voteIssue` return `true` only when
+the row was newly inserted (idempotent on a repeat call); `unwatchIssue`/`unvoteIssue` return `true` only
+when a row was actually removed.
 
 ### `attachments`
 
