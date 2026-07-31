@@ -38,6 +38,11 @@ Implemented now:
 - **full-replacement issue edit with optimistic locking** (D129): summary, description, priority,
   assignee, story points, due date and labels, sharing the same `expectedVersion`/409 contract as status
   changes, with one `issue_history` row per field that actually changed,
+- **the fixed issue-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
+  both linked issues with the correct outward/inward label; creating or deleting a link requires access
+  to both projects,
+- **simple field-copy cloning** (D60): summary/description/type/priority/labels copied into a new issue,
+  with an automatic `clones` link back to the original,
 - every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
@@ -204,6 +209,10 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `PATCH` | `/api/issues/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
 | `GET` | `/api/issues/{key}/comments` | session, or anon if enabled | live comments |
 | `POST` | `/api/issues/{key}/comments` | session + CSRF, project member | add comment |
+| `POST` | `/api/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
+| `GET` | `/api/issues/{key}/links` | session, or anon if enabled | links from both ends |
+| `POST` | `/api/issues/{key}/links` | session + CSRF, member of both projects | `{targetIssueKey, linkType}` |
+| `DELETE` | `/api/issue-links/{id}` | session + CSRF, member of both projects | remove a link |
 
 `PATCH /api/issues/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
 priorityKey, assigneeEmail?, storyPoints?, dueDate?, labels?, expectedVersion?}`. Every editable field
@@ -219,6 +228,10 @@ still has an unfinished sub-task -- returns HTTP 422. `parentIssueKey` on issue 
 against the fixed Epic/Sub-task hierarchy (a Sub-task requires a same-project Story/Task/Bug parent, an
 Epic may not have one, a Story/Task/Bug's optional parent must be a same-project Epic); a violation
 returns HTTP 400, same as any other invalid request field.
+
+`linkType` on `POST /api/issues/{key}/links` must be one of the fixed catalog (`blocks`, `relates_to`,
+`duplicates`, `clones`); there is no admin-configurable link-type list. Both the source and target
+issue's projects must be accessible to the actor (project-Member-or-above), not just the source's.
 
 Session-authenticated writes require the `X-CSRF-Token` header to match the readable `th_csrf` cookie
 set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has not been compiled in any
@@ -241,37 +254,42 @@ What **was** compiled and tested in this environment, with all warnings enabled
 
 - `ticket-hub-core` (domain, application, infrastructure/database — including the identity/session code,
   fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
-  hierarchy/workflow rules, and full-replacement issue edit, in both database adapters),
+  hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, and simple
+  cloning, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
-  `sqlite_integration_tests` (now including `editIssue`: every field, label replacement, assignee
-  clearing, the stale-version conflict, and one `issue_history` row per changed field),
-  `identity_integration_tests` (create-user, login success/failure, generic-error anti-enumeration check,
-  minimal lockout, session validate/expire/logout), `authorization_integration_tests` (project-role
-  gating on issue writes and edits, not-found semantics under authorization, the anonymous-read-access
-  toggle, and the full project lifecycle: create/archive/soft-delete/restore/permanently-delete, each
-  checked against both the project-admin and global-administrator authorization paths),
-  `workflow_integration_tests` (every Epic/Sub-task hierarchy rejection case, resolution
-  required/rejected-if-unknown on completion, resolution cleared on reopen, the sub-task-completion gate
-  blocking and then permitting a parent's completion, and reopening a parent leaving its sub-task's
-  status untouched), and `crypto_tests` — all passing.
+  `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the
+  stale-version conflict, one `issue_history` row per changed field; issue links: create, list from both
+  ends, duplicate/self-link rejection, find-by-id, delete), `identity_integration_tests` (create-user,
+  login success/failure, generic-error anti-enumeration check, minimal lockout, session
+  validate/expire/logout), `authorization_integration_tests` (project-role gating on issue writes/edits/
+  cloning/links, not-found semantics under authorization, the anonymous-read-access toggle, and the full
+  project lifecycle: create/archive/soft-delete/restore/permanently-delete, each checked against both the
+  project-admin and global-administrator authorization paths), `workflow_integration_tests` (every
+  Epic/Sub-task hierarchy rejection case, resolution required/rejected-if-unknown on completion,
+  resolution cleared on reopen, the sub-task-completion gate, reopening leaving a sub-task's status
+  untouched, clone field-copy correctness, the sub-task-parent-retention special case, and basic link
+  lifecycle), and `crypto_tests` — all passing.
 - Additionally, migrations, seed data, `create-user`, and a full login → validate-session → logout cycle
   were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite) in
   Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code
   (`createProject`, `setProjectArchived`, `softDeleteProject`, `listDeletedProjects`, `restoreProject`,
-  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it again, first for
-  `createIssue` (with `parentIssueKey`) and `changeIssueStatus` (with `resolution`, the sub-task gate,
-  and the reopen-clears-resolution rule), then again for `editIssue` (every field, label replacement,
-  assignee clearing, the stale-version conflict, and editing an unknown issue) — all passing.
+  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it again three times, for
+  `createIssue`/`changeIssueStatus` (hierarchy, resolution, sub-task gate), `editIssue` (every field,
+  label replacement, assignee clearing, stale-version conflict), and issue links/cloning (create/list/
+  duplicate-and-self-link rejection/find/delete, plus `cloneIssue` including the sub-task special case)
+  — all passing.
 
 What was **not** compiled or tested: `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the
 `ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, the Phase 2 project-CRUD and
-anonymous-read-toggle routes, and the Phase 3 `parentIssueKey`/`resolution` request fields, the new
-`PATCH /api/issues/{key}` full-edit route, and the HTTP 422 mapping for `Domain::WorkflowViolation`,
-follow the exact patterns already used by the surrounding (previously-verified) route handlers, but none
-of it has been built or exercised against a real HTTP client. (While adding the edit route, three
-existing routes -- `POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST
-/api/issues/{key}/comments` -- were found to be missing a `catch (const Domain::Forbidden&)` handler,
+anonymous-read-toggle routes, the Phase 3 `parentIssueKey`/`resolution` request fields, the
+`PATCH /api/issues/{key}` full-edit route, the HTTP 422 mapping for `Domain::WorkflowViolation`, and the
+new `POST /api/issues/{key}/clone`, `GET`/`POST /api/issues/{key}/links`, and
+`DELETE /api/issue-links/{id}` routes, follow the exact patterns already used by the surrounding
+(previously-verified) route handlers, but none of it has been built or exercised against a real HTTP
+client. (While adding the edit route, three existing routes -- `POST /api/issues`,
+`PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments` -- were found to be missing a
+`catch (const Domain::Forbidden&)` handler,
 which would have surfaced a project-role authorization failure as HTTP 500 instead of 403; fixed
 alongside the new route, still equally unverified.) Build and smoke-test the server target in an
 environment with network access to `github.com` (or a preinstalled Crow package) before trusting it in

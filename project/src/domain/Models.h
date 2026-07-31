@@ -149,6 +149,63 @@ inline bool isValidResolution(const std::string& resolutionKey) {
         || resolutionKey == ResolutionCannotReproduce;
 }
 
+// Fixed issue-link catalog (D17): a larger built-in set instead of
+// admin-configurable link types. `clones`/`is cloned by` is also the link
+// TicketService::cloneIssue creates automatically (D60).
+constexpr const char* LinkTypeBlocks = "blocks";
+constexpr const char* LinkTypeRelatesTo = "relates_to";
+constexpr const char* LinkTypeDuplicates = "duplicates";
+constexpr const char* LinkTypeClones = "clones";
+
+inline bool isValidLinkType(const std::string& linkType) {
+    return linkType == LinkTypeBlocks || linkType == LinkTypeRelatesTo
+        || linkType == LinkTypeDuplicates || linkType == LinkTypeClones;
+}
+
+// A link is stored as one directed row (source "blocks" target), but is
+// meaningful read from either end -- `outward` says which label applies to
+// the issue this label pair is being shown on. `relates_to` is symmetric by
+// convention (same label either way), matching Jira's own behavior.
+struct LinkTypeLabels {
+    std::string outward;
+    std::string inward;
+};
+
+inline LinkTypeLabels linkTypeLabels(const std::string& linkType) {
+    if (linkType == LinkTypeBlocks) {
+        return {"blocks", "is blocked by"};
+    }
+    if (linkType == LinkTypeDuplicates) {
+        return {"duplicates", "is duplicated by"};
+    }
+    if (linkType == LinkTypeClones) {
+        return {"clones", "is cloned by"};
+    }
+    return {"relates to", "relates to"};
+}
+
+// One link as seen from a specific issue (the one `listIssueLinks` was
+// called with) -- `outward` is true when that issue is the link's source.
+struct IssueLink {
+    std::string id;
+    std::string linkType;
+    bool outward{true};
+    std::string otherIssueKey;
+    std::string otherIssueSummary;
+};
+
+// A link with both ends resolved to their project, for authorization checks
+// that must confirm the actor has access to both sides before creating or
+// deleting a link (a link write is not scoped to a single project).
+struct IssueLinkDetail {
+    std::string id;
+    std::string linkType;
+    std::string sourceIssueKey;
+    std::string sourceProjectKey;
+    std::string targetIssueKey;
+    std::string targetProjectKey;
+};
+
 struct Status {
     std::string key;
     std::string name;

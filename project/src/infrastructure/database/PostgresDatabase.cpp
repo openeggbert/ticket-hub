@@ -1097,4 +1097,99 @@ WHERE i.deleted_at IS NULL
     return stats;
 }
 
+Domain::IssueLink PostgresDatabase::createIssueLink(const std::string& sourceIssueKey,
+                                                    const std::string& targetIssueKey,
+                                                    const std::string& linkType) {
+    auto connection = connect(connectionString_);
+    const std::string sourceId = lookupIssueId(connection.get(), sourceIssueKey);
+    const std::string targetId = lookupIssueId(connection.get(), targetIssueKey);
+
+    auto duplicate = execParams(connection.get(),
+        "SELECT 1 FROM issue_links WHERE source_issue_id = $1 AND target_issue_id = $2 AND link_type = $3",
+        {sourceId, targetId, linkType},
+        "Check duplicate issue link");
+    if (PQntuples(duplicate.get()) != 0) {
+        throw std::invalid_argument("That link already exists");
+    }
+
+    const std::string linkId = Common::uuidV4();
+    execParams(connection.get(),
+               "INSERT INTO issue_links(id, source_issue_id, target_issue_id, link_type) VALUES ($1, $2, $3, $4)",
+               {linkId, sourceId, targetId, linkType},
+               "Insert issue link");
+
+    Domain::IssueLink link;
+    link.id = linkId;
+    link.linkType = linkType;
+    link.outward = true;
+
+    auto targetRow = execParams(connection.get(), "SELECT issue_key, summary FROM issues WHERE id = $1",
+                                {targetId}, "Read linked issue");
+    if (PQntuples(targetRow.get()) == 1) {
+        link.otherIssueKey = value(targetRow.get(), 0, 0);
+        link.otherIssueSummary = value(targetRow.get(), 0, 1);
+    }
+    return link;
+}
+
+std::vector<Domain::IssueLink> PostgresDatabase::listIssueLinks(const std::string& issueKey) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+
+    auto result = execParams(connection.get(), R"SQL(
+SELECT l.id, l.link_type, TRUE AS outward, tgt.issue_key, tgt.summary
+FROM issue_links l JOIN issues tgt ON tgt.id = l.target_issue_id
+WHERE l.source_issue_id = $1 AND tgt.deleted_at IS NULL
+UNION ALL
+SELECT l.id, l.link_type, FALSE AS outward, src.issue_key, src.summary
+FROM issue_links l JOIN issues src ON src.id = l.source_issue_id
+WHERE l.target_issue_id = $1 AND src.deleted_at IS NULL
+)SQL",
+                             {issueId},
+                             "List issue links");
+    std::vector<Domain::IssueLink> links;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        Domain::IssueLink link;
+        link.id = value(result.get(), row, 0);
+        link.linkType = value(result.get(), row, 1);
+        link.outward = boolValue(result.get(), row, 2);
+        link.otherIssueKey = value(result.get(), row, 3);
+        link.otherIssueSummary = value(result.get(), row, 4);
+        links.push_back(std::move(link));
+    }
+    return links;
+}
+
+std::optional<Domain::IssueLinkDetail> PostgresDatabase::findIssueLinkById(const std::string& linkId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT l.id, l.link_type, src.issue_key, srcProj.project_key, tgt.issue_key, tgtProj.project_key
+FROM issue_links l
+JOIN issues src ON src.id = l.source_issue_id
+JOIN projects srcProj ON srcProj.id = src.project_id
+JOIN issues tgt ON tgt.id = l.target_issue_id
+JOIN projects tgtProj ON tgtProj.id = tgt.project_id
+WHERE l.id = $1
+)SQL",
+                             {linkId},
+                             "Find issue link");
+    if (PQntuples(result.get()) != 1) {
+        return std::nullopt;
+    }
+    Domain::IssueLinkDetail detail;
+    detail.id = value(result.get(), 0, 0);
+    detail.linkType = value(result.get(), 0, 1);
+    detail.sourceIssueKey = value(result.get(), 0, 2);
+    detail.sourceProjectKey = value(result.get(), 0, 3);
+    detail.targetIssueKey = value(result.get(), 0, 4);
+    detail.targetProjectKey = value(result.get(), 0, 5);
+    return detail;
+}
+
+bool PostgresDatabase::deleteIssueLink(const std::string& linkId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "DELETE FROM issue_links WHERE id = $1", {linkId}, "Delete issue link");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
 } // namespace TicketHub::Infrastructure::Database

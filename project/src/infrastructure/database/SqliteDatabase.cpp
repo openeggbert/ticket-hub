@@ -1144,4 +1144,104 @@ WHERE i.deleted_at IS NULL
     return stats;
 }
 
+Domain::IssueLink SqliteDatabase::createIssueLink(const std::string& sourceIssueKey,
+                                                  const std::string& targetIssueKey,
+                                                  const std::string& linkType) {
+    std::scoped_lock lock(mutex_);
+    const std::string sourceId = lookupIssueId(database_, sourceIssueKey);
+    const std::string targetId = lookupIssueId(database_, targetIssueKey);
+
+    Statement duplicate(database_,
+        "SELECT 1 FROM issue_links WHERE source_issue_id = ? AND target_issue_id = ? AND link_type = ?");
+    duplicate.bind(1, sourceId);
+    duplicate.bind(2, targetId);
+    duplicate.bind(3, linkType);
+    if (duplicate.step() == SQLITE_ROW) {
+        throw std::invalid_argument("That link already exists");
+    }
+
+    const std::string linkId = Common::uuidV4();
+    Statement insert(database_, R"SQL(
+INSERT INTO issue_links(id, source_issue_id, target_issue_id, link_type) VALUES (?, ?, ?, ?)
+)SQL");
+    insert.bind(1, linkId);
+    insert.bind(2, sourceId);
+    insert.bind(3, targetId);
+    insert.bind(4, linkType);
+    expectDone(database_, insert, "Insert issue link");
+
+    Domain::IssueLink link;
+    link.id = linkId;
+    link.linkType = linkType;
+    link.outward = true;
+
+    Statement targetRow(database_, "SELECT issue_key, summary FROM issues WHERE id = ?");
+    targetRow.bind(1, targetId);
+    if (targetRow.step() == SQLITE_ROW) {
+        link.otherIssueKey = text(targetRow.get(), 0);
+        link.otherIssueSummary = text(targetRow.get(), 1);
+    }
+    return link;
+}
+
+std::vector<Domain::IssueLink> SqliteDatabase::listIssueLinks(const std::string& issueKey) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+
+    Statement statement(database_, R"SQL(
+SELECT l.id, l.link_type, 1 AS outward, tgt.issue_key, tgt.summary
+FROM issue_links l JOIN issues tgt ON tgt.id = l.target_issue_id
+WHERE l.source_issue_id = ?1 AND tgt.deleted_at IS NULL
+UNION ALL
+SELECT l.id, l.link_type, 0 AS outward, src.issue_key, src.summary
+FROM issue_links l JOIN issues src ON src.id = l.source_issue_id
+WHERE l.target_issue_id = ?1 AND src.deleted_at IS NULL
+)SQL");
+    statement.bind(1, issueId);
+    std::vector<Domain::IssueLink> links;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        Domain::IssueLink link;
+        link.id = text(statement.get(), 0);
+        link.linkType = text(statement.get(), 1);
+        link.outward = sqlite3_column_int(statement.get(), 2) != 0;
+        link.otherIssueKey = text(statement.get(), 3);
+        link.otherIssueSummary = text(statement.get(), 4);
+        links.push_back(std::move(link));
+    }
+    return links;
+}
+
+std::optional<Domain::IssueLinkDetail> SqliteDatabase::findIssueLinkById(const std::string& linkId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT l.id, l.link_type, src.issue_key, srcProj.project_key, tgt.issue_key, tgtProj.project_key
+FROM issue_links l
+JOIN issues src ON src.id = l.source_issue_id
+JOIN projects srcProj ON srcProj.id = src.project_id
+JOIN issues tgt ON tgt.id = l.target_issue_id
+JOIN projects tgtProj ON tgtProj.id = tgt.project_id
+WHERE l.id = ?
+)SQL");
+    statement.bind(1, linkId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    Domain::IssueLinkDetail detail;
+    detail.id = text(statement.get(), 0);
+    detail.linkType = text(statement.get(), 1);
+    detail.sourceIssueKey = text(statement.get(), 2);
+    detail.sourceProjectKey = text(statement.get(), 3);
+    detail.targetIssueKey = text(statement.get(), 4);
+    detail.targetProjectKey = text(statement.get(), 5);
+    return detail;
+}
+
+bool SqliteDatabase::deleteIssueLink(const std::string& linkId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "DELETE FROM issue_links WHERE id = ?");
+    statement.bind(1, linkId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
 } // namespace TicketHub::Infrastructure::Database

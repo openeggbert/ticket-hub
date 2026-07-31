@@ -109,6 +109,14 @@ Ordinary list, detail and dashboard queries exclude deleted issues. Status chang
 contract as `changeIssueStatus`. It does not touch `issue_type_id` or `parent_issue_id` -- re-typing or
 re-parenting an issue after creation is not yet implemented.
 
+`TicketService::cloneIssue` (D60, Phase 3) copies `summary`/`description`/`issue_type_id`/`priority_id`/
+labels into a new issue in the same project via the existing `createIssue` path (so the new issue gets a
+fresh key, hierarchy validation, etc. for free), then records a `clones` link back to the original. It
+does **not** copy assignee, story points, due date, attachments, sub-tasks, or other links -- and does
+not copy the parent/Epic link either, with one structural exception: cloning a Sub-task keeps its
+original `parent_issue_id`, since a Sub-task cannot exist without one (D64) and dropping it would create
+an invalid issue, not merely an incomplete copy.
+
 `parent_issue_id` now has application-layer meaning (Phase 3): `TicketService::createIssue` rejects a
 request that violates the fixed hierarchy (a Sub-task without a parent, a parent of the wrong type, or a
 parent in a different project) with `std::invalid_argument` before the row is ever inserted.
@@ -150,7 +158,19 @@ row. The target replaces these display-oriented strings with fully typed structu
 
 ### `issue_links`
 
-`id`, source issue, target issue, link type string, created time. A configurable link-type catalog is not yet implemented.
+`id`, `source_issue_id`, `target_issue_id`, `link_type`, `created_at`; `CHECK (source_issue_id <>
+target_issue_id)`.
+
+The fixed link-type catalog (D17, Phase 3) is enforced at the application layer, not by a database
+CHECK/enum: `Domain::isValidLinkType` accepts exactly `blocks`, `relates_to`, `duplicates`, `clones` --
+there is no admin-configurable catalog. A link is one directed row but is meaningful from either end;
+`IDatabase::listIssueLinks(issueKey)` returns it from both the source's ("outward", label e.g.
+`blocks`) and the target's ("inward", label e.g. `is blocked by`) perspective via
+`Domain::linkTypeLabels`. `relates_to` uses the same label both ways. `IDatabase::createIssueLink`
+rejects an exact-duplicate `(source, target, linkType)` triple; `TicketService::createIssueLink`
+additionally requires project-Member-or-above on **both** issues' projects, since a link write touches
+two issues that may be in different projects. `TicketService::cloneIssue` (D60) creates one automatically
+(`clones`, clone -> original) whenever an issue is cloned.
 
 ### `attachments`
 

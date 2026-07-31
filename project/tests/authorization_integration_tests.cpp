@@ -130,6 +130,24 @@ int main() {
                "editing an unknown issue returns nullopt rather than throwing");
     }
 
+    // --- Cloning and issue links respect the same fixed project roles (D3, D17, D60) ---
+    {
+        require(throwsForbidden([&] { tickets.cloneIssue("WEB-1", sam); }),
+               "non-member cannot clone another project's issue");
+        const auto webClone = tickets.cloneIssue("WEB-1", alex);
+        require(webClone.projectKey == "WEB", "a project admin can clone a project issue");
+
+        require(throwsForbidden([&] {
+            tickets.createIssueLink("TH-1", "WEB-1", TicketHub::Domain::LinkTypeRelatesTo, sam);
+        }), "linking requires access to both projects, even when the source project is accessible");
+
+        const auto link = tickets.createIssueLink("TH-1", "WEB-1", TicketHub::Domain::LinkTypeRelatesTo, demo);
+        require(throwsForbidden([&] { tickets.deleteIssueLink(link.id, sam); }),
+               "non-member of either linked project cannot delete the link");
+        require(tickets.deleteIssueLink(link.id, alex),
+               "a member of both linked projects (TH member, WEB admin) can delete the link");
+    }
+
     // --- Anonymous read-access toggle (D59, off by default) ---
     {
         const std::optional<Principal> anonymous = std::nullopt;
