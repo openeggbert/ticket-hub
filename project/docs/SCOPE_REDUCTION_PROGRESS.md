@@ -20,11 +20,11 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 130 / 142
-- Decisions remaining: 12
+- Decisions completed: 137 / 142
+- Decisions remaining: 5
 - KEEP_FOR_V1: 23
-- SIMPLIFY_FOR_V1: 47
-- DEFER_AFTER_V1: 35
+- SIMPLIFY_FOR_V1: 51
+- DEFER_AFTER_V1: 38
 - REMOVE_COMPLETELY: 7
 - ARCHITECTURE_ONLY: 0
 - ALREADY_IMPLEMENTED_AND_KEEP: 18
@@ -165,13 +165,13 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 127 | REST API versioning | Major version in URL (/api/v1); backward-compatible evolution; /api/v2 with deprecation period for breaking changes | Use /api/v1 prefix now; formal deprecation policy deferred until a real /api/v2 is needed | KEEP_FOR_V1 | URL prefix is trivial to add; formal versioning process only matters once a v2 actually exists | 0-2h | DONE |
 | 128 | REST write idempotency keys | Required for high-risk operations (issue/comment/worklog creation, bulk changes, imports); optional for simpler updates | No idempotency-key mechanism in V1; accept small risk of duplicate records on client retries | DEFER_AFTER_V1 | Import use case already removed; lower priority for a small internal tracker with direct UI/PAT access | 8-12h | DONE |
 | 129 | Concurrent issue editing | Optimistic locking with version; stale writes fail (409); UI shows conflicting changes and allows reload/reapply | Keep full behavior: server-side version conflict rejection (already partly done) plus UI dialog for reload/reapply | ALREADY_IMPLEMENTED_AND_KEEP | version column and stale-write detection already exist in prototype for status changes | 0h (kept as-is) | DONE |
-| 130 | Realtime browser updates |  |  |  |  |  | PENDING |
-| 131 | Internal event distribution |  |  |  |  |  | PENDING |
-| 132 | Caching |  |  |  |  |  | PENDING |
-| 133 | Observability |  |  |  |  |  | PENDING |
-| 134 | Secrets management |  |  |  |  |  | PENDING |
-| 135 | Encryption at rest |  |  |  |  |  | PENDING |
-| 136 | Issue recycle-bin retention |  |  |  |  |  | PENDING |
+| 130 | Realtime browser updates | SSE for issue/comment/board/sprint/notification updates with polling fallback; multi-node event distribution | No realtime mechanism in V1 at all; users refresh the page manually to see changes | DEFER_AFTER_V1 | Multi-node distribution already moot after Decisions 50/51; base SSE still nontrivial and lower priority than core tracker features | 15-25h | DONE |
+| 131 | Internal event distribution | Pluggable durable DB event log plus PostgreSQL LISTEN/NOTIFY; SQLite local event loop; Redis Streams later | Confirmed moot; no realtime mechanism (Decision 130), no job infra (Decision 51) | DEFER_AFTER_V1 | Nothing left to distribute after Decisions 130/51 | 0h (already counted in Decision 130) | DONE |
+| 132 | Caching | Pluggable caching; default per-instance in-memory with event-bus invalidation; DB remains source of truth; Redis optional later | No caching layer in V1; all queries hit the database directly | DEFER_AFTER_V1 | Event-bus invalidation already moot after Decision 131; low value for small self-hosted deployment where DB is fast enough | 10-15h | DONE |
+| 133 | Observability | Pluggable structured JSON logs, Prometheus metrics, OpenTelemetry traces, correlation IDs across HTTP/DB/jobs/email/webhooks | Structured JSON logs to stdout only; no Prometheus, no OpenTelemetry | SIMPLIFY_FOR_V1 | Cross-system correlation moot after jobs/email/webhooks removal; stdout logs sufficient for small self-hosted deployment (captured by Docker/systemd) | 15-25h | DONE |
+| 134 | Secrets management | Pluggable secrets backend: env vars, Docker/Kubernetes secrets, restricted files, encrypted DB values, future Vault | Environment variables only (.env file / Docker secrets); no pluggable backend, no encrypted DB values, no Vault | SIMPLIFY_FOR_V1 | Kubernetes secrets moot after Decision 50; env vars are the standard sufficient approach for small Docker Compose deployments | 8-12h | DONE |
+| 135 | Encryption at rest | Pluggable policy; infrastructure encryption default; optional application encryption for attachments and sensitive custom fields with external keys | Rely on infrastructure/disk-level encryption only; no application-level encryption in Ticket Hub code | SIMPLIFY_FOR_V1 | Custom-fields half already moot after Decision 9; application encryption for attachments not justified for V1 | 10-15h | DONE |
+| 136 | Issue recycle-bin retention | Configurable retention, default 90 days: 30/90/365 or never | Fixed 90-day retention, on-demand check, no admin config, no background job (consistent with Decisions 89 and 102) | SIMPLIFY_FOR_V1 | Same pattern as project and attachment recycle-bin retention | 3-5h | DONE |
 | 137 | SQLite product scope |  |  |  |  |  | PENDING |
 | 138 | Server platforms |  |  |  |  |  | PENDING |
 | 139 | Browser support |  |  |  |  |  | PENDING |
