@@ -1,5 +1,87 @@
 # Verification record
 
+## 2026-07-31 — Markdown editor toolbar, live preview, and sanitized rendering (D16)
+
+Fourth Phase 4 (Collaboration) slice: comment bodies and issue descriptions now render as formatted
+Markdown, with a visual toolbar and a live preview toggle. Entirely a `web/` change -- no schema or API
+change, since bodies are still stored/transmitted as raw Markdown text.
+
+### What changed
+
+- `renderMarkdownInline`/`renderMarkdown`: a deliberately small Markdown-to-HTML subset -- bold
+  (`**x**`), italic (`*x*`), inline code, links, `#`/`##`/`###` headings, `-`/`*` and `1.` lists, `>`
+  blockquotes, fenced code blocks, `---`/`***` horizontal rules. Safe by construction: the raw text is
+  HTML-escaped *first* (the same `escapeHtml` used everywhere else in `web/`), and every subsequent
+  transform only wraps the already-escaped text in a fixed, hardcoded set of tags -- user input can never
+  introduce a real HTML tag or attribute this way, so there is no separate sanitization pass that could be
+  wrong. Link targets are restricted to `http(s)`/`mailto` via a scheme check on the captured URL; any
+  other scheme is left as literal `[text](url)` text rather than becoming a clickable anchor.
+- `attachMarkdownToolbar`: Bold/Italic/Code/Link/Bulleted-list/Numbered-list/Quote buttons plus a
+  Preview toggle, wired to all four Markdown-capable textareas -- comment add, comment edit, issue
+  description on create, issue description on edit. Pure `textarea.selectionStart`/`selectionEnd`
+  manipulation (wrap-selection for inline styles, prefix-each-line for block styles), no
+  `execCommand`/`contenteditable`, so the field stays a real `<textarea>` and every existing
+  FormData-based submit handler and the @mention autocomplete (which reads `selectionStart` directly)
+  keep working unchanged.
+- `.comment-body-text` changed from a `<p>` to a `<div class="markdown-body">` (a `<p>` cannot legally
+  contain block-level children like `<ul>`/`<blockquote>`/`<h2>`, which `renderMarkdown` can now produce).
+  The issue drawer's Description section renders through the same path.
+
+### A rendering bug caught and fixed during implementation
+
+The first cut of the italic regex accepted `_..._` as an alternative to `*...*` (matching the common
+Markdown convention of supporting both delimiters for both bold and italic). This mishandled any text
+containing two separate double-underscore identifiers -- e.g. two `__dunder__`-style names, or in the
+XSS test payload below, `window.__xssFired` appearing twice -- because the regex engine matched an
+underscore from the *first* pair as an opening delimiter and an underscore from the *second* pair as the
+closing one, silently swallowing everything in between (including other underscore-delimited content)
+into a single `<em>` span. The output remained safely escaped throughout (this was never an XSS risk,
+just visually wrong), but it was still a real correctness bug. Caught by a Playwright assertion that
+expected specific literal text to be present in a comment and found it missing, split across an
+unexpected `<em>` boundary. Fixed by dropping underscore-delimited emphasis entirely -- bold and italic
+now use only `**`/`*`, which have no adjacency ambiguity since a bare `*` can never be confused with a
+`**` pair, and there's no snake_case-style convention for single asterisks the way there is for single
+underscores.
+
+### Verification
+
+1. `node --check web/app.js`: no syntax errors (this batch made no C++ changes, so no `cmake --build`
+   was needed for the feature itself; `ctest --output-on-failure` was still re-run to confirm no
+   unrelated regression -- 7/7 green, unchanged from the previous batch).
+2. Standalone Playwright/Chromium script, against a locally running server, SQLite, demo-seeded:
+   - Toolbar: typed "hello world", selected "world", clicked the Bold button, confirmed the textarea
+     value became `hello **world**`.
+   - Preview: clicked the Preview toggle, confirmed the preview pane's HTML contains `<strong>world</strong>`,
+     confirmed the textarea itself is hidden while previewing, then toggled back and confirmed the
+     textarea is visible again.
+   - Posted a comment containing bold/italic/inline-code/a link/a bulleted list/a blockquote, and
+     confirmed the rendered comment contains exactly the expected `<strong>`/`<em>`/`<code>`/`<a href=
+     "https://example.com">`/`<ul><li>`/`<blockquote>` elements (not literal asterisks/brackets).
+   - **Security check 1**: posted a comment whose entire body was
+     `<script>window.__xssFired = true;</script> and <img src=x onerror="window.__xssFired = true">`.
+     Confirmed via `page.evaluate` that `window.__xssFired` was never set to `true` (the payload never
+     executed), and confirmed the literal text is visible in the rendered comment (proving it was
+     escaped and displayed, not silently dropped).
+   - **Security check 2**: posted a comment `[click me](javascript:alert(1))` and confirmed the rendered
+     comment contains zero `<a>` elements -- the `javascript:` scheme was rejected and the text rendered
+     as literal `[click me](javascript:alert(1))`, not a clickable link.
+   - Edited an issue's description to `## Heading\n\nSome **bold** description text.` and confirmed the
+     rendered description contains both an `<h2>` and a `<strong>`.
+3. Re-ran the eighth batch's reaction browser test, the seventh batch's comment-editing browser test, and
+   the ninth batch's mentions/notifications browser test against the same build to confirm no regression
+   from the `.comment-body-text` markup change (`<p>` to `<div>`) or the new toolbar/preview DOM elements
+   -- all three still pass unchanged.
+
+All checks passed (after the underscore-emphasis bug above was found and fixed). No committed test
+scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+The rest of Phase 4 remains unimplemented: simplified worklogs (D13) and the append-only admin/security
+audit log (D23). Phase 5 (attachments and the Kanban board) is untouched. The Markdown renderer is
+intentionally a small subset -- no tables, no nested lists, no strikethrough, no images -- consistent
+with "a deliberately small subset, not a general-purpose engine" rather than a gap to fill later.
+
 ## 2026-07-31 — @mention handles and the fixed in-app notification set (D56/D80/D14)
 
 Third Phase 4 (Collaboration) slice: users can now have an optional, unique @mention handle; comments are

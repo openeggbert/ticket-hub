@@ -81,6 +81,173 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+// --- Markdown rendering (D16) ---
+// A deliberately small subset of Markdown (bold/italic/inline code/links/
+// headings/lists/blockquotes/fenced code/hr), not a general-purpose engine
+// -- kept because D16 calls for a visual toolbar and live preview, and this
+// subset covers what the toolbar buttons below produce.
+//
+// Security: the raw input is HTML-escaped FIRST (escapeHtml), and every
+// transform below only ever wraps the already-escaped text in a fixed set
+// of hardcoded safe tags -- user input can never introduce a real HTML tag
+// or attribute this way, so there is no separate sanitization pass to get
+// wrong (unlike rendering a full Markdown engine's output, which would need
+// one). Link URLs are restricted to http(s)/mailto; anything else is left
+// as literal `[text](url)` text instead of becoming a clickable link.
+function renderMarkdownInline(text) {
+  // Bold/italic use only `**`/`*` (not `__`/`_`) -- underscore delimiters
+  // are ambiguous with snake_case/dunder identifiers (e.g. `__init__`),
+  // where a naive regex would treat adjacent underscores as emphasis
+  // delimiters and mangle unrelated text spanning between them.
+  return text
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label, url) =>
+      /^(https?:|mailto:)/i.test(url) ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>` : match);
+}
+
+function renderMarkdown(raw) {
+  const lines = escapeHtml(String(raw ?? '')).split('\n');
+  const blocks = [];
+  let index = 0;
+  const isBlockStart = line => /^(#{1,3})\s|^```|^[-*]\s|^\d+\.\s|^&gt;\s?|^(---|\*\*\*)$/.test(line);
+  while (index < lines.length) {
+    const line = lines[index];
+    if (/^```/.test(line)) {
+      const code = [];
+      index++;
+      while (index < lines.length && !/^```/.test(lines[index])) {
+        code.push(lines[index]);
+        index++;
+      }
+      index++; // skip the closing fence
+      blocks.push(`<pre><code>${code.join('\n')}</code></pre>`);
+      continue;
+    }
+    if (/^(---|\*\*\*)$/.test(line.trim())) {
+      blocks.push('<hr>');
+      index++;
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      const level = heading[1].length;
+      blocks.push(`<h${level}>${renderMarkdownInline(heading[2])}</h${level}>`);
+      index++;
+      continue;
+    }
+    if (/^&gt;\s?/.test(line)) {
+      const quoteLines = [];
+      while (index < lines.length && /^&gt;\s?/.test(lines[index])) {
+        quoteLines.push(renderMarkdownInline(lines[index].replace(/^&gt;\s?/, '')));
+        index++;
+      }
+      blocks.push(`<blockquote><p>${quoteLines.join('<br>')}</p></blockquote>`);
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^[-*]\s+/.test(lines[index])) {
+        items.push(`<li>${renderMarkdownInline(lines[index].replace(/^[-*]\s+/, ''))}</li>`);
+        index++;
+      }
+      blocks.push(`<ul>${items.join('')}</ul>`);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
+        items.push(`<li>${renderMarkdownInline(lines[index].replace(/^\d+\.\s+/, ''))}</li>`);
+        index++;
+      }
+      blocks.push(`<ol>${items.join('')}</ol>`);
+      continue;
+    }
+    if (line.trim() === '') {
+      index++;
+      continue;
+    }
+    const paragraphLines = [];
+    while (index < lines.length && lines[index].trim() !== '' && !isBlockStart(lines[index])) {
+      paragraphLines.push(renderMarkdownInline(lines[index]));
+      index++;
+    }
+    blocks.push(`<p>${paragraphLines.join('<br>')}</p>`);
+  }
+  return blocks.join('');
+}
+
+// --- Markdown toolbar (D16) ---
+// Plain textarea manipulation (selectionStart/End), no execCommand/
+// contenteditable -- keeps the field a real <textarea> so existing
+// FormData-based submit handlers and the @mention autocomplete (which
+// reads selectionStart directly) keep working unchanged.
+function wrapSelection(textarea, before, after = before) {
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const selected = textarea.value.slice(start, end);
+  textarea.value = textarea.value.slice(0, start) + before + selected + after + textarea.value.slice(end);
+  textarea.focus();
+  textarea.selectionStart = start + before.length;
+  textarea.selectionEnd = start + before.length + selected.length;
+}
+
+function prefixLines(textarea, prefix) {
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const value = textarea.value;
+  const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+  const lineEndSearch = value.indexOf('\n', end);
+  const lineEnd = lineEndSearch === -1 ? value.length : lineEndSearch;
+  const block = value.slice(lineStart, lineEnd);
+  const prefixed = block.split('\n').map(line => prefix + line).join('\n');
+  textarea.value = value.slice(0, lineStart) + prefixed + value.slice(lineEnd);
+  textarea.focus();
+}
+
+function attachMarkdownToolbar(textarea) {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'markdown-toolbar';
+  toolbar.innerHTML = `
+    <button type="button" data-md="bold" title="Bold"><strong>B</strong></button>
+    <button type="button" data-md="italic" title="Italic"><em>I</em></button>
+    <button type="button" data-md="code" title="Inline code">&lt;/&gt;</button>
+    <button type="button" data-md="link" title="Link">🔗</button>
+    <button type="button" data-md="ul" title="Bulleted list">•</button>
+    <button type="button" data-md="ol" title="Numbered list">1.</button>
+    <button type="button" data-md="quote" title="Quote">❝</button>
+    <button type="button" class="markdown-preview-toggle" data-md="preview" title="Toggle preview">👁 Preview</button>`;
+  textarea.insertAdjacentElement('beforebegin', toolbar);
+
+  const previewPane = document.createElement('div');
+  previewPane.className = 'markdown-preview hidden';
+  textarea.insertAdjacentElement('afterend', previewPane);
+
+  toolbar.querySelectorAll('button[data-md]').forEach(button => button.addEventListener('click', () => {
+    const action = button.dataset.md;
+    if (action === 'preview') {
+      const showingPreview = !previewPane.classList.contains('hidden');
+      if (showingPreview) {
+        previewPane.classList.add('hidden');
+        textarea.classList.remove('hidden');
+      } else {
+        previewPane.innerHTML = renderMarkdown(textarea.value) || '<p class="markdown-empty">Nothing to preview.</p>';
+        previewPane.classList.remove('hidden');
+        textarea.classList.add('hidden');
+      }
+      return;
+    }
+    if (action === 'bold') wrapSelection(textarea, '**');
+    else if (action === 'italic') wrapSelection(textarea, '*');
+    else if (action === 'code') wrapSelection(textarea, '`');
+    else if (action === 'link') wrapSelection(textarea, '[', '](https://)');
+    else if (action === 'ul') prefixLines(textarea, '- ');
+    else if (action === 'ol') prefixLines(textarea, '1. ');
+    else if (action === 'quote') prefixLines(textarea, '> ');
+  }));
+}
+
 function initials(name) {
   return String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 }
@@ -837,7 +1004,7 @@ async function openIssue(issueKey) {
             : `<h1>${escapeHtml(issue.summary)}</h1>`}
           <div class="drawer-layout">
             <div>
-              ${editing ? '' : `<section class="drawer-section"><h3>Description</h3><div class="description">${escapeHtml(issue.description || 'No description provided.')}</div></section>`}
+              ${editing ? '' : `<section class="drawer-section"><h3>Description</h3><div class="description markdown-body">${issue.description ? renderMarkdown(issue.description) : '<p class="markdown-empty">No description provided.</p>'}</div></section>`}
               <section class="drawer-section">
                 <h3>Links</h3>
                 <div class="link-list">${links.items.length ? links.items.map(link => `
@@ -877,7 +1044,7 @@ async function openIssue(issueKey) {
                         <strong>${escapeHtml(comment.author.displayName)}</strong>
                         <span>${escapeHtml(relativeDate(comment.createdAt))}${comment.editedAt ? ' (edited)' : ''}</span>
                       </header>
-                      <p class="comment-body-text" data-raw-body="${escapeHtml(comment.body)}">${escapeHtml(comment.body)}</p>
+                      <div class="comment-body-text markdown-body">${renderMarkdown(comment.body)}</div>
                       <div class="comment-reactions">${COMMENT_REACTIONS.map(reaction => {
                         const reactedUsers = reactions.filter(entry => entry.reactionKey === reaction.key);
                         const mine = reactedUsers.some(entry => entry.user.id === state.principal?.userId);
@@ -1013,6 +1180,7 @@ async function openIssue(issueKey) {
         document.querySelector('#drawer-status').value = issue.status.key;
         document.querySelector('#drawer-resolution-row').hidden = true;
       });
+      attachMarkdownToolbar(document.querySelector('#comment-form textarea[name=body]'));
       attachMentionAutocomplete(document.querySelector('#comment-form textarea[name=body]'));
       document.querySelector('#comment-form').addEventListener('submit', async event => {
         event.preventDefault();
@@ -1051,6 +1219,7 @@ async function openIssue(issueKey) {
             <button type="button" class="secondary-button" id="comment-edit-cancel">Cancel</button>
             <button type="button" class="primary-button" id="comment-edit-save">Save</button>
           </div>`;
+        attachMarkdownToolbar(article.querySelector('.comment-edit-textarea'));
         attachMentionAutocomplete(article.querySelector('.comment-edit-textarea'));
         article.querySelector('#comment-edit-cancel').addEventListener('click', () => openIssue(issue.key));
         article.querySelector('#comment-edit-save').addEventListener('click', async () => {
@@ -1068,6 +1237,7 @@ async function openIssue(issueKey) {
       }));
 
       if (editing) {
+        attachMarkdownToolbar(document.querySelector('#edit-description'));
         document.querySelector('#edit-cancel').addEventListener('click', () => render(false));
         document.querySelector('#edit-save').addEventListener('click', async () => {
           const errorElement = document.querySelector('#edit-error');
@@ -1248,6 +1418,12 @@ document.querySelector('#project-form').addEventListener('submit', async event =
     errorElement.classList.remove('hidden');
   }
 });
+
+// The create-issue modal's description field is static markup (unlike the
+// drawer's, which is rebuilt via innerHTML on every open) -- attach its
+// toolbar once here rather than on every openCreateModal() call, which
+// would otherwise stack a duplicate toolbar/preview pane each time.
+attachMarkdownToolbar(document.querySelector('#create-form textarea[name=description]'));
 
 loginForm.addEventListener('submit', async event => {
   event.preventDefault();

@@ -72,8 +72,13 @@ remain as the long-term aspirational baseline only — do not build against them
   admin-configurable schemes, no per-user preferences/digests; a recipient who is both mentioned and
   watching the same comment gets one notification, not two. `GET /api/users` backs @mention autocomplete
   in the comment textarea; a notification bell with an unread badge in the UI opens a panel that marks
-  notifications read on click and navigates to the related issue. See "Not yet built" below for the rest
-  of Phase 4.
+  notifications read on click and navigates to the related issue.
+- **Rendered Markdown, visual toolbar, and live preview (Phase 4, D16):** comment bodies and issue
+  descriptions render as formatted HTML (bold/italic/inline code/links/headings/lists/blockquotes/fenced
+  code/rules) via a deliberately small, safe-by-construction subset -- input is HTML-escaped first, then
+  wrapped in a fixed set of hardcoded tags, so there is no separate sanitization pass to get wrong.
+  Bold/Italic/Code/Link/list/Quote toolbar buttons plus a live-preview toggle on every Markdown-capable
+  textarea. See "Not yet built" below for the rest of Phase 4.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -81,8 +86,8 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Rest of Phase 4: the full Markdown editor/toolbar/preview (D16), simplified worklogs (D13), and the
-  append-only admin/security audit log (D23) are not implemented yet.
+- Rest of Phase 4: simplified worklogs (D13) and the append-only admin/security audit log (D23) are not
+  implemented yet.
 - Attachments and the Kanban board are not implemented (Phase 5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).
