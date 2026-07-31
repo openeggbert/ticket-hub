@@ -2,19 +2,26 @@
 
 This repository is a handoff from a completed product-definition conversation. Work autonomously from the archived decisions and keep the project buildable and tested.
 
+> **2026-07-31 scope-reduction amendment:** the product owner walked all 142 decisions again and
+> produced a smaller, finishable V1 target. The `REDUCED_SCOPE_*` documents below now take precedence
+> over the original full-scope documents of the same name for what to actually build. The originals are
+> kept as the long-term aspirational baseline. See `docs/REMOVED_AND_DEFERRED_FEATURES.md` before
+> building anything that sounds like OIDC, a workflow engine, custom fields, sprints, email, webhooks,
+> or background jobs — it is very likely on that list.
+
 ## Mandatory reading order
 
 Before changing code, read:
 
 1. `README.md`
-2. `SPECIFICATION.md`
-3. `docs/PRODUCT_DECISIONS_COMPLETE.md`
+2. `REDUCED_SCOPE_SPECIFICATION.md` (current V1 target; `SPECIFICATION.md` is long-term reference only)
+3. `docs/REDUCED_SCOPE_DECISIONS.md` and `docs/REMOVED_AND_DEFERRED_FEATURES.md`
 4. `docs/HANDOFF_NOTES.md`
 5. `NEXT.md`
-6. `docs/ARCHITECTURE.md`
-7. `docs/DATA_MODEL.md`
+6. `docs/REDUCED_SCOPE_ARCHITECTURE.md` (`docs/ARCHITECTURE.md` is long-term reference only)
+7. `docs/REDUCED_SCOPE_DATA_MODEL.md` (`docs/DATA_MODEL.md` is long-term reference only)
 8. `docs/SCHEMA.md`
-9. `docs/ROADMAP.md`
+9. `docs/REDUCED_SCOPE_ROADMAP.md` (`docs/ROADMAP.md` is long-term reference only)
 10. `docs/VERIFICATION.md`
 
 Then inspect CMake, migrations, domain/application/database interfaces, tests, and the web layer. Build and run tests before editing.
@@ -34,24 +41,33 @@ Then inspect CMake, migrations, domain/application/database interfaces, tests, a
 
 ## Source-of-truth hierarchy
 
-1. Later explicit entries in `docs/PRODUCT_DECISIONS_COMPLETE.md` refine earlier choices.
-2. `SPECIFICATION.md` is the normative thematic product baseline.
-3. `docs/DATA_MODEL.md` is the target logical schema, not proof of implementation.
+1. `docs/REDUCED_SCOPE_DECISIONS.md` is the current authoritative V1 decision register (supersedes
+   `docs/PRODUCT_DECISIONS_COMPLETE.md`, which remains the long-term aspirational ledger).
+2. `REDUCED_SCOPE_SPECIFICATION.md` is the current normative V1 product baseline (supersedes
+   `SPECIFICATION.md`).
+3. `docs/REDUCED_SCOPE_DATA_MODEL.md` is the target V1 logical schema, not proof of implementation
+   (supersedes `docs/DATA_MODEL.md`).
 4. `docs/SCHEMA.md` and tests describe what exists now.
 5. `NEXT.md` defines immediate work.
+6. `docs/REMOVED_AND_DEFERRED_FEATURES.md` is authoritative for what NOT to build.
 
-Never claim a target feature is implemented merely because it appears in the specification.
+Never claim a target feature is implemented merely because it appears in a specification. Never build a
+feature from `docs/REMOVED_AND_DEFERRED_FEATURES.md` without a new, explicit product conversation.
 
 ## Current objective
 
-Continue Phase 1: identity and authentication foundation.
+Continue Phase 1 of `docs/REDUCED_SCOPE_ROADMAP.md`: identity and sessions (reduced scope).
 
 - Introduce an explicit `Principal`/actor context.
 - Remove fixed demo-user assumptions from write signatures and routes.
-- Add migration-safe identity tables and repository/domain contracts.
-- Implement the smallest complete local-session authentication vertical slice.
-- Prepare groups, invitations, OIDC identities/providers, sessions, PATs, and service-account foundations without attempting all of them in one uncontrolled change.
-- Define centralized authorization contracts before adding broad project administration.
+- Add migration-safe identity tables (`users`, `local_credentials`, `sessions`) and repository/domain
+  contracts — **no** `groups`, `invitations`, `oidc_providers`, or `external_identities`; those are
+  permanently removed for V1 (`docs/REMOVED_AND_DEFERRED_FEATURES.md`).
+- Implement the smallest complete local-session authentication vertical slice, including an
+  administrator-only "create user with temporary password" action (this is the entire
+  registration/reset story for V1).
+- Define the fixed project-role authorization check (Admin/Member/Viewer) before adding broad project
+  administration — this replaces the original configurable permission-scheme plan.
 
 ## Architecture rules
 
