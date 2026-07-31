@@ -51,12 +51,20 @@ Implemented now:
 - **simple bulk actions** (D36): status/assignee/label/recycle applied to a list of issue keys, each
   through the same single-issue operation and authorization as doing it one at a time; a partial failure
   is reported, not rolled back,
+- **simple integer manual ordering with renumbering** (D31): a per-project `rank_order`, replacing the
+  never-used LexoRank-style `rank_value` placeholder; moving an issue renumbers the whole project's issue
+  list in one pass rather than using a minimal-diff/fractional scheme,
+- **moving an issue to a different project** (D37): no compatibility check is needed since every project
+  shares the same fixed types/workflow/fields — a move is a `project_id` change plus a freshly allocated
+  key/number, exactly like creating a new issue there; rejected if the issue has a parent or any children;
+  requires project-Member-or-above on both the source and target projects,
 - every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
 - PostgreSQL migration advisory lock,
 - issue optimistic-lock versioning for status updates,
-- permanent issue/project key-alias schema foundations,
+- permanent project key-alias schema foundation, and a permanent issue key-alias mechanism actually
+  written to by `moveIssue` (D38): the vacated key stays permanently resolvable to the moved issue,
 - recycle-bin schema foundations and live-query filtering,
 - domain, migration, crypto, SQLite integration, identity, authorization, and workflow tests (see "Known
   verification limitation" below for what is *not* yet compiled/tested in this environment).
@@ -218,6 +226,8 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `GET` | `/api/issues/{key}/comments` | session, or anon if enabled | live comments |
 | `POST` | `/api/issues/{key}/comments` | session + CSRF, project member | add comment |
 | `POST` | `/api/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
+| `POST` | `/api/issues/{key}/reorder` | session + CSRF, project member | `{beforeIssueKey?}` — manual ordering (D31) |
+| `POST` | `/api/issues/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
 | `GET` | `/api/issues/{key}/links` | session, or anon if enabled | links from both ends |
 | `POST` | `/api/issues/{key}/links` | session + CSRF, member of both projects | `{targetIssueKey, linkType}` |
 | `DELETE` | `/api/issue-links/{id}` | session + CSRF, member of both projects | remove a link |
@@ -254,6 +264,14 @@ against the fixed Epic/Sub-task hierarchy (a Sub-task requires a same-project St
 Epic may not have one, a Story/Task/Bug's optional parent must be a same-project Epic); a violation
 returns HTTP 400, same as any other invalid request field.
 
+`POST /api/issues/{key}/reorder` moves the issue to immediately before `beforeIssueKey` (which must be in
+the same project), or to the end of the project if `beforeIssueKey` is omitted/null; the response is the
+reordered issue, with the whole project's `rankOrder` values renumbered in one pass. `POST
+/api/issues/{key}/move` moves the issue to `targetProjectKey`, allocating a new key/number there; the
+vacated key becomes a permanent alias (`GET /api/issues/{oldKey}` keeps resolving to it). Both return
+HTTP 400 for an unknown/cross-project anchor, an unknown target project, moving to the issue's current
+project, or moving an issue that has a parent or any children.
+
 `linkType` on `POST /api/issues/{key}/links` must be one of the fixed catalog (`blocks`, `relates_to`,
 `duplicates`, `clones`); there is no admin-configurable link-type list. Both the source and target
 issue's projects must be accessible to the actor (project-Member-or-above), not just the source's.
@@ -285,18 +303,22 @@ What **was** compiled and tested in this environment, with all warnings enabled
 - `ticket-hub-core` (domain, application, infrastructure/database — including the identity/session code,
   fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
   hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, simple cloning,
-  self-service watching/voting, the issue recycle bin, and simple bulk actions, in both database
-  adapters),
+  self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
+  renumbering, and moving an issue between projects, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the
   stale-version conflict, one `issue_history` row per changed field; issue links: create, list from both
   ends, duplicate/self-link rejection, find-by-id, delete; watch/vote: idempotency, listing,
   unknown-issue rejection; issue recycle bin: soft-delete/restore/list/permanent-delete lifecycle,
-  idempotent no-ops, comment cascade on permanent delete), `identity_integration_tests` (create-user,
-  login success/failure, generic-error anti-enumeration check, minimal lockout, session
-  validate/expire/logout), `authorization_integration_tests` (project-role gating on issue
-  writes/edits/cloning/links, not-found semantics under authorization, the anonymous-read-access toggle,
+  idempotent no-ops, comment cascade on permanent delete; manual ordering: renumbering on
+  reorder-before-anchor and reorder-to-end, cross-project and self-anchor rejection; move: target-project
+  rank/counter allocation, alias creation and resolution, `issue_history` write, and rejection of
+  same-project moves, unknown-project moves, and moving an issue with a parent or with children),
+  `identity_integration_tests` (create-user, login success/failure, generic-error anti-enumeration check,
+  minimal lockout, session validate/expire/logout), `authorization_integration_tests` (project-role
+  gating on issue writes/edits/cloning/links/reorder/move — including the "member of source but not
+  target project" move case, not-found semantics under authorization, the anonymous-read-access toggle,
   the full project lifecycle: create/archive/soft-delete/restore/permanently-delete against both
   project-admin and global-administrator paths, confirming watch/vote require no project role unlike
   everything else, the issue recycle bin's project-admin-vs-global-admin split, and bulk actions applying
@@ -309,12 +331,14 @@ What **was** compiled and tested in this environment, with all warnings enabled
   were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite) in
   Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code
   (`createProject`, `setProjectArchived`, `softDeleteProject`, `listDeletedProjects`, `restoreProject`,
-  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it five times, for
+  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it six times, for
   `createIssue`/`changeIssueStatus` (hierarchy, resolution, sub-task gate), `editIssue` (every field,
   label replacement, assignee clearing, stale-version conflict), issue links/cloning (create/list/
   duplicate-and-self-link rejection/find/delete, plus `cloneIssue` including the sub-task special case),
-  watch/vote (idempotency, listing, unwatch/unvote, unknown-issue rejection), and the issue recycle bin
-  plus all four bulk actions (through `TicketService`) — all passing.
+  watch/vote (idempotency, listing, unwatch/unvote, unknown-issue rejection), the issue recycle bin plus
+  all four bulk actions (through `TicketService`), and `reorderIssue`/`moveIssue` (renumbering, target
+  rank/counter allocation, alias resolution, and the same-project/unknown-project/parent/children
+  rejection cases, through `PostgresDatabase` directly) — all passing.
 
 What was **not** compiled or tested: `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the
 `ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, the Phase 2 project-CRUD and
@@ -324,8 +348,9 @@ new `POST /api/issues/{key}/clone`, `GET`/`POST /api/issues/{key}/links`,
 `POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
 `POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters`,
 `DELETE /api/issue-links/{id}`, `DELETE /api/issues/{key}`, `GET /api/issues/deleted`,
-`POST /api/issues/{key}/restore`, `DELETE /api/issues/{key}/permanent`, and
-`POST /api/issues/bulk/{status,assign,label,delete}` routes, follow the exact patterns already used by
+`POST /api/issues/{key}/restore`, `DELETE /api/issues/{key}/permanent`,
+`POST /api/issues/bulk/{status,assign,label,delete}`, `POST /api/issues/{key}/reorder`, and
+`POST /api/issues/{key}/move` routes, follow the exact patterns already used by
 the surrounding (previously-verified) route handlers, but none of it has been built or exercised against
 a real HTTP client. (While adding the edit route, three existing routes -- `POST /api/issues`,
 `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments` -- were found to be missing a

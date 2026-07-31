@@ -236,6 +236,103 @@ int main() {
         require(!dashboard.recentIssues.empty() && dashboard.recentIssues.front().key == created.key,
                 "dashboard returns the most recently updated issue first");
 
+        // --- Manual ordering (D31) ---
+        const auto th1Before = database.findIssueByKey("TH-1");
+        const auto th3Before = database.findIssueByKey("TH-3");
+        require(th1Before.has_value() && th3Before.has_value(), "TH-1 and TH-3 exist for the reorder test");
+        require(th1Before->rankOrder < th3Before->rankOrder, "seeded issues start ranked in creation order");
+
+        const auto reordered = database.reorderIssue("TH-3", std::string("TH-1"));
+        require(reordered.key == "TH-3", "reorderIssue returns the moved issue");
+        const auto th1AfterReorder = database.findIssueByKey("TH-1");
+        const auto th3AfterReorder = database.findIssueByKey("TH-3");
+        require(th3AfterReorder->rankOrder < th1AfterReorder->rankOrder,
+               "TH-3 now ranks immediately before TH-1 after being reordered there");
+
+        database.reorderIssue("TH-3", std::nullopt);
+        const auto th3AfterEnd = database.findIssueByKey("TH-3");
+        const auto th7AfterEnd = database.findIssueByKey(created.key);
+        require(th3AfterEnd->rankOrder > th7AfterEnd->rankOrder,
+               "reordering with no anchor appends the issue to the end of its project");
+
+        bool reorderCrossProjectRejected = false;
+        try {
+            database.reorderIssue("TH-1", std::string("WEB-1"));
+        } catch (const std::invalid_argument&) {
+            reorderCrossProjectRejected = true;
+        }
+        require(reorderCrossProjectRejected, "reordering relative to an issue in a different project is rejected");
+
+        bool reorderSelfRejected = false;
+        try {
+            database.reorderIssue("TH-1", std::string("TH-1"));
+        } catch (const std::invalid_argument&) {
+            reorderSelfRejected = true;
+        }
+        require(reorderSelfRejected, "reordering an issue before itself is rejected");
+
+        // --- Move between projects (D37) ---
+        const auto moved = database.moveIssue("TH-2", "WEB", demoUserId);
+        require(moved.projectKey == "WEB", "the moved issue now belongs to the target project");
+        require(moved.key == "WEB-3", "the moved issue receives the target project's next issue number");
+        require(moved.rankOrder == 3, "the moved issue is appended after the target project's existing issues");
+
+        const auto viaOldKey = database.findIssueByKey("TH-2");
+        require(viaOldKey.has_value() && viaOldKey->key == "WEB-3",
+               "the vacated source key permanently resolves to the moved issue via issue_key_aliases");
+        require(scalarInt(databasePath, "SELECT COUNT(*) FROM issue_key_aliases WHERE alias_key = 'TH-2'") == 1,
+               "the vacated key is recorded as a permanent alias");
+        require(scalarInt(databasePath,
+                    "SELECT COUNT(*) FROM issue_history WHERE issue_id = '" + moved.id + "' AND field_name = 'project'") == 1,
+               "the move writes an issue_history row for the project field");
+
+        bool moveSameProjectRejected = false;
+        try {
+            database.moveIssue("TH-1", "TH", demoUserId);
+        } catch (const std::invalid_argument&) {
+            moveSameProjectRejected = true;
+        }
+        require(moveSameProjectRejected, "moving an issue to its own project is rejected");
+
+        bool moveUnknownProjectRejected = false;
+        try {
+            database.moveIssue("TH-1", "NOPE", demoUserId);
+        } catch (const std::invalid_argument&) {
+            moveUnknownProjectRejected = true;
+        }
+        require(moveUnknownProjectRejected, "moving an issue to an unknown project is rejected");
+
+        CreateIssueRequest parentForMove;
+        parentForMove.projectKey = "TH";
+        parentForMove.summary = "Parent for move-rejection test";
+        parentForMove.issueTypeKey = "story";
+        parentForMove.priorityKey = "medium";
+        const auto moveParent = database.createIssue(parentForMove, demoUserId);
+
+        CreateIssueRequest childForMove;
+        childForMove.projectKey = "TH";
+        childForMove.summary = "Child for move-rejection test";
+        childForMove.issueTypeKey = "sub-task";
+        childForMove.priorityKey = "medium";
+        childForMove.parentIssueKey = moveParent.key;
+        const auto moveChild = database.createIssue(childForMove, demoUserId);
+
+        bool moveIssueWithChildrenRejected = false;
+        try {
+            database.moveIssue(moveParent.key, "WEB", demoUserId);
+        } catch (const std::invalid_argument&) {
+            moveIssueWithChildrenRejected = true;
+        }
+        require(moveIssueWithChildrenRejected, "moving an issue that has children is rejected");
+
+        bool moveIssueWithParentRejected = false;
+        try {
+            database.moveIssue(moveChild.key, "WEB", demoUserId);
+        } catch (const std::invalid_argument&) {
+            moveIssueWithParentRejected = true;
+        }
+        require(moveIssueWithParentRejected, "moving an issue that has a parent is rejected");
+
         require(database.softDeleteIssue(created.key, demoUserId), "an issue can be soft-deleted");
         require(!database.findIssueByKey(created.key).has_value(),
                "a soft-deleted issue is not found by ordinary lookup");

@@ -56,20 +56,17 @@ feature from `docs/REMOVED_AND_DEFERRED_FEATURES.md` without a new, explicit pro
 
 ## Current objective
 
-Phase 1 (identity and sessions) and Phase 2 (authorization and projects) of
-`docs/REDUCED_SCOPE_ROADMAP.md` are complete at the core/CLI/test layer. Phase 3 (issue core and the
-fixed workflow) is **partially** complete: the fixed Epic/Sub-task hierarchy, the fixed workflow's
-hardcoded transition rules (resolution required/cleared, sub-task completion gate), full-replacement
-issue edit with optimistic locking (D129), the fixed issue-link catalog (D17), simple cloning (D60),
-self-service watching/voting (D20/D79), the issue recycle bin (D22), and simple bulk actions (D36) are
-done; re-typing/re-parenting an issue, always-allowed project moves, and the rank/renumber migration are
-not — see `NEXT.md` for the exact remaining list. All three phases share one open item: the Crow-based
-`ticket-hub` server target has never been compiled in this environment (network access to `github.com`
-is blocked); `src/web/Api.cpp` has been updated to match each phase's application-layer signatures but
-is unverified. Verifying the server target is the immediate next step before any phase's exit gate can
-close for real.
+Phase 1 (identity and sessions), Phase 2 (authorization and projects), and Phase 3 (issue core and the
+fixed workflow) of `docs/REDUCED_SCOPE_ROADMAP.md` are now **complete at the core/CLI/test layer**, with
+one deliberate exception: re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after
+creation is not implemented — `TicketService::editIssue` does not touch either field, and `moveIssue`
+(D37) rejects moving an issue that currently has a parent or any children rather than re-parenting it.
+See `NEXT.md` for the exact detail. All three phases share one open item: the Crow-based `ticket-hub`
+server target has never been compiled in this environment (network access to `github.com` is blocked);
+`src/web/Api.cpp` has been updated to match each phase's application-layer signatures but is unverified.
+Verifying the server target is the immediate next step before any phase's exit gate can close for real.
 
-Phase 1/2/3-so-far scope, for reference:
+Phase 1/2/3 scope, for reference:
 
 - Explicit `Principal`/actor context threaded through every write use case (done).
 - Migration-safe identity tables (`users`, `local_credentials`, `sessions`) — **no** `groups`,
@@ -82,7 +79,8 @@ Phase 1/2/3-so-far scope, for reference:
 - Fixed Epic/Sub-task hierarchy enforcement on issue creation, the fixed workflow's hardcoded
   resolution/sub-task-completion rules on status changes, full-replacement issue edit with optimistic
   locking, the fixed issue-link catalog, simple cloning, self-service watching/voting, the issue recycle
-  bin, and simple bulk actions (done); the rest of Phase 3 is not.
+  bin, simple bulk actions, simple integer manual ordering with renumbering (D31), and moving an issue
+  between projects (D37) (done); re-typing/re-parenting an issue is not.
 
 ## Architecture rules
 

@@ -1,6 +1,6 @@
 # Ticket Hub next work
 
-Current version: 0.2.0 (Phase 3 partially complete at the core layer, server target still unverified)
+Current version: 0.2.0 (Phase 3 complete at the core/CLI/test layer, server target still unverified)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -61,7 +61,7 @@ anything from the removed/deferred list without an explicit new product conversa
   writes, since watch/vote are self-referential and Jira itself gates them by "browse" access rather
   than a write-capable role; any authenticated user may watch/vote on any issue. Idempotent: watching
   twice (or unwatching a non-watch) is a no-op, reported via the return value rather than an error.
-- **Phase 3, partial continued (issue recycle bin and bulk actions), this batch:** `IDatabase::
+- **Phase 3, partial continued (issue recycle bin and bulk actions):** `IDatabase::
   softDeleteIssue`/`restoreIssue`/`listDeletedIssues`/`permanentlyDeleteIssue` in both adapters (D22),
   mirroring the project recycle bin exactly (fixed 90-day on-demand retention, no background purge job).
   `TicketService::deleteIssue` requires project-Admin-or-above; restore/list/permanent-delete are
@@ -70,6 +70,25 @@ anything from the removed/deferred list without an explicit new product conversa
   looping over a list of issue keys and calling the matching single-issue operation independently per
   key -- no new database code, no cross-issue transaction, a partial failure reported via
   `succeeded`/`failed` key lists rather than rolled back.
+- **Phase 3, complete at the core/CLI/test layer (manual ordering and moving between projects), this
+  batch:** migration `007_ranking.sql` drops the never-used `issues.rank_value TEXT` LexoRank placeholder
+  and adds `issues.rank_order INTEGER NOT NULL DEFAULT 0`. `IDatabase::reorderIssue` (D31): a full
+  renumbering pass on every move (fetch the project's live issue-id list ordered by rank, remove the
+  moving issue, re-insert it before a given anchor or append it, renumber the whole list `1..N`) --
+  justified directly by D31's own "sufficient for small per-project issue counts" wording rather than a
+  minimal-diff/fractional scheme. `IDatabase::moveIssue` (D37): moves an issue to a different project with
+  no compatibility check needed (every project shares the same fixed types/workflow/fields) -- a
+  `project_id` change plus a freshly allocated key/number in the target project, exactly like
+  `createIssue`; rejected if the issue has a parent or any children (D64-D66 require them to share a
+  project); the vacated key becomes a permanent alias (D38) via `issue_key_aliases`, the first code path
+  that actually writes to that table. Matching `TicketService::reorderIssue` (project-Member-or-above on
+  the issue's own project) and `TicketService::moveIssue` (project-Member-or-above on **both** the source
+  and target projects, mirroring `createIssueLink`'s pattern). Caught and fixed a real migration-ordering
+  bug during this batch: `002_seed_demo.sql` runs outside the checksummed migration flow and, in practice,
+  after all schema migrations including `007_ranking.sql`, so its seeded issues were getting the column's
+  `DEFAULT 0` instead of a backfilled rank -- fixed by setting `rank_order` explicitly in the seed
+  `INSERT` itself. This closes out Phase 3's core-layer scope except for re-typing/re-parenting (see
+  "Rest of Phase 3" below).
 - Tested: `ctest --output-on-failure` is 7/7 green (`domain`, `migration`, `sqlite-integration`,
   `identity`, `authorization`, `workflow`, `crypto`) on SQLite, in all three build configurations (full,
   SQLite-only, PostgreSQL-only). Every Phase 2/3 core-layer addition was additionally verified manually
@@ -82,10 +101,11 @@ anything from the removed/deferred list without an explicit new product conversa
   `PATCH /api/issues/{key}` full-edit route, `POST /api/issues/{key}/clone`,
   `GET`/`POST /api/issues/{key}/links`, `DELETE /api/issue-links/{id}`,
   `POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
-  `POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters`, and the new
+  `POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters`,
   `DELETE /api/issues/{key}`, `GET /api/issues/deleted`, `POST /api/issues/{key}/restore`,
-  `DELETE /api/issues/{key}/permanent`, and `POST /api/issues/bulk/{status,assign,label,delete}` routes.
-  While adding the edit route (an earlier batch), fixed a real bug found by inspection: three existing
+  `DELETE /api/issues/{key}/permanent`, `POST /api/issues/bulk/{status,assign,label,delete}`, and the new
+  `POST /api/issues/{key}/reorder` and `POST /api/issues/{key}/move` routes (plus `rankOrder` added to the
+  issue JSON representation). While adding the edit route (an earlier batch), fixed a real bug found by inspection: three existing
   routes (`POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments`) were
   missing a `catch (const Domain::Forbidden&)` handler, so a project-role authorization failure would
   have fallen through to the generic 500 handler instead of 403. **None of `Api.cpp` has been compiled**
@@ -127,7 +147,10 @@ for the same environment reason, not skipped:
    project admin (expect 200); `GET /api/issues/deleted`/`POST .../restore`/`DELETE .../permanent` each
    as project-admin (expect 403) and global-admin (expect 200); `POST /api/issues/bulk/*` with a mixed
    batch of accessible/inaccessible/unknown issue keys and confirm the response's `succeeded`/`failed`
-   lists match expectations exactly.
+   lists match expectations exactly; `POST /api/issues/{key}/reorder` as a non-member (expect 403) and
+   with a cross-project `beforeIssueKey` (expect 400); `POST /api/issues/{key}/move` as a member of only
+   the source or only the target project (expect 403 either way) and as a member of both (expect 200,
+   with the old key still resolving via `GET /api/issues/{oldKey}`).
 5. Add a minimal login page (and, ideally, project-management and hierarchy/resolution UI) to `web/`
    (there isn't one yet) so the demo UI can actually authenticate and exercise the newer routes instead
    of hitting 401s/blank forms once the session check is live.
@@ -135,18 +158,12 @@ for the same environment reason, not skipped:
 
 ## After the server target is verified: finish Phase 3, then continue the roadmap
 
-Phase 3 is only partially done. Still open, in `docs/REDUCED_SCOPE_ROADMAP.md`'s order:
+Phase 3's core/CLI/test layer is now complete except for one item:
 
 - Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation --
-  `TicketService::editIssue` deliberately does not touch either field yet.
-- Always-allowed project moves (D37) -- moving an issue to a different project needs a new key/number
-  (via `issue_key_aliases`, which exists as a schema foundation but is not yet written to by any code
-  path) and a decision on what happens to a moved issue's parent/Epic link or sub-tasks, since D64-D66
-  require a parent and its children to share a project.
-- The integer rank/renumber migration (D31), which needs a **new** migration (not an edit to
-  `003_product_foundation.sql`, which is already applied and immutable) to introduce the real ordering
-  column and retire the unused `issues.rank_value` text column that anticipated a different (LexoRank)
-  design.
+  `TicketService::editIssue` deliberately does not touch either field yet. `moveIssue` (D37) exists but
+  deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
+  or any children, so this remains the one open path.
 
 After Phase 3 is fully closed, continue with Milestone 2 (collaboration, attachments, Kanban board),
 Milestone 3 (API, backup/restore), Milestone 4 (packaging and hardening). Do not jump ahead to

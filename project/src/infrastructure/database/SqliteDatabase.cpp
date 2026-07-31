@@ -136,6 +136,7 @@ Domain::Issue readIssue(sqlite3_stmt* statement) {
     issue.updatedAt = text(statement, 30);
     issue.version = sqlite3_column_int64(statement, 31);
     issue.resolution = optionalText(statement, 32);
+    issue.rankOrder = sqlite3_column_int64(statement, 33);
     return issue;
 }
 
@@ -152,7 +153,7 @@ SELECT
     parent.issue_key,
     i.story_points, i.due_date,
     COALESCE(GROUP_CONCAT(DISTINCT l.name), ''),
-    i.created_at, i.updated_at, i.version, i.resolution
+    i.created_at, i.updated_at, i.version, i.resolution, i.rank_order
 FROM issues i
 JOIN projects p ON p.id = i.project_id
 JOIN issue_types it ON it.id = i.issue_type_id
@@ -772,11 +773,22 @@ Domain::Issue SqliteDatabase::createIssue(const Domain::CreateIssueRequest& requ
             parentId = lookupIssueId(database_, *request.parentIssueKey);
         }
 
+        // Simple integer manual order (D31): new issues are appended after
+        // the highest existing rank within their project.
+        std::int64_t rankOrder = 1;
+        {
+            Statement maxRank(database_, "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM issues WHERE project_id = ? AND deleted_at IS NULL");
+            maxRank.bind(1, projectId);
+            if (maxRank.step() == SQLITE_ROW) {
+                rankOrder = sqlite3_column_int64(maxRank.get(), 0);
+            }
+        }
+
         Statement insert(database_, R"SQL(
 INSERT INTO issues(id, project_id, issue_number, issue_key, summary, description,
                    issue_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
-                   parent_issue_id, story_points, due_date, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   parent_issue_id, story_points, due_date, rank_order, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL");
         insert.bind(1, issueId);
         insert.bind(2, projectId);
@@ -792,6 +804,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIM
         parentId ? insert.bind(12, *parentId) : insert.bindNull(12);
         request.storyPoints ? insert.bind(13, *request.storyPoints) : insert.bindNull(13);
         request.dueDate ? insert.bind(14, *request.dueDate) : insert.bindNull(14);
+        insert.bind(15, rankOrder);
         expectDone(database_, insert, "Issue insert");
 
         for (const auto& labelName : request.labels) {
@@ -1047,6 +1060,179 @@ VALUES (?, ?, ?, ?, ?, ?)
         read.bind(1, issueId);
         if (read.step() != SQLITE_ROW) {
             throw std::runtime_error("Edited issue could not be read back");
+        }
+        return readIssue(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+Domain::Issue SqliteDatabase::reorderIssue(const std::string& issueKey,
+                                           std::optional<std::string> beforeIssueKey) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        const std::string issueId = lookupIssueId(database_, issueKey);
+        Statement projectRow(database_, "SELECT project_id FROM issues WHERE id = ?");
+        projectRow.bind(1, issueId);
+        projectRow.step();
+        const std::string projectId = text(projectRow.get(), 0);
+
+        std::optional<std::string> beforeIssueId;
+        if (beforeIssueKey.has_value() && !beforeIssueKey->empty()) {
+            const std::string resolvedBeforeId = lookupIssueId(database_, *beforeIssueKey);
+            if (resolvedBeforeId == issueId) {
+                throw std::invalid_argument("Cannot reorder an issue before itself");
+            }
+            Statement beforeProjectRow(database_, "SELECT project_id FROM issues WHERE id = ?");
+            beforeProjectRow.bind(1, resolvedBeforeId);
+            beforeProjectRow.step();
+            if (text(beforeProjectRow.get(), 0) != projectId) {
+                throw std::invalid_argument("Cannot reorder relative to an issue in a different project");
+            }
+            beforeIssueId = resolvedBeforeId;
+        }
+
+        // Full renumbering pass (D31): sufficient for small per-project issue
+        // counts, and simpler than a minimal-diff fractional/shift scheme.
+        std::vector<std::string> orderedIds;
+        Statement listStatement(database_, "SELECT id FROM issues WHERE project_id = ? AND deleted_at IS NULL ORDER BY rank_order, issue_number");
+        listStatement.bind(1, projectId);
+        for (int result = listStatement.step(); result == SQLITE_ROW; result = listStatement.step()) {
+            orderedIds.push_back(text(listStatement.get(), 0));
+        }
+
+        orderedIds.erase(std::remove(orderedIds.begin(), orderedIds.end(), issueId), orderedIds.end());
+        if (beforeIssueId.has_value()) {
+            const auto position = std::find(orderedIds.begin(), orderedIds.end(), *beforeIssueId);
+            orderedIds.insert(position, issueId);
+        } else {
+            orderedIds.push_back(issueId);
+        }
+
+        for (std::size_t index = 0; index < orderedIds.size(); ++index) {
+            const std::int64_t newRank = static_cast<std::int64_t>(index) + 1;
+            Statement update(database_, "UPDATE issues SET rank_order = ? WHERE id = ? AND rank_order <> ?");
+            update.bind(1, newRank);
+            update.bind(2, orderedIds[index]);
+            update.bind(3, newRank);
+            expectDone(database_, update, "Issue rank update");
+        }
+
+        executeScript("COMMIT;");
+        const std::string sql = std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
+        Statement read(database_, sql);
+        read.bind(1, issueId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Reordered issue could not be read back");
+        }
+        return readIssue(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+Domain::Issue SqliteDatabase::moveIssue(const std::string& issueKey,
+                                        const std::string& targetProjectKey,
+                                        const std::string& actorUserId) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        const std::string issueId = lookupIssueId(database_, issueKey);
+        Statement current(database_, R"SQL(
+SELECT i.project_id, p.project_key, i.issue_key, i.parent_issue_id
+FROM issues i JOIN projects p ON p.id = i.project_id
+WHERE i.id = ?
+)SQL");
+        current.bind(1, issueId);
+        current.step();
+        const std::string currentProjectId = text(current.get(), 0);
+        const std::string currentProjectKey = text(current.get(), 1);
+        const std::string currentIssueKey = text(current.get(), 2);
+        const bool hasParent = sqlite3_column_type(current.get(), 3) != SQLITE_NULL;
+        if (hasParent) {
+            throw std::invalid_argument("Cannot move an issue that has a parent");
+        }
+
+        Statement childCheck(database_, "SELECT COUNT(*) FROM issues WHERE parent_issue_id = ? AND deleted_at IS NULL");
+        childCheck.bind(1, issueId);
+        childCheck.step();
+        if (sqlite3_column_int64(childCheck.get(), 0) > 0) {
+            throw std::invalid_argument("Cannot move an issue that has child issues");
+        }
+
+        Statement projectRow(database_, "SELECT id, next_issue_number FROM projects WHERE project_key = ? AND archived = 0 AND deleted_at IS NULL");
+        projectRow.bind(1, targetProjectKey);
+        if (projectRow.step() != SQLITE_ROW) {
+            throw std::invalid_argument("Unknown project: " + targetProjectKey);
+        }
+        const std::string targetProjectId = text(projectRow.get(), 0);
+        if (targetProjectId == currentProjectId) {
+            throw std::invalid_argument("Issue is already in project: " + targetProjectKey);
+        }
+        const std::int64_t issueNumber = sqlite3_column_int64(projectRow.get(), 1);
+        const std::string newIssueKey = targetProjectKey + "-" + std::to_string(issueNumber);
+
+        Statement increment(database_, "UPDATE projects SET next_issue_number = next_issue_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+        increment.bind(1, targetProjectId);
+        expectDone(database_, increment, "Project counter update");
+
+        // Append-at-end within the target project, same as createIssue (D31).
+        std::int64_t rankOrder = 1;
+        {
+            Statement maxRank(database_, "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM issues WHERE project_id = ? AND deleted_at IS NULL");
+            maxRank.bind(1, targetProjectId);
+            if (maxRank.step() == SQLITE_ROW) {
+                rankOrder = sqlite3_column_int64(maxRank.get(), 0);
+            }
+        }
+
+        Statement update(database_, R"SQL(
+UPDATE issues
+SET project_id = ?, issue_number = ?, issue_key = ?, rank_order = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+)SQL");
+        update.bind(1, targetProjectId);
+        update.bind(2, issueNumber);
+        update.bind(3, newIssueKey);
+        update.bind(4, rankOrder);
+        update.bind(5, issueId);
+        expectDone(database_, update, "Issue move update");
+
+        // The vacated key becomes a permanent alias (D38); safe because
+        // issue_key_aliases.alias_key is a PRIMARY KEY (no collision) and
+        // issue numbers/keys are never reused.
+        Statement alias(database_, "INSERT INTO issue_key_aliases(alias_key, issue_id) VALUES (?, ?)");
+        alias.bind(1, currentIssueKey);
+        alias.bind(2, issueId);
+        expectDone(database_, alias, "Issue key alias insert");
+
+        const std::string actorId = requireUserId(database_, actorUserId);
+        Statement history(database_, R"SQL(
+INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+VALUES (?, ?, ?, 'project', ?, ?)
+)SQL");
+        history.bind(1, Common::uuidV4());
+        history.bind(2, issueId);
+        history.bind(3, actorId);
+        history.bind(4, currentProjectKey);
+        history.bind(5, targetProjectKey);
+        expectDone(database_, history, "Issue history insert");
+
+        executeScript("COMMIT;");
+        const std::string sql = std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
+        Statement read(database_, sql);
+        read.bind(1, issueId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Moved issue could not be read back");
         }
         return readIssue(read.get());
     } catch (...) {

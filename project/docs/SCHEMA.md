@@ -21,8 +21,13 @@ Current schema migrations:
   already existed).
 - `006_collaboration.sql` — self-service watchers and voting (Phase 3 of `REDUCED_SCOPE_ROADMAP.md`,
   D20/D79). Adds `issue_watchers` and `issue_votes`.
+- `007_ranking.sql` — simple integer manual ordering (Phase 3 of `REDUCED_SCOPE_ROADMAP.md`, D31). Drops
+  the never-used `issues.rank_value TEXT` LexoRank placeholder and adds `issues.rank_order INTEGER NOT
+  NULL DEFAULT 0`, backfilled from `issue_number` for any rows already present at migration time. Since
+  `002_seed_demo.sql` runs outside this checksummed flow (see below) and can run before or after this
+  migration, it sets `rank_order` explicitly in its own `INSERT` rather than relying on the backfill.
 
-`002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users.
+`002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, and an explicit `rank_order` (equal to `issue_number`) for each seeded issue.
 
 ## Current tables
 
@@ -101,7 +106,7 @@ Core columns:
 - classification: `issue_type_id`, `status_id`, `priority_id`, `resolution`,
 - people: `reporter_user_id`, `assignee_user_id`,
 - hierarchy: `parent_issue_id`,
-- planning: `story_points`, `due_date`, `rank_value`,
+- planning: `story_points`, `due_date`, `rank_order`,
 - lifecycle: `created_at`, `updated_at`, `version`, `deleted_at`, `deleted_by_user_id`.
 
 Ordinary list, detail and dashboard queries exclude deleted issues. Status changes increment `version`; an expected stale version raises a concurrency conflict.
@@ -139,6 +144,26 @@ an invalid issue, not merely an incomplete copy.
 request that violates the fixed hierarchy (a Sub-task without a parent, a parent of the wrong type, or a
 parent in a different project) with `std::invalid_argument` before the row is ever inserted.
 
+`rank_order` (Phase 3, D31) replaces the never-used `rank_value TEXT` LexoRank placeholder: a plain
+per-project integer, renumbered in a full pass rather than shifted minimally. `IDatabase::reorderIssue`
+fetches the project's live issue-id list ordered by `(rank_order, issue_number)`, removes the moving
+issue, re-inserts it immediately before a given anchor issue (or appends it if no anchor is given), then
+writes back sequential ranks `1..N` for the whole list in the same transaction. A cross-project anchor or
+the issue itself as the anchor is rejected with `std::invalid_argument`. `TicketService::reorderIssue`
+requires project-Member-or-above on the issue's own project (reordering is always single-project).
+
+`IDatabase::moveIssue` (Phase 3, D37) moves an issue to a different project. No compatibility check is
+needed -- every project shares the same fixed types/workflow/fields (D4/D9) -- so a move is exactly a
+`project_id` change plus a freshly allocated key/number in the target project, using the same
+counter/locking mechanism as `createIssue`, plus an append-at-end `rank_order` in the target project. It
+is rejected with `std::invalid_argument` if the issue has a parent, has any (non-deleted) children, is
+already in the target project, or the target project is unknown/archived/deleted -- hierarchy (D64-D66)
+requires a parent and its children to share a project, and re-parenting/un-parenting on move is not
+implemented. The vacated key is written into `issue_key_aliases` as a permanent alias (D38) -- the first
+code path that actually writes to that table -- and the move records one `issue_history` row
+(`field_name = 'project'`). `TicketService::moveIssue` requires project-Member-or-above on **both** the
+source and target projects, mirroring `createIssueLink`'s two-project-role-check pattern.
+
 `resolution` (`fixed`/`done`/`wont-fix`/`duplicate`/`cannot-reproduce`, CHECK-constrained since
 `001_initial.sql`) is now set and cleared by `changeIssueStatus` itself, transactionally with the status
 update (D68-D70): required when the target status's `category` is `done` (missing or unrecognized ->
@@ -150,7 +175,10 @@ touches its children's rows (D69) -- there is no cascade to implement.
 
 ### `issue_key_aliases`
 
-`alias_key` PK, `issue_id` nullable, `created_at`. Detail and comment operations resolve both current and alias keys.
+`alias_key` PK, `issue_id` nullable, `created_at`. Detail and comment operations resolve both current and
+alias keys. Until Phase 3's `moveIssue` (D37/D38), this table was schema-only (no code path ever wrote to
+it); `moveIssue` now inserts the vacated key here on every move, and it is safe from collision because
+`alias_key` is itself a `PRIMARY KEY` and issue numbers/keys are never reused.
 
 ### Labels
 

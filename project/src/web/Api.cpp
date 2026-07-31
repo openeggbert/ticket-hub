@@ -107,6 +107,7 @@ crow::json::wvalue issueJson(const Domain::Issue& issue) {
     json["createdAt"] = issue.createdAt;
     json["updatedAt"] = issue.updatedAt;
     json["version"] = issue.version;
+    json["rankOrder"] = issue.rankOrder;
     return json;
 }
 
@@ -841,6 +842,63 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
         try {
             return jsonResponse(201, issueJson(service->cloneIssue(issueKey, *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Simple integer manual ordering with renumbering (D31). `beforeIssueKey`
+    // omitted or null moves the issue to the end of its project.
+    CROW_ROUTE(app, "/api/issues/<string>/reorder")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            const auto beforeIssueKey = optionalString(body, "beforeIssueKey");
+            return jsonResponse(200, issueJson(service->reorderIssue(issueKey, beforeIssueKey, *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Move an issue to a different project (D37): no compatibility check is
+    // needed since every project shares the same fixed types/workflow/fields.
+    // Rejected if the issue has a parent or any children (see
+    // IDatabase::moveIssue). Requires project-Member-or-above on both the
+    // source and target projects.
+    CROW_ROUTE(app, "/api/issues/<string>/move")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            const std::string targetProjectKey = requiredString(body, "targetProjectKey");
+            return jsonResponse(200, issueJson(service->moveIssue(issueKey, targetProjectKey, *principal)));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {

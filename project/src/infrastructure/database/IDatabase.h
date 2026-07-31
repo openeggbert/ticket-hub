@@ -112,6 +112,31 @@ public:
                                        const std::string& authorUserId) = 0;
     virtual Domain::DashboardStats dashboardStats() = 0;
 
+    // --- Manual ordering (Phase 3, D31) ---
+    // Simple integer rank with renumbering, replacing the never-used
+    // LexoRank-style string rank. Moves `issueKey` to immediately before
+    // `beforeIssueKey` within the same project (both must already be in the
+    // same project; throws std::invalid_argument otherwise), or to the end
+    // of the project if `beforeIssueKey` is nullopt. Every issue whose
+    // rankOrder needs to shift to make room is renumbered by 1 in the same
+    // transaction.
+    virtual Domain::Issue reorderIssue(const std::string& issueKey,
+                                       std::optional<std::string> beforeIssueKey) = 0;
+
+    // --- Move between projects (Phase 3, D37) ---
+    // D37: no compatibility check is needed (every project shares the same
+    // fixed types/workflow/fields), so a move is just a project_id change
+    // plus a new key/number, exactly like creating a fresh issue in the
+    // target project. The vacated key becomes a permanent alias (D38) --
+    // this is the first code path that actually writes to
+    // `issue_key_aliases`, which existed only as a schema foundation before.
+    // Rejected (std::invalid_argument) if the issue has a parent or any
+    // children, since D64-D66 require a parent and its children to share a
+    // project, and re-parenting/un-parenting on move is not implemented.
+    virtual Domain::Issue moveIssue(const std::string& issueKey,
+                                    const std::string& targetProjectKey,
+                                    const std::string& actorUserId) = 0;
+
     // --- Issue links (Phase 3, D17) ---
     // Rejects an unknown source/target key (std::invalid_argument) and an
     // exact-duplicate (source, target, linkType) triple; a self-link is
