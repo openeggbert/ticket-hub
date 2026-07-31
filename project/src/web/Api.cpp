@@ -132,6 +132,40 @@ crow::json::wvalue issueLinkJson(const Domain::IssueLink& link) {
     return json;
 }
 
+crow::json::wvalue bulkActionResultJson(const Domain::BulkActionResult& result) {
+    crow::json::wvalue::list succeeded;
+    for (const auto& key : result.succeeded) {
+        succeeded.emplace_back(key);
+    }
+    crow::json::wvalue::list failed;
+    for (const auto& key : result.failed) {
+        failed.emplace_back(key);
+    }
+    crow::json::wvalue json;
+    json["succeeded"] = std::move(succeeded);
+    json["failed"] = std::move(failed);
+    return json;
+}
+
+// Simple bulk actions (D36) always take {"issueKeys": [...]} plus
+// action-specific fields; every bulk route needs this.
+std::vector<std::string> requiredIssueKeys(const crow::json::rvalue& body) {
+    if (!body.has("issueKeys") || body["issueKeys"].t() != crow::json::type::List) {
+        throw std::invalid_argument("issueKeys must be an array of strings");
+    }
+    std::vector<std::string> keys;
+    for (const auto& item : body["issueKeys"]) {
+        if (item.t() != crow::json::type::String) {
+            throw std::invalid_argument("issueKeys must be an array of strings");
+        }
+        keys.emplace_back(item.s());
+    }
+    if (keys.empty()) {
+        throw std::invalid_argument("issueKeys must not be empty");
+    }
+    return keys;
+}
+
 std::optional<std::string> queryParameter(const crow::request& request, const char* name) {
     const char* value = request.url_params.get(name);
     if (value == nullptr || *value == '\0') {
@@ -564,12 +598,104 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
+    CROW_ROUTE(app, "/api/issues/deleted")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& issue : service->listDeletedIssues(*principal)) {
+                items.emplace_back(issueJson(issue));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
     CROW_ROUTE(app, "/api/issues/<string>")([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             auto issue = service->findIssue(issueKey, resolvePrincipal(request, authService));
             return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Moves an issue to the recycle bin (soft delete, D22) -- not a
+    // permanent delete. See DELETE /api/issues/<key>/permanent below.
+    CROW_ROUTE(app, "/api/issues/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->deleteIssue(issueKey, *principal)) {
+                return errorResponse(404, "Issue not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/restore")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->restoreIssue(issueKey, *principal)) {
+                return errorResponse(404, "Issue not found in recycle bin");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/permanent")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->permanentlyDeleteIssue(issueKey, *principal)) {
+                return errorResponse(404, "Issue not found in recycle bin");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }
@@ -905,6 +1031,107 @@ void registerApiRoutes(crow::SimpleApp& app,
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Simple bulk actions (D36): one action kind per call, applied
+    // independently per issue -- {"succeeded": [...], "failed": [...]}
+    // reports which keys went through, since a partial failure does not
+    // roll back the ones that already succeeded. No cross-project move and
+    // no type change in bulk (D36 explicitly excludes both).
+    CROW_ROUTE(app, "/api/issues/bulk/status")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            const auto issueKeys = requiredIssueKeys(body);
+            const std::string statusKey = requiredString(body, "statusKey");
+            const auto resolution = optionalString(body, "resolution");
+            return jsonResponse(200, bulkActionResultJson(service->bulkChangeStatus(issueKeys, statusKey, resolution, *principal)));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/bulk/assign")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            const auto issueKeys = requiredIssueKeys(body);
+            const auto assigneeEmail = optionalString(body, "assigneeEmail");
+            return jsonResponse(200, bulkActionResultJson(service->bulkAssign(issueKeys, assigneeEmail, *principal)));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/bulk/label")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            const auto issueKeys = requiredIssueKeys(body);
+            const std::string label = requiredString(body, "label");
+            return jsonResponse(200, bulkActionResultJson(service->bulkAddLabel(issueKeys, label, *principal)));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/bulk/delete")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            const auto issueKeys = requiredIssueKeys(body);
+            return jsonResponse(200, bulkActionResultJson(service->bulkDelete(issueKeys, *principal)));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

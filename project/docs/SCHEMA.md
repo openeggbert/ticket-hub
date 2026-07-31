@@ -111,6 +111,22 @@ Ordinary list, detail and dashboard queries exclude deleted issues. Status chang
 contract as `changeIssueStatus`. It does not touch `issue_type_id` or `parent_issue_id` -- re-typing or
 re-parenting an issue after creation is not yet implemented.
 
+`deleted_at`/`deleted_by_user_id` are now a real recycle bin, not just schema foundations (Phase 3, D22):
+`IDatabase::softDeleteIssue`/`restoreIssue`/`listDeletedIssues`/`permanentlyDeleteIssue` mirror the
+project recycle bin exactly (Phase 2, D88/D89) -- fixed 90-day on-demand retention purged inside
+`listDeletedIssues`, no background job. `issue_key`'s own `UNIQUE` constraint keeps the key reserved
+while soft-deleted; permanent deletion cannot cause key reuse because a project's `next_issue_number`
+is never decremented. `TicketService::deleteIssue` requires project-Admin-or-above (mirrors
+`deleteProject`); restore/list/permanent-delete are global-administrator-only, the same split as D88.
+
+Simple bulk actions (Phase 3, D36) are not a separate database code path: `TicketService::
+bulkChangeStatus`/`bulkAssign`/`bulkAddLabel`/`bulkDelete` each loop over a list of issue keys and call
+the corresponding single-issue operation (`changeStatus`/`editIssue`/`deleteIssue`) independently per
+key, so a bulk call carries exactly the same authorization, validation, and workflow rules as doing each
+action one at a time. There is no cross-issue transaction -- a `Domain::BulkActionResult`
+(`succeeded`/`failed` issue-key lists) reports which keys went through rather than rolling back on a
+partial failure.
+
 `TicketService::cloneIssue` (D60, Phase 3) copies `summary`/`description`/`issue_type_id`/`priority_id`/
 labels into a new issue in the same project via the existing `createIssue` path (so the new issue gets a
 fresh key, hierarchy validation, etc. for free), then records a `clones` link back to the original. It

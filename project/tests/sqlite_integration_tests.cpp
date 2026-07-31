@@ -235,6 +235,27 @@ int main() {
         require(dashboard.totalIssues == 9, "dashboard includes newly created issue");
         require(!dashboard.recentIssues.empty() && dashboard.recentIssues.front().key == created.key,
                 "dashboard returns the most recently updated issue first");
+
+        require(database.softDeleteIssue(created.key, demoUserId), "an issue can be soft-deleted");
+        require(!database.findIssueByKey(created.key).has_value(),
+               "a soft-deleted issue is not found by ordinary lookup");
+        require(!database.softDeleteIssue(created.key, demoUserId), "soft-deleting an already-deleted issue is a no-op");
+
+        const auto deletedIssues = database.listDeletedIssues();
+        require(deletedIssues.size() == 1 && deletedIssues[0].key == created.key,
+               "the deleted issue appears in the recycle bin");
+
+        require(database.restoreIssue(created.key), "the issue can be restored");
+        require(database.findIssueByKey(created.key).has_value(),
+               "a restored issue is found again by ordinary lookup");
+        require(database.listDeletedIssues().empty(), "the recycle bin is empty again after restore");
+
+        require(database.softDeleteIssue(created.key, demoUserId), "re-deleting for the permanent-delete test");
+        require(database.permanentlyDeleteIssue(created.key), "the issue can be permanently deleted");
+        require(!database.permanentlyDeleteIssue(created.key),
+               "permanently deleting an already-gone issue returns false");
+        require(scalarInt(databasePath, "SELECT COUNT(*) FROM comments WHERE issue_id = '" + created.id + "'") == 0,
+               "comments cascade-delete with the permanently-deleted issue");
     }
 
     fs::remove(databasePath, removeError);

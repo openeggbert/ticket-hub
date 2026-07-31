@@ -206,6 +206,16 @@ struct IssueLinkDetail {
     std::string targetProjectKey;
 };
 
+// Result of a simple bulk action (D36): each issue key is processed
+// independently (no cross-issue transaction), so a partial failure -- an
+// unknown key, insufficient project role, a workflow rule violation -- does
+// not roll back the keys that already succeeded. No per-item error detail;
+// "simple bulk actions" does not call for it.
+struct BulkActionResult {
+    std::vector<std::string> succeeded;
+    std::vector<std::string> failed;
+};
+
 struct Status {
     std::string key;
     std::string name;

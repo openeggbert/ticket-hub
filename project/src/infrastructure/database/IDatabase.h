@@ -139,6 +139,19 @@ public:
     virtual bool voteIssue(const std::string& issueKey, const std::string& userId) = 0;
     virtual bool unvoteIssue(const std::string& issueKey, const std::string& userId) = 0;
     virtual std::vector<Domain::UserSummary> listVoters(const std::string& issueKey) = 0;
+
+    // --- Issue recycle bin (Phase 3, D22) ---
+    // Mirrors the project recycle bin (Phase 2, D88/D89): fixed 90-day
+    // on-demand retention, no background purge job. `issues.issue_key` keeps
+    // its own UNIQUE constraint while soft-deleted, so the key stays
+    // reserved; permanent deletion cannot cause key reuse because issue
+    // numbers are never reused (a project's next_issue_number only ever
+    // increases). `listDeletedIssues` purges anything past 90 days before
+    // returning results, same as `listDeletedProjects`.
+    virtual bool softDeleteIssue(const std::string& issueKey, const std::string& actorUserId) = 0;
+    virtual bool restoreIssue(const std::string& issueKey) = 0;
+    virtual std::vector<Domain::Issue> listDeletedIssues() = 0;
+    virtual bool permanentlyDeleteIssue(const std::string& issueKey) = 0;
 };
 
 } // namespace TicketHub::Infrastructure::Database
