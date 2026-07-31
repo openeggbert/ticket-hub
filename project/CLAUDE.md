@@ -64,9 +64,11 @@ creation is not implemented — `TicketService::editIssue` does not touch either
 See `NEXT.md` for the exact detail. The Crow-based `ticket-hub` server target, previously blocked by
 network access to `github.com`, now builds and has been live-verified end-to-end (every route across all
 three phases exercised via `curl` against a running instance; zero bugs found) — see "Server
-verification" in `README.md` and `docs/VERIFICATION.md`. The one remaining gap is that `web/` still has
-no login page or any Phase 2/3 UI, so the demo UI cannot yet authenticate against the real session check;
-that is the immediate next step.
+verification" in `README.md` and `docs/VERIFICATION.md`. `web/` now has a minimal login screen
+(browser-verified with Playwright/Chromium: login/logout, CSRF-protected writes, session-expiry
+redirect), but still no UI for anything else — project management, issue hierarchy/resolution pickers,
+full edit, links, clone, watch/vote, the recycle bin, bulk actions, and reorder/move all only exist as
+API routes today. That is the immediate next step.
 
 Phase 1/2/3 scope, for reference:
 

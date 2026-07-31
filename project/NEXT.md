@@ -128,21 +128,35 @@ anything from the removed/deferred list without an explicit new product conversa
   `README.md`'s "Server verification" section. This closes the one standing cross-phase verification gap
   that every prior batch's report had to caveat.
 
-## Immediate next step: a minimal login page
+## Login page: done. Immediate next step: Phase 2/3 UI
 
-The server itself is now verified, but the demo UI in `web/` still has no authentication flow --
-`/api/auth/login` exists and works, but nothing in `web/` calls it, so the demo UI still
-browses/creates issues unauthenticated and will get 401s against a real deployment where session
-enforcement is live end-to-end. This is a real feature gap now, not a verification gap:
+`web/index.html`/`app.js`/`styles.css` now have a minimal login screen, this batch: on load the app
+silently probes `GET /api/auth/me`; a 401 shows a sign-in form (`POST /api/auth/login`) instead of the app
+shell; a successful login shows the app shell with the signed-in user's name/email/initials in the
+sidebar footer and a sign-out button (`POST /api/auth/logout`). `app.js`'s `api()` helper now reads the
+`th_csrf` cookie and attaches `X-CSRF-Token` automatically on every non-`GET` request, and treats any
+`401` from any API call as "session expired" and returns to the login screen. Verified end-to-end with a
+real headless browser (Playwright/Chromium), not just `curl`: fresh-load login gate, successful login
+showing every existing view, a CSRF-protected issue create and status change both succeeding through the
+browser's own `fetch`, logout clearing cookies and staying on the login screen across a reload, and a
+wrong password producing an inline error without ever revealing the app shell. Full detail in
+`docs/VERIFICATION.md`.
 
-1. Add a minimal login page/form to `web/` that calls `POST /api/auth/login`, stores nothing itself
-   (session/CSRF are cookies the browser already holds), and redirects into the existing demo UI on
-   success.
-2. Ideally also add at least minimal UI for the Phase 2/3 actions that only exist as API routes today:
-   project create/archive/recycle-bin, issue hierarchy (parent/Epic picker), full edit, links, clone,
-   watch/vote, recycle bin, bulk actions, and the new reorder/move actions.
-3. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
-   Phase 4/5 if that is prioritized instead; use judgment on ordering, but note it either way as the one
+What is still missing from `web/` -- only login exists; nothing else does yet:
+
+1. Project-management UI: create/archive/recycle-bin (`POST /api/projects`, `PATCH .../archived`,
+   `DELETE`/`POST .../restore`/`DELETE .../permanent`, `GET /api/projects/deleted`).
+2. Issue hierarchy UI: a parent/Epic picker on create (the create modal already has `issueTypeKey`, but no
+   `parentIssueKey` field yet), and a resolution picker on the status-change control when moving to a
+   Done-category status (today `PATCH .../status` is called with `resolution` always omitted, so
+   completing an issue via the UI will 422).
+3. Full edit (`PATCH /api/issues/{key}`), links (`GET`/`POST .../links`, `DELETE /api/issue-links/{id}`),
+   clone (`POST .../clone`), watch/vote (`POST`/`DELETE .../watch`, `.../vote`, `GET .../watchers`,
+   `.../voters`), the issue recycle bin (`DELETE`/`POST .../restore`/`DELETE .../permanent`,
+   `GET /api/issues/deleted`), bulk actions (`POST /api/issues/bulk/*`), and the new reorder/move actions
+   (`POST .../reorder`, `POST .../move`) all only exist as API routes today.
+4. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
+   Phase 4/5 if that is prioritized instead; use judgment on ordering, but note it either way as the
    remaining "written but not reachable from the demo UI" gap.
 
 ## Finish Phase 3, then continue the roadmap
@@ -160,10 +174,11 @@ later-phase features early, and do not implement anything from `docs/REMOVED_AND
 
 ## Verification status
 
-Core, CLI, all seven test binaries, and (as of this batch) the `ticket-hub` server target itself all
-compile and pass/run cleanly on both SQLite and PostgreSQL, in every supported build configuration,
-including a live HTTP smoke test of essentially every route across all three completed phases. The
-long-standing "server target unverified because `github.com` is unreachable" limitation recorded in every
-prior session no longer applies in this environment. Full detail, including exactly what was exercised,
-is in `docs/VERIFICATION.md`. The one remaining gap is UI, not verification: no login page or
-Phase 2/3 UI exists in `web/` yet (see "Immediate next step" above).
+Core, CLI, all seven test binaries, and the `ticket-hub` server target itself all compile and pass/run
+cleanly on both SQLite and PostgreSQL, in every supported build configuration, including a live HTTP
+smoke test of essentially every route across all three completed phases and a real-browser
+(Playwright/Chromium) test of the new login flow. The long-standing "server target unverified because
+`github.com` is unreachable" limitation recorded in every prior session no longer applies in this
+environment. Full detail, including exactly what was exercised, is in `docs/VERIFICATION.md`. The
+remaining gap is UI, not verification: only the login screen exists in `web/` so far -- no Phase 2/3
+project/issue-management UI yet (see "Immediate next step" above).
