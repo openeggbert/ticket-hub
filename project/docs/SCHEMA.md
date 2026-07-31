@@ -26,6 +26,8 @@ Current schema migrations:
   NULL DEFAULT 0`, backfilled from `issue_number` for any rows already present at migration time. Since
   `002_seed_demo.sql` runs outside this checksummed flow (see below) and can run before or after this
   migration, it sets `rank_order` explicitly in its own `INSERT` rather than relying on the backfill.
+- `008_comment_editing.sql` — comment edited-flag (Phase 4 of `REDUCED_SCOPE_ROADMAP.md`, D81). Adds
+  `comments.edited_at`, nullable, set by `IDatabase::editComment` on every edit.
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, and an explicit `rank_order` (equal to `issue_number`) for each seeded issue.
 
@@ -189,9 +191,20 @@ Application services trim, lowercase and deduplicate new labels.
 
 ### Comments
 
-`id`, `issue_id`, `author_user_id`, `body`, `created_at`, `updated_at`, `version`, `deleted_at`, `deleted_by_user_id`.
+`id`, `issue_id`, `author_user_id`, `body`, `created_at`, `updated_at`, `version`, `deleted_at`,
+`deleted_by_user_id`, `edited_at` (migration `008_comment_editing.sql`, Phase 4, D81).
 
-Ordinary comment lists exclude deleted comments. Version-history and tombstone APIs are planned but not yet implemented.
+Ordinary comment lists exclude deleted comments. `IDatabase::editComment` (D81) is a full-replacement edit
+of `body` sharing the same optimistic-locking contract as `editIssue`/`changeIssueStatus`
+(`expectedVersion` -> `Domain::ConcurrencyConflict`) and sets `edited_at` -- there is no stored history of
+prior text, only the fact that an edit happened. `IDatabase::deleteComment` (D82) is a tombstone delete:
+sets `deleted_at`/`deleted_by_user_id`, same mechanism as issues/projects; the row and original body stay
+in the database (visible to a direct query, not through any V1 API) since there is no separate admin
+recycle-bin API for comments, unlike issues and projects -- the existing soft-delete columns are the whole
+mechanism this decision calls for. `TicketService::editComment`/`deleteComment` (D83) use simplified
+permissions: the comment's own author may always edit/delete it; otherwise the actor needs
+project-Admin-or-above (or global admin) on the comment's issue's project -- no separate
+edit-own/edit-all/delete-own/delete-all permission matrix.
 
 ### `issue_history`
 

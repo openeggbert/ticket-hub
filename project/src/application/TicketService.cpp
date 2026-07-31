@@ -29,6 +29,15 @@ void normalizeLabels(std::vector<std::string>& labels) {
     labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
 }
 
+void validateCommentBody(const std::string& body) {
+    if (body.empty()) {
+        throw std::invalid_argument("comment body is required");
+    }
+    if (body.size() > 100000) {
+        throw std::invalid_argument("comment body must not exceed 100000 characters");
+    }
+}
+
 // Used by the single-field bulk actions (assign, add label): editIssue is a
 // full-replacement PUT, so a single-field bulk change still has to carry
 // every other current field forward unchanged.
@@ -207,12 +216,7 @@ std::vector<Domain::Comment> TicketService::listComments(const std::string& issu
 }
 
 Domain::Comment TicketService::addComment(const std::string& issueKey, const std::string& body, const Domain::Principal& actor) {
-    if (body.empty()) {
-        throw std::invalid_argument("comment body is required");
-    }
-    if (body.size() > 100000) {
-        throw std::invalid_argument("comment body must not exceed 100000 characters");
-    }
+    validateCommentBody(body);
     const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
     const auto issue = database_->findIssueByKey(normalizedKey);
     if (!issue) {
@@ -220,6 +224,43 @@ Domain::Comment TicketService::addComment(const std::string& issueKey, const std
     }
     requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     return database_->addComment(Domain::AddCommentRequest{normalizedKey, body}, actor.userId);
+}
+
+std::optional<Domain::Comment> TicketService::editComment(const std::string& issueKey,
+                                                           const std::string& commentId,
+                                                           const std::string& body,
+                                                           const Domain::Principal& actor,
+                                                           const std::optional<std::int64_t> expectedVersion) {
+    validateCommentBody(body);
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    const auto comment = database_->findCommentById(commentId);
+    if (!comment) {
+        return std::nullopt;
+    }
+    if (comment->author.id != actor.userId) {
+        requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    }
+    return database_->editComment(commentId, body, actor.userId, expectedVersion);
+}
+
+bool TicketService::deleteComment(const std::string& issueKey, const std::string& commentId, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    const auto comment = database_->findCommentById(commentId);
+    if (!comment) {
+        return false;
+    }
+    if (comment->author.id != actor.userId) {
+        requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    }
+    return database_->deleteComment(commentId, actor.userId);
 }
 
 Domain::Issue TicketService::cloneIssue(const std::string& issueKey, const Domain::Principal& actor) {

@@ -60,6 +60,10 @@ Implemented now:
   shares the same fixed types/workflow/fields — a move is a `project_id` change plus a freshly allocated
   key/number, exactly like creating a new issue there; rejected if the issue has a parent or any children;
   requires project-Member-or-above on both the source and target projects,
+- **comment editing and tombstone delete** (D81/D82/D83, Phase 4, partial): an `edited_at` timestamp
+  instead of a version-history table; soft-delete via the same columns issues/projects already use, no
+  separate admin recycle-bin API for comments; simplified permissions — the comment's own author can
+  always edit/delete it, otherwise the actor needs project-Admin-or-above (or global admin),
 - every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
@@ -227,6 +231,8 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `PATCH` | `/api/issues/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
 | `GET` | `/api/issues/{key}/comments` | session, or anon if enabled | live comments |
 | `POST` | `/api/issues/{key}/comments` | session + CSRF, project member | add comment |
+| `PATCH` | `/api/issues/{key}/comments/{id}` | session + CSRF, author or project admin | `{body, expectedVersion?}` — full-replacement edit (D81) |
+| `DELETE` | `/api/issues/{key}/comments/{id}` | session + CSRF, author or project admin | tombstone delete (D82) |
 | `POST` | `/api/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
 | `POST` | `/api/issues/{key}/reorder` | session + CSRF, project member | `{beforeIssueKey?}` — manual ordering (D31) |
 | `POST` | `/api/issues/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
@@ -277,6 +283,15 @@ project, or moving an issue that has a parent or any children.
 `linkType` on `POST /api/issues/{key}/links` must be one of the fixed catalog (`blocks`, `relates_to`,
 `duplicates`, `clones`); there is no admin-configurable link-type list. Both the source and target
 issue's projects must be accessible to the actor (project-Member-or-above), not just the source's.
+
+`PATCH /api/issues/{key}/comments/{id}` is a full-replacement edit of `body` (D81), sharing the same
+`expectedVersion`/409 optimistic-locking contract as issue edits, and sets an `editedAt` timestamp on the
+response -- there is no stored history of the comment's prior text, just the fact that it was edited.
+`DELETE /api/issues/{key}/comments/{id}` is a tombstone delete (D82): the row and original body stay in
+the database, simply excluded from `GET /api/issues/{key}/comments` afterward -- there is no separate
+recycle-bin API for comments, unlike issues and projects. Permissions on both are simplified (D83): the
+comment's own author may always edit/delete it; otherwise the actor needs project-Admin-or-above (or
+global admin) — not the edit-own/edit-all/delete-own/delete-all matrix the original spec described.
 
 The watch/vote routes are the one exception among issue writes: they require only an authenticated
 session, not project-Member-or-above, since watching/voting is self-referential and doesn't mutate the
@@ -377,6 +392,18 @@ implementation rather than by a failing test).
 With this, `web/` covers every write route added across Phases 1-3 -- there is no remaining gap between
 what the API exposes and what the demo UI can reach.
 
+A seventh batch started Phase 4 (Collaboration): comment editing and tombstone delete (D81/D82/D83), the
+first Phase 4 feature. Added `IDatabase::editComment`/`deleteComment`/`findCommentById` in both adapters
+(migration `008_comment_editing.sql` adds `comments.edited_at`), matching `TicketService` methods with
+simplified author-or-project-admin permissions, the two new API routes above, and Edit/Delete controls in
+the drawer's comment list (shown only for the comment's author or a global admin -- a client-side
+simplification, not the actual security boundary, since the client never loads per-project role
+information the way it would need to for a project-admin-but-not-author case). Browser-verified: adding,
+editing (with an "(edited)" marker appearing), cancelling an in-progress edit (discards the change), and
+deleting a comment all work through the real HTTP layer; a non-author, non-global-admin actor sees no
+Edit/Delete buttons on someone else's comment at all (the client-side simplification above), and the
+authorization tests separately confirm the server itself also rejects such an attempt with 403.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -384,7 +411,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
   hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, simple cloning,
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
-  renumbering, and moving an issue between projects, in both database adapters),
+  renumbering, moving an issue between projects, and (Phase 4) comment editing/tombstone delete, in both
+  database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the
@@ -394,15 +422,20 @@ What **was** compiled and tested in this environment, with all warnings enabled
   idempotent no-ops, comment cascade on permanent delete; manual ordering: renumbering on
   reorder-before-anchor and reorder-to-end, cross-project and self-anchor rejection; move: target-project
   rank/counter allocation, alias creation and resolution, `issue_history` write, and rejection of
-  same-project moves, unknown-project moves, and moving an issue with a parent or with children),
+  same-project moves, unknown-project moves, and moving an issue with a parent or with children; comment
+  editing: version increment, `editedAt` set, stale-edit conflict, editing an unknown comment; tombstone
+  delete: soft-deleted comments excluded from listing and `findCommentById`, the row and body still
+  physically present, deleting an already-deleted comment is a no-op),
   `identity_integration_tests` (create-user, login success/failure, generic-error anti-enumeration check,
   minimal lockout, session validate/expire/logout), `authorization_integration_tests` (project-role
   gating on issue writes/edits/cloning/links/reorder/move — including the "member of source but not
   target project" move case, not-found semantics under authorization, the anonymous-read-access toggle,
   the full project lifecycle: create/archive/soft-delete/restore/permanently-delete against both
   project-admin and global-administrator paths, confirming watch/vote require no project role unlike
-  everything else, the issue recycle bin's project-admin-vs-global-admin split, and bulk actions applying
-  the same per-issue authorization on a mixed batch of accessible/inaccessible/unknown keys),
+  everything else, the issue recycle bin's project-admin-vs-global-admin split, bulk actions applying
+  the same per-issue authorization on a mixed batch of accessible/inaccessible/unknown keys, and comment
+  edit/delete's simplified author-or-project-admin permissions, including the global-admin-can-moderate-
+  any-comment case and unknown-comment nullopt/false returns),
   `workflow_integration_tests` (every Epic/Sub-task hierarchy rejection case, resolution
   required/rejected-if-unknown on completion, resolution cleared on reopen, the sub-task-completion gate,
   reopening leaving a sub-task's status untouched, clone field-copy correctness, the
@@ -418,7 +451,10 @@ What **was** compiled and tested in this environment, with all warnings enabled
   watch/vote (idempotency, listing, unwatch/unvote, unknown-issue rejection), the issue recycle bin plus
   all four bulk actions (through `TicketService`), and `reorderIssue`/`moveIssue` (renumbering, target
   rank/counter allocation, alias resolution, and the same-project/unknown-project/parent/children
-  rejection cases, through `PostgresDatabase` directly) — all passing.
+  rejection cases, through `PostgresDatabase` directly); Phase 4 repeated it for `editComment`/
+  `deleteComment`/`findCommentById` (version increment, `editedAt`, stale-edit conflict, tombstone
+  exclusion from listing, no-op on an already-deleted comment, through `PostgresDatabase` directly) — all
+  passing.
 
 `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) are now
 built and live-verified as described in "Server verification" above — including every route added across

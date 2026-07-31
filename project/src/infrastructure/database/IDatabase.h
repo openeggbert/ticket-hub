@@ -110,6 +110,25 @@ public:
     virtual std::vector<Domain::Comment> listComments(const std::string& issueKey) = 0;
     virtual Domain::Comment addComment(const Domain::AddCommentRequest& request,
                                        const std::string& authorUserId) = 0;
+    virtual std::optional<Domain::Comment> findCommentById(const std::string& commentId) = 0;
+    // --- Comment editing and tombstone delete (Phase 4, D81/D82) ---
+    // Same optimistic-locking contract as editIssue: a mismatched
+    // `expectedVersion` throws Domain::ConcurrencyConflict; sets `edited_at`
+    // to the current time and returns nullopt if the comment does not exist
+    // (or is already soft-deleted). Permission (author, or project/global
+    // admin, D83) is enforced by TicketService, not here.
+    virtual std::optional<Domain::Comment> editComment(const std::string& commentId,
+                                                        const std::string& body,
+                                                        const std::string& actorUserId,
+                                                        std::optional<std::int64_t> expectedVersion = std::nullopt) = 0;
+    // Tombstone delete (D82): sets deleted_at/deleted_by_user_id, same as
+    // issues/projects. The comment row and its original body remain in the
+    // database (visible to a direct DB query, not through any V1 API) --
+    // there is no separate admin recycle-bin UI/API for comments, unlike
+    // issues and projects; the existing soft-delete columns are the whole
+    // mechanism this decision calls for. Returns false if the comment does
+    // not exist or is already deleted.
+    virtual bool deleteComment(const std::string& commentId, const std::string& actorUserId) = 0;
     virtual Domain::DashboardStats dashboardStats() = 0;
 
     // --- Manual ordering (Phase 3, D31) ---

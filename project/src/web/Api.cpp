@@ -119,6 +119,8 @@ crow::json::wvalue commentJson(const Domain::Comment& comment) {
     json["body"] = comment.body;
     json["createdAt"] = comment.createdAt;
     json["updatedAt"] = comment.updatedAt;
+    json["version"] = comment.version;
+    json["editedAt"] = comment.editedAt ? crow::json::wvalue(*comment.editedAt) : crow::json::wvalue(nullptr);
     return json;
 }
 
@@ -819,6 +821,68 @@ void registerApiRoutes(crow::SimpleApp& app,
                 return errorResponse(400, "Request body must be valid JSON");
             }
             return jsonResponse(201, commentJson(service->addComment(issueKey, requiredString(body, "body"), *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Comment editing (D81/D83): the author may always edit their own
+    // comment; otherwise the actor needs project-Admin-or-above (or global
+    // admin). Sets `edited_at` -- there is no stored history of prior text.
+    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            std::optional<std::int64_t> expectedVersion;
+            if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
+                expectedVersion = body["expectedVersion"].i();
+            }
+            auto comment = service->editComment(issueKey, commentId, requiredString(body, "body"), *principal, expectedVersion);
+            return comment ? jsonResponse(200, commentJson(*comment)) : errorResponse(404, "Comment not found");
+        } catch (const Domain::ConcurrencyConflict& error) {
+            return errorResponse(409, error.what());
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Tombstone delete (D82): the comment row and original body remain in
+    // the database, just excluded from ordinary listing -- there is no
+    // separate recycle-bin API for comments, unlike issues and projects.
+    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->deleteComment(issueKey, commentId, *principal)) {
+                return errorResponse(404, "Comment not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {

@@ -229,7 +229,37 @@ int main() {
 
         const auto comment = database.addComment({created.key, "Database adapter smoke test passed."}, demoUserId);
         require(!comment.id.empty(), "comment receives an id");
+        require(comment.version == 1, "a new comment starts at version 1");
+        require(!comment.editedAt.has_value(), "a new comment has no edited_at");
         require(database.listComments(created.key).size() == 1, "comment can be listed");
+
+        // --- Comment editing and tombstone delete (D81/D82) ---
+        const auto foundComment = database.findCommentById(comment.id);
+        require(foundComment.has_value() && foundComment->body == comment.body, "findCommentById resolves the comment");
+
+        const auto editedComment = database.editComment(comment.id, "Edited via the SQLite integration test.", demoUserId, comment.version);
+        require(editedComment.has_value(), "editComment succeeds");
+        require(editedComment->body == "Edited via the SQLite integration test.", "the body is updated");
+        require(editedComment->version == comment.version + 1, "editing increments the optimistic-lock version");
+        require(editedComment->editedAt.has_value(), "editing sets edited_at");
+
+        bool commentEditConflictDetected = false;
+        try {
+            database.editComment(comment.id, "Stale edit.", demoUserId, comment.version);
+        } catch (const TicketHub::Domain::ConcurrencyConflict&) {
+            commentEditConflictDetected = true;
+        }
+        require(commentEditConflictDetected, "a stale comment edit is rejected");
+
+        require(!database.editComment("00000000-0000-4000-8000-00000000dead", "n/a", demoUserId, std::nullopt).has_value(),
+               "editing an unknown comment returns nullopt");
+
+        require(database.deleteComment(comment.id, demoUserId), "a comment can be soft-deleted");
+        require(database.listComments(created.key).empty(), "a soft-deleted comment no longer appears in the list");
+        require(!database.findCommentById(comment.id).has_value(), "a soft-deleted comment is not found by findCommentById");
+        require(!database.deleteComment(comment.id, demoUserId), "deleting an already-deleted comment is a no-op");
+        require(scalarInt(databasePath, "SELECT COUNT(*) FROM comments WHERE id = '" + comment.id + "'") == 1,
+               "the soft-deleted comment's row (and original body) still physically exists");
 
         const auto dashboard = database.dashboardStats();
         require(dashboard.totalIssues == 9, "dashboard includes newly created issue");

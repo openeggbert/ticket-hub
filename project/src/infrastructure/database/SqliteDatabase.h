@@ -67,6 +67,12 @@ public:
     std::vector<Domain::Comment> listComments(const std::string& issueKey) override;
     Domain::Comment addComment(const Domain::AddCommentRequest& request,
                                const std::string& authorUserId) override;
+    std::optional<Domain::Comment> findCommentById(const std::string& commentId) override;
+    std::optional<Domain::Comment> editComment(const std::string& commentId,
+                                               const std::string& body,
+                                               const std::string& actorUserId,
+                                               std::optional<std::int64_t> expectedVersion = std::nullopt) override;
+    bool deleteComment(const std::string& commentId, const std::string& actorUserId) override;
     Domain::DashboardStats dashboardStats() override;
 
     Domain::Issue reorderIssue(const std::string& issueKey, std::optional<std::string> beforeIssueKey) override;

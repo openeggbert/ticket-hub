@@ -234,6 +234,25 @@ WHERE i.deleted_at IS NULL
     return value(result.get(), 0, 0);
 }
 
+Domain::Comment readComment(PGresult* result, int row) {
+    Domain::Comment comment;
+    comment.id = value(result, row, 0);
+    comment.issueId = value(result, row, 1);
+    comment.author = readUserSummary(result, row, 2);
+    comment.body = value(result, row, 5);
+    comment.createdAt = value(result, row, 6);
+    comment.updatedAt = value(result, row, 7);
+    comment.version = int64Value(result, row, 8);
+    comment.editedAt = optionalValue(result, row, 9);
+    return comment;
+}
+
+constexpr const char* CommentSelect = R"SQL(
+SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
+       c.body, c.created_at::text, c.updated_at::text, c.version, c.edited_at::text
+FROM comments c JOIN users u ON u.id = c.author_user_id
+)SQL";
+
 } // namespace
 
 PostgresDatabase::PostgresDatabase(std::string connectionString,
@@ -1203,12 +1222,8 @@ VALUES ($1, $2, $3, 'project', $4, $5)
 
 std::vector<Domain::Comment> PostgresDatabase::listComments(const std::string& issueKey) {
     auto connection = connect(connectionString_);
-    auto result = execParams(connection.get(), R"SQL(
-SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
-       c.body, c.created_at::text, c.updated_at::text
-FROM comments c
+    auto result = execParams(connection.get(), std::string(CommentSelect) + R"SQL(
 JOIN issues i ON i.id = c.issue_id
-JOIN users u ON u.id = c.author_user_id
 WHERE c.deleted_at IS NULL
   AND i.deleted_at IS NULL
   AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
@@ -1218,13 +1233,7 @@ ORDER BY c.created_at
                              "List comments");
     std::vector<Domain::Comment> comments;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
-        comments.push_back(Domain::Comment{
-            value(result.get(), row, 0),
-            value(result.get(), row, 1),
-            readUserSummary(result.get(), row, 2),
-            value(result.get(), row, 5),
-            value(result.get(), row, 6),
-            value(result.get(), row, 7)});
+        comments.push_back(readComment(result.get(), row));
     }
     return comments;
 }
@@ -1235,24 +1244,84 @@ Domain::Comment PostgresDatabase::addComment(const Domain::AddCommentRequest& re
     const std::string issueId = lookupIssueId(connection.get(), request.issueKey);
     const std::string authorId = requireUserId(connection.get(), authorUserId);
     const std::string commentId = Common::uuidV4();
-    auto result = execParams(connection.get(), R"SQL(
+    execParams(connection.get(), R"SQL(
 INSERT INTO comments(id, issue_id, author_user_id, body, created_at, updated_at)
 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-RETURNING created_at::text, updated_at::text
 )SQL",
-                             {commentId, issueId, authorId, request.body},
-                             "Insert comment");
-    auto author = execParams(connection.get(),
-                             "SELECT id, display_name, email FROM users WHERE id = $1",
-                             {authorId},
-                             "Read comment author");
-    return Domain::Comment{
-        commentId,
-        issueId,
-        readUserSummary(author.get(), 0, 0),
-        request.body,
-        value(result.get(), 0, 0),
-        value(result.get(), 0, 1)};
+               {commentId, issueId, authorId, request.body},
+               "Insert comment");
+    auto result = execParams(connection.get(), std::string(CommentSelect) + "WHERE c.id = $1", {commentId}, "Read created comment");
+    if (PQntuples(result.get()) != 1) {
+        throw std::runtime_error("Created comment could not be read back");
+    }
+    return readComment(result.get(), 0);
+}
+
+std::optional<Domain::Comment> PostgresDatabase::findCommentById(const std::string& commentId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(CommentSelect) + "WHERE c.id = $1 AND c.deleted_at IS NULL", {commentId}, "Find comment");
+    if (PQntuples(result.get()) != 1) {
+        return std::nullopt;
+    }
+    return readComment(result.get(), 0);
+}
+
+// `actorUserId` is unused: D81's simplified edited-flag schema has no
+// per-edit actor column (unlike issue_history) -- only `edited_at` is
+// tracked. Kept in the signature for symmetry with editIssue and in case a
+// future decision adds an `edited_by_user_id` column.
+std::optional<Domain::Comment> PostgresDatabase::editComment(const std::string& commentId,
+                                                              const std::string& body,
+                                                              const std::string& /*actorUserId*/,
+                                                              const std::optional<std::int64_t> expectedVersion) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin edit comment transaction");
+    try {
+        auto current = execParams(connection.get(),
+                                  "SELECT version FROM comments WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+                                  {commentId},
+                                  "Lock comment for edit");
+        if (PQntuples(current.get()) == 0) {
+            exec(connection.get(), "ROLLBACK", "Rollback missing comment transaction");
+            return std::nullopt;
+        }
+        const std::int64_t currentVersion = int64Value(current.get(), 0, 0);
+        if (expectedVersion && *expectedVersion != currentVersion) {
+            throw Domain::ConcurrencyConflict("Comment was modified by another user");
+        }
+
+        execParams(connection.get(), R"SQL(
+UPDATE comments SET body = $1, version = version + 1, edited_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+WHERE id = $2
+)SQL",
+                   {body, commentId},
+                   "Update comment");
+
+        exec(connection.get(), "COMMIT", "Commit edit comment transaction");
+        auto result = execParams(connection.get(), std::string(CommentSelect) + "WHERE c.id = $1", {commentId}, "Read edited comment");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Edited comment could not be read back");
+        }
+        return readComment(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback edit comment transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool PostgresDatabase::deleteComment(const std::string& commentId, const std::string& actorUserId) {
+    auto connection = connect(connectionString_);
+    const std::string actorId = requireUserId(connection.get(), actorUserId);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE comments SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = $1, updated_at = CURRENT_TIMESTAMP
+WHERE id = $2 AND deleted_at IS NULL
+)SQL",
+                             {actorId, commentId},
+                             "Delete comment");
+    return std::string(PQcmdTuples(result.get())) != "0";
 }
 
 Domain::DashboardStats PostgresDatabase::dashboardStats() {

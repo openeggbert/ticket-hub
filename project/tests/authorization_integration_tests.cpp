@@ -170,6 +170,35 @@ int main() {
         require(moved.projectKey == "WEB", "a member of both projects (TH member, WEB admin) can move an issue");
     }
 
+    // --- Comment editing and tombstone delete: simplified author-or-admin permissions (D81/D82/D83) ---
+    {
+        // Sam and alex are both plain TH members (rank 1); demo is the global
+        // administrator. Neither sam nor alex is a TH project admin (rank 2).
+        const auto samComment = tickets.addComment("TH-1", "Comment by sam", sam);
+
+        require(throwsForbidden([&] {
+            tickets.editComment("TH-1", samComment.id, "alex trying to edit sam's comment", alex);
+        }), "a non-author, non-admin project member cannot edit someone else's comment");
+        require(throwsForbidden([&] { tickets.deleteComment("TH-1", samComment.id, alex); }),
+               "a non-author, non-admin project member cannot delete someone else's comment");
+
+        const auto selfEdited = tickets.editComment("TH-1", samComment.id, "edited by the author", sam);
+        require(selfEdited.has_value() && selfEdited->body == "edited by the author" && selfEdited->editedAt.has_value(),
+               "the comment's own author can always edit it");
+
+        // The global administrator can edit/delete any comment (D83).
+        const auto adminEdited = tickets.editComment("TH-1", samComment.id, "edited by the global admin", demo);
+        require(adminEdited.has_value() && adminEdited->body == "edited by the global admin",
+               "a global administrator can edit another user's comment");
+        require(tickets.deleteComment("TH-1", samComment.id, demo),
+               "a global administrator can delete another user's comment");
+
+        require(!tickets.editComment("TH-1", "00000000-0000-4000-8000-00000000dead", "n/a", demo).has_value(),
+               "editing an unknown comment returns nullopt rather than throwing");
+        require(!tickets.deleteComment("TH-1", "00000000-0000-4000-8000-00000000dead", demo),
+               "deleting an unknown comment returns false rather than throwing");
+    }
+
     // --- Watching and voting are self-service and require no project role (D20, D79) ---
     {
         // Sam is not a WEB member at all, unlike every other write tested
