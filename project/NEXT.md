@@ -1,6 +1,7 @@
 # Ticket Hub next work
 
-Current version: 0.2.0 (Phase 3 complete at the core/CLI/test layer, server target still unverified)
+Current version: 0.2.0 (Phase 3 complete at the core/CLI/test layer; server target now built and
+live-verified — see "Server target verified" below)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -105,58 +106,46 @@ anything from the removed/deferred list without an explicit new product conversa
   `DELETE /api/issues/{key}`, `GET /api/issues/deleted`, `POST /api/issues/{key}/restore`,
   `DELETE /api/issues/{key}/permanent`, `POST /api/issues/bulk/{status,assign,label,delete}`, and the new
   `POST /api/issues/{key}/reorder` and `POST /api/issues/{key}/move` routes (plus `rankOrder` added to the
-  issue JSON representation). While adding the edit route (an earlier batch), fixed a real bug found by inspection: three existing
-  routes (`POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments`) were
-  missing a `catch (const Domain::Forbidden&)` handler, so a project-role authorization failure would
-  have fallen through to the generic 500 handler instead of 403. **None of `Api.cpp` has been compiled**
-  — Crow is unavailable in this sandbox (network to `github.com` blocked). See "Known verification
-  limitation" below; this is still the actual next thing to close out, now covering three phases' worth
-  of route changes.
+  issue JSON representation). While adding the edit route (an earlier batch), fixed a real bug found by
+  inspection: three existing routes (`POST /api/issues`, `PATCH /api/issues/{key}/status`,
+  `POST /api/issues/{key}/comments`) were missing a `catch (const Domain::Forbidden&)` handler, so a
+  project-role authorization failure would have fallen through to the generic 500 handler instead of 403.
+- **Server target verified end-to-end, this batch:** outbound network access to `github.com` became
+  reachable in this environment, so the Crow-based `ticket-hub` server target was built
+  (`-DTICKETHUB_BUILD_SERVER=ON`) for the first time this session, after installing the one missing system
+  dependency (`sudo apt-get install libasio-dev` — standalone `asio`, which Crow 1.3.3 requires and which
+  was already listed in `README.md`'s apt line but not yet installed in this sandbox). `src/main.cpp`,
+  `src/web/Api.cpp`, and `src/web/HttpServer.cpp` compiled with zero warnings/errors from Ticket Hub's own
+  code (Crow's own headers emit expected third-party `-Wconversion` noise). Then ran a live HTTP smoke
+  test covering essentially every route in every phase — login/logout/CSRF/session, project-role
+  enforcement, the fixed workflow's resolution/409-conflict rules, full edit, links, cloning,
+  watch/vote, the recycle bin, all four bulk actions, comments, the full project lifecycle, the
+  anonymous-read-access toggle, and both new `reorder`/`move` routes (confirming the moved issue's
+  vacated key still resolves via `issue_key_aliases` through the real HTTP/JSON layer, not just the
+  database layer). **Zero bugs found** in `Api.cpp` — every route worked exactly as documented on the
+  first real test, despite being written blind against established patterns for the whole session up to
+  this point. Full detail in `docs/VERIFICATION.md`'s "Server target verified end-to-end" entry and
+  `README.md`'s "Server verification" section. This closes the one standing cross-phase verification gap
+  that every prior batch's report had to caveat.
 
-## Immediate next step: verify the server target
+## Immediate next step: a minimal login page
 
-No phase's exit gate is fully closed until this is done — it has been deferred across all three phases
-for the same environment reason, not skipped:
+The server itself is now verified, but the demo UI in `web/` still has no authentication flow --
+`/api/auth/login` exists and works, but nothing in `web/` calls it, so the demo UI still
+browses/creates issues unauthenticated and will get 401s against a real deployment where session
+enforcement is live end-to-end. This is a real feature gap now, not a verification gap:
 
-1. In an environment with network access to `github.com` (or a preinstalled/vendored Crow 1.3.3), build
-   the `ticket-hub` server target (`-DTICKETHUB_BUILD_SERVER=ON`) and fix any compile errors in
-   `src/web/Api.cpp` / `HttpServer.cpp` / `main.cpp` — they were written carefully against the existing
-   patterns but never compiled.
-2. Smoke-test Phase 1 end-to-end: `create-user` → `POST /api/auth/login` → confirm `Set-Cookie` headers
-   for `th_session` (HttpOnly) and `th_csrf` (readable) → `GET /api/auth/me` → `POST /api/issues` with
-   and without the `X-CSRF-Token` header (expect 201 vs. 403) → `POST /api/auth/logout`.
-3. Smoke-test Phase 2 end-to-end: `POST /api/projects` as a non-admin (expect 403) and as an admin
-   (expect 201); the archive/delete/restore/permanent-delete/recycle-bin-list routes each as
-   project-admin/global-admin/neither; the anonymous-read-access toggle end-to-end.
-4. Smoke-test Phase 3 end-to-end: `POST /api/issues` with a `parentIssueKey` violating each hierarchy
-   rule (expect 400) and satisfying it (expect 201); `PATCH /api/issues/{key}/status` to a Done-category
-   status without `resolution` (expect 422), with an unknown `resolution` (expect 422), with a valid one
-   (expect 200 and the resolution present in the response); attempt to complete a parent with an
-   unfinished sub-task (expect 422); reopen a completed issue and confirm `resolution` is null in the
-   response; `PATCH /api/issues/{key}` as a non-member (expect 403, confirming the just-fixed
-   `Domain::Forbidden` catch actually works end-to-end) and as a member with a stale `expectedVersion`
-   (expect 409) and with a fresh one (expect 200, every field updated); `POST /api/issues/{key}/clone`
-   (expect 201, a new issue plus a `clones` link); `POST /api/issues/{key}/links` with an unknown
-   `linkType` (expect 400), with a target in a project the actor cannot access (expect 403), and with a
-   valid same-accessible-project target (expect 201); `GET /api/issues/{key}/links` on both ends of the
-   new link; `DELETE /api/issue-links/{id}` as a non-member of either project (expect 403) and as a
-   member of both (expect 200); `POST /api/issues/{key}/watch` and `POST /api/issues/{key}/vote` as a
-   non-member of the issue's project (expect 200, not 403 -- confirming the deliberate no-project-role
-   exception actually holds through the real HTTP layer) and confirm `GET .../watchers`/`.../voters`
-   reflect it; `DELETE /api/issues/{key}` as a project member (expect 403, Admin required) and as a
-   project admin (expect 200); `GET /api/issues/deleted`/`POST .../restore`/`DELETE .../permanent` each
-   as project-admin (expect 403) and global-admin (expect 200); `POST /api/issues/bulk/*` with a mixed
-   batch of accessible/inaccessible/unknown issue keys and confirm the response's `succeeded`/`failed`
-   lists match expectations exactly; `POST /api/issues/{key}/reorder` as a non-member (expect 403) and
-   with a cross-project `beforeIssueKey` (expect 400); `POST /api/issues/{key}/move` as a member of only
-   the source or only the target project (expect 403 either way) and as a member of both (expect 200,
-   with the old key still resolving via `GET /api/issues/{oldKey}`).
-5. Add a minimal login page (and, ideally, project-management and hierarchy/resolution UI) to `web/`
-   (there isn't one yet) so the demo UI can actually authenticate and exercise the newer routes instead
-   of hitting 401s/blank forms once the session check is live.
-6. Only then close all three phases' exit gates for real.
+1. Add a minimal login page/form to `web/` that calls `POST /api/auth/login`, stores nothing itself
+   (session/CSRF are cookies the browser already holds), and redirects into the existing demo UI on
+   success.
+2. Ideally also add at least minimal UI for the Phase 2/3 actions that only exist as API routes today:
+   project create/archive/recycle-bin, issue hierarchy (parent/Epic picker), full edit, links, clone,
+   watch/vote, recycle bin, bulk actions, and the new reorder/move actions.
+3. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
+   Phase 4/5 if that is prioritized instead; use judgment on ordering, but note it either way as the one
+   remaining "written but not reachable from the demo UI" gap.
 
-## After the server target is verified: finish Phase 3, then continue the roadmap
+## Finish Phase 3, then continue the roadmap
 
 Phase 3's core/CLI/test layer is now complete except for one item:
 
@@ -169,11 +158,12 @@ After Phase 3 is fully closed, continue with Milestone 2 (collaboration, attachm
 Milestone 3 (API, backup/restore), Milestone 4 (packaging and hardening). Do not jump ahead to
 later-phase features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
-## Known verification limitation
+## Verification status
 
-The `ticket-hub` server target (Crow) could not be compiled in this sandbox because outbound access to
-`github.com` — needed for CMake `FetchContent` to fetch Crow — was blocked by the session's network
-egress policy. This is the same limitation recorded in every prior session, now spanning three phases of
-route changes. Core, CLI, and all seven test binaries compile and pass on both SQLite and PostgreSQL, in
-every supported build configuration. Full detail, including exactly what was and was not verified, is in
-`docs/VERIFICATION.md`.
+Core, CLI, all seven test binaries, and (as of this batch) the `ticket-hub` server target itself all
+compile and pass/run cleanly on both SQLite and PostgreSQL, in every supported build configuration,
+including a live HTTP smoke test of essentially every route across all three completed phases. The
+long-standing "server target unverified because `github.com` is unreachable" limitation recorded in every
+prior session no longer applies in this environment. Full detail, including exactly what was exercised,
+is in `docs/VERIFICATION.md`. The one remaining gap is UI, not verification: no login page or
+Phase 2/3 UI exists in `web/` yet (see "Immediate next step" above).

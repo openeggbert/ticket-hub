@@ -282,20 +282,40 @@ issue itself. `POST` is idempotent (watching/voting twice is a no-op, still `200
 vote that doesn't exist is also `200`, not `404`.
 
 Session-authenticated writes require the `X-CSRF-Token` header to match the readable `th_csrf` cookie
-set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has not been compiled in any
-sandbox yet** (see "Known verification limitation" below); build and smoke-test it against a real Crow
-checkout before relying on it.
+set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has now been compiled and
+smoke-tested against a live server** (see "Server verification" below).
 
 There is no login page in the web UI yet — `/api/auth/login` exists but nothing in `web/` calls it. The
-demo UI still browses/creates issues without authenticating, which will start failing once the
-write routes actually enforce the session check end-to-end in a real Crow build.
+demo UI still browses/creates issues without authenticating, which will fail once the write routes
+actually enforce the session check end-to-end against a deployed instance.
 
-## Known verification limitation
+## Server verification
 
-The `ticket-hub` server target (Crow-based) could not be built in the authoring sandbox for this
-milestone because outbound access to `github.com` — needed to fetch Crow via CMake `FetchContent` — was
-blocked by the sandbox's network egress policy. This is the same limitation recorded for the original
-prototype in `handoff/IMPLEMENTATION_STATE.md`.
+For most of this project's history, the `ticket-hub` server target (Crow-based) could not be built in the
+authoring sandbox because outbound access to `github.com` — needed to fetch Crow via CMake
+`FetchContent` — was blocked by the sandbox's network egress policy (the same limitation recorded for the
+original prototype in `handoff/IMPLEMENTATION_STATE.md`). **That is no longer the case**: network access
+to `github.com` became reachable, and the server target has now been built and smoke-tested end-to-end
+against a live HTTP server. Crow 1.3.3 additionally needs standalone `asio` (`sudo apt-get install
+libasio-dev`, already listed under "Requirements" above) — install it if `find_package(asio)` fails
+during configure.
+
+`src/main.cpp`, `src/web/Api.cpp`, and `src/web/HttpServer.cpp` compiled with **zero warnings or errors
+from Ticket Hub's own code** (Crow's own headers emit a large number of `-Wconversion` warnings under
+`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`; that's third-party noise, not addressable here). Every
+route in the "Prototype API" table above — spanning all three completed phases — was then exercised live
+with `curl` against a running instance: login/logout/session validation, CSRF enforcement (missing token
+→ 403), project-role enforcement (non-member → 403), the fixed workflow's resolution-required/cleared and
+409-conflict rules, full-replacement edit, cloning, issue links, watching/voting, the issue recycle bin,
+all four bulk actions, comments, the full project lifecycle, the anonymous-read-access toggle, and the two
+newest routes — `POST /api/issues/{key}/reorder` and `POST /api/issues/{key}/move` — including confirming
+a moved issue's vacated key still resolves via `issue_key_aliases` through the real HTTP/JSON layer.
+**Zero bugs were found** in `Api.cpp` across this sweep — every route, written blind against established
+patterns over many prior batches, behaved exactly as documented on the first real test. Full detail is in
+`docs/VERIFICATION.md`'s "Server target verified end-to-end" entry.
+
+What is still **not** done: there is no login page or any authentication UI in `web/` (see above) — that
+is a real gap, not a verification gap, and is the next thing to build (`NEXT.md`).
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
@@ -340,25 +360,21 @@ What **was** compiled and tested in this environment, with all warnings enabled
   rank/counter allocation, alias resolution, and the same-project/unknown-project/parent/children
   rejection cases, through `PostgresDatabase` directly) — all passing.
 
-What was **not** compiled or tested: `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the
-`ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, the Phase 2 project-CRUD and
-anonymous-read-toggle routes, the Phase 3 `parentIssueKey`/`resolution` request fields, the
-`PATCH /api/issues/{key}` full-edit route, the HTTP 422 mapping for `Domain::WorkflowViolation`, and the
-new `POST /api/issues/{key}/clone`, `GET`/`POST /api/issues/{key}/links`,
-`POST`/`DELETE /api/issues/{key}/watch`, `GET /api/issues/{key}/watchers`,
-`POST`/`DELETE /api/issues/{key}/vote`, `GET /api/issues/{key}/voters`,
-`DELETE /api/issue-links/{id}`, `DELETE /api/issues/{key}`, `GET /api/issues/deleted`,
-`POST /api/issues/{key}/restore`, `DELETE /api/issues/{key}/permanent`,
+`src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) are now
+built and live-verified as described in "Server verification" above — including every route added across
+Phases 1-3: the session-cookie/CSRF wiring, the project-CRUD and anonymous-read-toggle routes, the
+`parentIssueKey`/`resolution` request fields, the `PATCH /api/issues/{key}` full-edit route, the HTTP 422
+mapping for `Domain::WorkflowViolation`, `POST /api/issues/{key}/clone`,
+`GET`/`POST /api/issues/{key}/links`, `POST`/`DELETE /api/issues/{key}/watch`,
+`GET /api/issues/{key}/watchers`, `POST`/`DELETE /api/issues/{key}/vote`,
+`GET /api/issues/{key}/voters`, `DELETE /api/issue-links/{id}`, `DELETE /api/issues/{key}`,
+`GET /api/issues/deleted`, `POST /api/issues/{key}/restore`, `DELETE /api/issues/{key}/permanent`,
 `POST /api/issues/bulk/{status,assign,label,delete}`, `POST /api/issues/{key}/reorder`, and
-`POST /api/issues/{key}/move` routes, follow the exact patterns already used by
-the surrounding (previously-verified) route handlers, but none of it has been built or exercised against
-a real HTTP client. (While adding the edit route, three existing routes -- `POST /api/issues`,
-`PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments` -- were found to be missing a
-`catch (const Domain::Forbidden&)` handler,
-which would have surfaced a project-role authorization failure as HTTP 500 instead of 403; fixed
-alongside the new route, still equally unverified.) Build and smoke-test the server target in an
-environment with network access to `github.com` (or a preinstalled Crow package) before trusting it in
-production.
+`POST /api/issues/{key}/move`. (Earlier, while adding the edit route, three existing routes --
+`POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments` -- were found by
+inspection to be missing a `catch (const Domain::Forbidden&)` handler, which would have surfaced a
+project-role authorization failure as HTTP 500 instead of 403; fixed before this verification pass, and
+the live sweep confirms the fix actually works end-to-end.)
 
 Schema migrations are files such as `001_initial.sql` and `003_product_foundation.sql`. The runner:
 

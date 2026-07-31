@@ -61,10 +61,12 @@ fixed workflow) of `docs/REDUCED_SCOPE_ROADMAP.md` are now **complete at the cor
 one deliberate exception: re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after
 creation is not implemented — `TicketService::editIssue` does not touch either field, and `moveIssue`
 (D37) rejects moving an issue that currently has a parent or any children rather than re-parenting it.
-See `NEXT.md` for the exact detail. All three phases share one open item: the Crow-based `ticket-hub`
-server target has never been compiled in this environment (network access to `github.com` is blocked);
-`src/web/Api.cpp` has been updated to match each phase's application-layer signatures but is unverified.
-Verifying the server target is the immediate next step before any phase's exit gate can close for real.
+See `NEXT.md` for the exact detail. The Crow-based `ticket-hub` server target, previously blocked by
+network access to `github.com`, now builds and has been live-verified end-to-end (every route across all
+three phases exercised via `curl` against a running instance; zero bugs found) — see "Server
+verification" in `README.md` and `docs/VERIFICATION.md`. The one remaining gap is that `web/` still has
+no login page or any Phase 2/3 UI, so the demo UI cannot yet authenticate against the real session check;
+that is the immediate next step.
 
 Phase 1/2/3 scope, for reference:
 

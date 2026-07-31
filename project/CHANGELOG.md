@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — Server target verified end-to-end for the first time
+
+- Outbound network access to `github.com` became reachable in this environment, so the Crow-based
+  `ticket-hub` server target was built (`-DTICKETHUB_BUILD_SERVER=ON`) for the first time this session,
+  after installing the one missing system dependency, standalone `asio` (`sudo apt-get install
+  libasio-dev`, already listed in `README.md`'s apt line). `src/main.cpp`, `src/web/Api.cpp`, and
+  `src/web/HttpServer.cpp` compiled with zero warnings/errors from Ticket Hub's own code.
+- Ran a live HTTP smoke test against a running instance covering essentially every route across all three
+  completed phases: login/logout/session validation, CSRF enforcement, project-role enforcement, the
+  fixed workflow's resolution-required/cleared and optimistic-lock-conflict rules, full-replacement edit,
+  cloning, issue links, watching/voting, the issue recycle bin, all four bulk actions, comments, the full
+  project lifecycle, the anonymous-read-access toggle, and the newest `reorder`/`move` routes (confirming
+  a moved issue's vacated key resolves via `issue_key_aliases` through the real HTTP/JSON layer). **Zero
+  bugs found** in `Api.cpp` — every route, written blind against established patterns across the whole
+  session up to this point, behaved exactly as documented on the first real test.
+- This closes the standing cross-phase verification gap recorded in every prior entry of this changelog
+  and `docs/VERIFICATION.md`. Full detail in `docs/VERIFICATION.md`'s "Server target verified end-to-end"
+  entry. The one remaining gap is that `web/` still has no login page or Phase 2/3 UI — a feature gap, not
+  a verification gap (see `NEXT.md`).
+
 ## Unreleased — Phase 3 (complete at the core/CLI/test layer): manual ordering and moving issues between projects (reduced scope)
 
 - Added migration `007_ranking.sql` (both backends): drops the never-used `rank_value TEXT` LexoRank

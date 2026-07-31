@@ -10,8 +10,9 @@ remain as the long-term aspirational baseline only — do not build against them
 ## Implemented prototype slice
 
 - C++20/CMake project and `TicketHub` namespace.
-- Crow route layer and hybrid vanilla HTML/CSS/JS demo UI (route/UI source updated for Phase 1, but not
-  compiled in any sandbox yet — see `docs/VERIFICATION.md`).
+- Crow route layer (all Phase 1-3 routes, built and live-verified against a real HTTP server — see
+  "Server verification" in `README.md` and `docs/VERIFICATION.md`) and a hybrid vanilla HTML/CSS/JS demo
+  UI (still not identity-aware -- no login page yet, see "Not yet built" below).
 - PostgreSQL and SQLite database adapters behind one application-facing interface.
 - Ordered checksummed schema migrations and idempotent demo seed.
 - Projects and transactional project-local issue numbering.
@@ -19,8 +20,8 @@ remain as the long-term aspirational baseline only — do not build against them
 - Issue creation/list/detail, status changes, labels and comments -- now principal-driven, not the fixed
   demo user (Phase 1).
 - Issue version exposed for optimistic status-change conflict detection.
-- Permanent issue-key alias lookup foundation.
-- Recycle-bin columns and live-query filtering foundation.
+- Permanent issue-key alias lookup, now actually written to by `moveIssue` (D37/D38, Phase 3).
+- Recycle-bin columns and live-query filtering, now a real recycle bin for both projects and issues.
 - **Local-account identity (Phase 1):** UUID/email users (no `handle` yet), Argon2id password hashing,
   server-side sessions (SHA-256 token hash, 30-day fixed lifetime), minimal login-attempt lockout,
   administrator-only account creation via `ticket-hub-cli create-user`. No self-registration, no
@@ -54,10 +55,10 @@ remain as the long-term aspirational baseline only — do not build against them
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
-- The session-cookie/CSRF wiring and the Phase 2/3 route additions in `src/web/Api.cpp` have not been
-  compiled or smoke-tested (Crow is unavailable in this sandbox); there is also no login page,
-  project-management UI, or hierarchy/resolution/edit/link/clone/watch/vote/recycle-bin/bulk-action/
-  reorder/move UI in `web/` yet.
+- There is no login page, project-management UI, or hierarchy/resolution/edit/link/clone/watch/vote/
+  recycle-bin/bulk-action/reorder/move UI in `web/` yet -- the routes themselves are built and
+  live-verified (see above), but nothing in the demo UI calls `/api/auth/login` or any of the
+  Phase 2/3 routes.
 - Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch

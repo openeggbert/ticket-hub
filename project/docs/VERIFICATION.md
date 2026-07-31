@@ -1,5 +1,87 @@
 # Verification record
 
+## 2026-07-31 — Server target verified end-to-end for the first time (Crow build succeeded)
+
+Every prior entry in this log recorded the same standing limitation: outbound access to `github.com` was
+blocked, so the Crow-based `ticket-hub` server target had never been compiled, and every Phase 1-3 route
+in `src/web/Api.cpp` was written blind against established patterns. That changed this session: network
+access to `github.com` is now reachable from the sandbox, so the server target was built and exercised
+against a live HTTP server for the first time.
+
+### What changed in the environment
+
+- `git ls-remote https://github.com/CrowCpp/Crow.git` succeeds; CMake's `FetchContent_Declare`/
+  `FetchContent_MakeAvailable(Crow)` fetches Crow 1.3.3 successfully.
+- Crow 1.3.3's `CMakeLists.txt` additionally requires standalone `asio` (not Boost.Asio), which was not
+  preinstalled. Installed via `sudo apt-get install -y libasio-dev` (already listed as a dependency in
+  `README.md`'s "Requirements"/apt install line, so no doc change was needed there) — this pulled in
+  `libboost-dev` and related packages as transitive dependencies of the Ubuntu package, not because
+  Ticket Hub itself needs Boost.
+
+### Build
+
+```bash
+cmake -S . -B build -DTICKETHUB_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel "$(nproc)"
+```
+
+Configured and built clean on the first attempt after `libasio-dev` was installed. `-Wall -Wextra
+-Wpedantic -Wconversion -Wshadow` surfaces a large number of warnings **from Crow's own headers**
+(`mustache.h`, `routing.h`, `http_server.h`, `http_connection.h`, `parser.h` — mostly `-Wconversion` on
+`size_t`/`uint64_t` narrowing in Crow's implementation) — expected third-party noise, not addressable in
+this repository. Isolating just `src/main.cpp`, `src/web/Api.cpp`, and `src/web/HttpServer.cpp` (the only
+files this repository owns that only compile when `TICKETHUB_BUILD_SERVER=ON`) confirms **zero warnings
+and zero errors from Ticket Hub's own code** — every route added across Phases 1-3, blind against
+established patterns for months of prior batches, compiled correctly the first time it was actually
+type-checked. `ctest --output-on-failure` is still 7/7 with the server target also built.
+
+### Live HTTP smoke test
+
+Launched the built `ticket-hub` binary against a fresh SQLite database (`TICKETHUB_AUTO_MIGRATE=true
+TICKETHUB_SEED_DEMO=true`, bound to `127.0.0.1:18080`) and drove it with `curl`, covering essentially
+every route in the "Prototype API" table in `README.md`:
+
+- `GET /api/health` — 200, correct backend/version.
+- `POST /api/auth/login` (demo, alex) — 200, `Set-Cookie` for both `th_session` (HttpOnly) and `th_csrf`
+  (readable) as designed; `GET /api/auth/me` reflects the session; `POST /api/auth/logout` then
+  `GET /api/auth/me` — 401, confirming the session is actually gone, not just cookie-cleared client-side.
+- CSRF enforcement: `POST /api/issues` without `X-CSRF-Token` — 403; with a valid token — 201.
+- Project-role enforcement: Sam (TH member, not a WEB member) creating a WEB issue — 403; Alex (not a
+  global admin) creating a project — 403; the global admin — 201.
+- Fixed workflow rules: completing a fresh issue without `resolution` — 422; with a valid `resolution` —
+  200, `resolution` and incremented `version` present in the response; a stale `expectedVersion` — 409.
+  (An earlier pass in this same sweep initially targeted `TH-1`, which the demo seed already has in
+  `done` status — that call correctly returned 200/no-op rather than 422, which is the documented
+  "resolution is ignored when the status does not actually change" behavior, not a bug; re-ran against a
+  freshly created issue to actually exercise the required-resolution path.)
+- **`POST /api/issues/{key}/reorder`** (D31, this session's most recent batch): reordering an issue
+  before another renumbers both correctly (`rankOrder` reflects the new order on `GET`).
+- **`POST /api/issues/{key}/move`** (D37, this session's most recent batch): moving `TH-7` into `WEB`
+  returns the issue with `projectKey: "WEB"`, `key: "WEB-3"`; `GET /api/issues/TH-7` (the vacated key)
+  still resolves to the same issue via the `issue_key_aliases` alias written by `moveIssue` — confirming
+  the alias mechanism works through the real HTTP/JSON layer, not just the database layer directly.
+- Full-replacement issue edit (`PATCH /api/issues/{key}`), cloning (`POST .../clone`), issue links
+  (`POST`/`GET .../links`, `DELETE /api/issue-links/{id}`), watching/voting and their unwatch/unvote/list
+  counterparts, the issue recycle bin (`DELETE`/`POST .../restore`/`DELETE .../permanent`,
+  `GET /api/issues/deleted`), all four bulk actions (`POST /api/issues/bulk/{status,assign,label,delete}`
+  — confirmed `succeeded`/`failed` key lists), comments (`POST`/`GET .../comments`), the full project
+  lifecycle (`POST /api/projects`, `PATCH .../archived`, `DELETE`/`POST .../restore`/
+  `DELETE .../permanent`, `GET /api/projects/deleted`), and the anonymous-read-access toggle
+  (`GET`/`PUT /api/settings/anonymous-read`, confirmed `GET /api/projects` goes 401 → 200 as the toggle
+  flips, and that only a global admin may flip it) — every one exercised live, every one behaved exactly
+  as documented in `README.md`'s "Prototype API" section. **Zero bugs found** in `Api.cpp` across this
+  entire sweep.
+- The scratch SQLite database, server process, and all temporary cookie-jar files were removed after the
+  sweep; nothing from this verification was committed.
+
+### What is still not verified
+
+There is still no login page or any authentication UI in `web/` — the demo UI browses/creates issues
+without ever calling `/api/auth/login`, so it will start failing 401s against a real deployment where
+session enforcement is live end-to-end, exactly as `README.md` already notes. Building a minimal login
+page (and ideally project-management/hierarchy/reorder/move UI) is the next real gap, not a verification
+gap — see `NEXT.md`.
+
 ## 2026-07-31 — Phase 3 complete at the core/CLI/test layer (manual ordering and moving between projects, reduced scope)
 
 Verified in the same session/environment as the batches below: GCC 13.3.0, CMake 3.28.3, SQLite 3.45.1,
