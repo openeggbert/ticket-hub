@@ -473,6 +473,31 @@ using "mark all read" all update the badge correctly through the real HTTP layer
 re-run of the eighth batch's reaction test and the seventh batch's comment-editing test both still pass
 unchanged.
 
+A tenth batch closed out D16 (rich text): comment bodies and issue descriptions now render as formatted
+Markdown instead of plain escaped text, with a visual toolbar and a live preview toggle on every
+Markdown-capable textarea (comment add, comment edit, issue description on create and edit) -- entirely
+in `web/`, no schema or API change, since bodies are still stored and transmitted as raw Markdown text.
+`renderMarkdown`/`renderMarkdownInline` implement a deliberately small subset (bold, italic, inline code,
+links, headings, lists, blockquotes, fenced code, horizontal rules), safe by construction: the raw text
+is HTML-escaped *first* (the same `escapeHtml` used everywhere else in `web/`), and every transform after
+that only ever wraps the already-escaped text in a fixed, hardcoded set of tags -- user input can never
+introduce a real HTML tag or attribute this way, so there is no separate sanitization pass that could be
+wrong. Link targets are restricted to `http(s)`/`mailto`; any other scheme (`javascript:`, etc.) is left
+as literal `[text](url)` text rather than becoming a clickable link. Browser-verified, including two
+security-focused checks: a comment body containing `<script>...</script>` and an `onerror`-bearing `<img>`
+tag renders as inert, visible literal text (confirmed via a page-level flag that the payload never
+executes) rather than as markup, and a `[label](javascript:alert(1))` link renders as literal bracket-
+paren text rather than a clickable anchor. Caught and fixed one real rendering bug during implementation,
+before it reached a security concern: the first cut of the italic regex used `_..._` as an alternative to
+`*...*`, which mishandled text containing two separate double-underscore identifiers (e.g.
+`__init__`-style names) by treating an underscore from the *first* pair and one from the *second* pair as
+matching open/close delimiters, silently swallowing everything in between into a single (still safely
+escaped, just visually wrong) `<em>` span -- fixed by dropping underscore-delimited emphasis entirely and
+supporting only `**bold**`/`*italic*`, which have no such adjacency ambiguity. Also verified no regression
+in the eighth batch's reaction test, the seventh batch's comment-editing test, and the ninth batch's
+mentions/notifications test (unaffected by the `.comment-body-text` markup changing from `<p>` to `<div>`
+to legally contain the new block-level Markdown output).
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 

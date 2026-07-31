@@ -1,8 +1,8 @@
 # Ticket Hub next work
 
 Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, and UI; Phase 4
-(Collaboration) in progress -- comment editing/tombstone delete, fixed emoji reactions, and @mention
-handles/the fixed in-app notification set are done — see below)
+(Collaboration) in progress -- comment editing/tombstone delete, fixed emoji reactions, @mention
+handles/the fixed in-app notification set, and the Markdown editor toolbar/preview are done — see below)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -203,8 +203,36 @@ anything from the removed/deferred list without an explicit new product conversa
   type isolated in its own issue with an explicit `markAllNotificationsRead` reset between sub-tests, so
   no sub-test's leftover watcher state contaminates the next one's assertions), identity-integration
   (handle normalization/uniqueness/format validation), and live-PostgreSQL test coverage. Full detail in
-  `docs/VERIFICATION.md`. Rest of Phase 4 (D16, D13, D23) is not yet implemented -- see "Not yet built"
-  in `docs/SCOPE.md`.
+  `docs/VERIFICATION.md`.
+- **Phase 4 continued (Markdown editor toolbar, live preview, and sanitized rendering, D16), this
+  batch:** `web/` gained `renderMarkdown`/`renderMarkdownInline`, a deliberately small Markdown-to-HTML
+  subset (bold `**x**`, italic `*x*`, inline code, links, `#`/`##`/`###` headings, `-`/`*` and `1.`
+  lists, `>` blockquotes, fenced code, `---` rules) applied to comment bodies and issue descriptions
+  wherever they're displayed. Safe by construction, not by a separate sanitization pass: the raw text is
+  HTML-escaped *first* (the same `escapeHtml` used everywhere else), and every transform after that only
+  wraps the already-escaped text in a fixed, hardcoded set of tags, so user input can never introduce a
+  real HTML tag or attribute. Link targets are restricted to `http(s)`/`mailto`; any other scheme is left
+  as literal `[text](url)` text. Added `attachMarkdownToolbar` (Bold/Italic/Code/Link/Bulleted-list/
+  Numbered-list/Quote buttons plus a live-preview toggle, pure `textarea.selectionStart`/`selectionEnd`
+  manipulation, no `execCommand`/`contenteditable`) and wired it to all four Markdown-capable textareas:
+  comment add, comment edit, issue description on create, issue description on edit. No schema or API
+  change -- bodies are still stored/transmitted as raw Markdown text. Caught and fixed a real rendering
+  bug during implementation: the first cut of the italic regex accepted `_..._` as well as `*...*`, which
+  mishandled text containing two separate double-underscore identifiers (e.g. `__init__`-style names) --
+  an underscore from the *first* pair and one from the *second* pair matched as open/close delimiters,
+  silently swallowing everything between them into one (still safely escaped, just visually wrong) `<em>`
+  span. Fixed by dropping underscore-delimited emphasis entirely (bold/italic use only `**`/`*`, which
+  have no such adjacency ambiguity). Browser-verified: the toolbar's Bold button wraps a text selection
+  with `**`; the Preview toggle shows/hides a live-rendered pane and swaps back correctly; a posted
+  comment with bold/italic/code/link/list/quote markup renders as real `<strong>`/`<em>`/`<code>`/`<a>`/
+  `<ul><li>`/`<blockquote>` elements; a `<script>`/`onerror`-`<img>` payload renders as inert literal text
+  with no code execution (checked via a page-level flag, not just visual inspection); a
+  `javascript:`-scheme link renders as literal bracket-paren text, never a clickable anchor; an issue
+  description edit renders its heading/bold correctly. Re-ran the reaction, comment-editing, and
+  mentions/notifications browser tests to confirm no regression from `.comment-body-text` changing from
+  `<p>` to `<div>` (needed to legally contain the new block-level Markdown output). Full detail in
+  `docs/VERIFICATION.md`. Rest of Phase 4 (D13, D23) is not yet implemented -- see "Not yet built" in
+  `docs/SCOPE.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) has started. Immediate next step: continue Phase 4
 
@@ -225,13 +253,14 @@ where the new checkboxes/reorder buttons live inside the same table row that alr
 drawer on click.
 
 There is no remaining gap between what the API exposes (for Phases 1-3) and what the demo UI can reach.
-Comment editing/tombstone delete (D81/D82/D83), fixed emoji reactions (D84), and @mention handles/the
-fixed in-app notification set (D56/D80/D14) are the first three Phase 4 slices, and all three are also
-already fully covered in the UI. What's left is the rest of Phase 4, Phase 5, or optional UX polish:
+Comment editing/tombstone delete (D81/D82/D83), fixed emoji reactions (D84), @mention handles/the
+fixed in-app notification set (D56/D80/D14), and the Markdown editor toolbar/live preview (D16) are the
+first four Phase 4 slices, and all four are also already fully covered in the UI. What's left is the
+rest of Phase 4, Phase 5, or optional UX polish:
 
-1. Continue Phase 4 (Collaboration) per `docs/REDUCED_SCOPE_ROADMAP.md`: D16 (full Markdown
-   editor/toolbar/preview -- the next most self-contained slice), D13 (simplified worklogs), and D23 (the
-   append-only admin/security audit log). Then Phase 5 (Attachments and Kanban board).
+1. Continue Phase 4 (Collaboration) per `docs/REDUCED_SCOPE_ROADMAP.md`: D13 (simplified worklogs -- the
+   next most self-contained slice) and D23 (the append-only admin/security audit log). Then Phase 5
+   (Attachments and Kanban board).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (today's board is read-only, clicking a card just opens the drawer; the Issues table's
    up/down buttons are the only reorder UI); a friendlier bulk-status picker that also supports
@@ -257,20 +286,23 @@ later-phase features early, and do not implement anything from `docs/REMOVED_AND
 
 Core, CLI, all seven test binaries, and the `ticket-hub` server target itself all compile and pass/run
 cleanly on both SQLite and PostgreSQL, in every supported build configuration, including a live HTTP
-smoke test of essentially every route across all three completed phases and, across nine batches, a
+smoke test of essentially every route across all three completed phases and, across ten batches, a
 real-browser (Playwright/Chromium) test of every write route the demo UI now exposes: login/logout,
 hierarchy/resolution pickers, full edit/clone/links/watch-vote/delete in the issue drawer, project
 management, the issue recycle bin, reorder/move/bulk actions, comment editing/tombstone delete
 (add/edit/cancel/delete as the author, plus a cross-user check that a non-author, non-admin user cannot
 see Edit/Delete on someone else's comment), fixed emoji reactions (react/un-react toggling with a
 live count, a second distinct reaction key coexisting with the first, and a cross-user check that counts
-are shared while each user's own "active" highlight is independently correct), and now @mention handles
+are shared while each user's own "active" highlight is independently correct), @mention handles
 and the fixed in-app notification set (assigning notifies the assignee, @mention autocomplete inserts a
 matching handle and notifies the mentioned user, and the notification panel/badge/mark-read/mark-all-read
-flow). The long-standing "server target unverified because `github.com` is unreachable" limitation
-recorded in every prior session no longer applies in this environment, and there is no longer a gap
-between what the API exposes for Phases 1-3 (plus the comment-editing, reactions, and mentions/
-notifications slices of Phase 4) and what the demo UI can reach.
+flow), and now the Markdown editor toolbar and live preview (toolbar buttons producing correctly-rendered
+`<strong>`/`<em>`/`<code>`/`<a>`/list/`<blockquote>` output, the preview toggle, and -- security-focused
+-- confirming a `<script>`/`onerror`-`<img>` payload never executes and a `javascript:`-scheme link never
+becomes clickable). The long-standing "server target unverified because `github.com` is unreachable"
+limitation recorded in every prior session no longer applies in this environment, and there is no longer
+a gap between what the API exposes for Phases 1-3 (plus the comment-editing, reactions, mentions/
+notifications, and Markdown-rendering slices of Phase 4) and what the demo UI can reach.
 `findCommentById`/`editComment`/`deleteComment` gained dedicated SQLite-integration coverage (success,
 version-increment, `edited_at` set, stale-version conflict, unknown-comment no-op) and
 authorization-integration coverage (non-author-non-admin Forbidden, self-edit succeeds, global-admin can

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — Markdown editor toolbar, live preview, and sanitized rendering (D16)
+
+- **Rendered Markdown (D16)**: comment bodies and issue descriptions now render as formatted HTML
+  (bold/italic/inline code/links/headings/lists/blockquotes/fenced code/horizontal rules) instead of
+  plain escaped text. The renderer is a deliberately small subset, not a general-purpose Markdown
+  engine, and is safe by construction: the raw input is HTML-escaped *first*, and every transform only
+  ever wraps the already-escaped text in a fixed set of hardcoded tags, so user input can never
+  introduce a real HTML tag or attribute -- there is no separate sanitization pass to get wrong. Link
+  URLs are restricted to `http(s)`/`mailto`; any other scheme (e.g. `javascript:`) is left as literal
+  `[text](url)` text instead of becoming a clickable link.
+- **Visual toolbar and live preview**: Bold/Italic/Code/Link/Bulleted-list/Numbered-list/Quote buttons
+  above every Markdown-capable textarea (comment add, comment edit, issue description on create and
+  edit), plus a Preview toggle that swaps the textarea for a live-rendered view of its current content.
+- Bold/italic use only `**`/`*`, not `__`/`_` -- underscore delimiters are ambiguous with snake_case/
+  dunder identifiers (e.g. `__init__`), where a naive regex would treat two adjacent underscores
+  elsewhere in the text as an unintended emphasis span.
+- No schema or API change: comment/description bodies are still stored and transmitted as raw Markdown
+  text: this is a display-only change, plus the toolbar/preview UI.
+
 ## Unreleased — @mention handles and the fixed in-app notification set (D56/D80/D14)
 
 - **@mention handles (D56)**: `users.handle` (migration `010_mentions_and_notifications.sql`, both
