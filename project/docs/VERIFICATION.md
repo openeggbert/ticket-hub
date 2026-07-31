@@ -1,5 +1,64 @@
 # Verification record
 
+## 2026-07-31 — Full edit, clone, links, and watch/vote UI added to the issue drawer
+
+Added the next slice of `web/` UI identified as missing: everything the issue drawer could reach through
+the API but had no controls for -- full edit, clone, links (list/add/delete), and watch/vote.
+
+### What changed
+
+- `web/app.js`: `openIssue()` now fetches links/watchers/voters alongside the issue/comments (5 parallel
+  requests instead of 2), and its rendering was restructured into an inner `render(editing)` closure so
+  the same fetched data can re-render in read or edit mode without a refetch. Added `editFieldsMarkup()`
+  (the edit-mode field set), a drawer actions row (Watch/Vote toggle buttons with live counts, Clone,
+  Edit), a Links section (list with bidirectional outward/inward labels, add form, delete buttons), and a
+  Parent meta row (clickable, when set).
+- `web/styles.css`: `.drawer-actions`, `.link-list`/`.link-row`/`.link-form` styles.
+
+### Two real bugs caught by this batch's own browser testing
+
+1. **Layout bug**: `.link-list` is a CSS grid container; grid items get an implicit content-based minimum
+   width unless overridden, so `.link-row` refused to shrink below its own intrinsic content width and
+   visually overflowed into the drawer's meta sidebar column -- Playwright's click-action safety check
+   ("element intercepts pointer events") caught this directly, refusing to click a delete-link button that
+   was actually covered by the sidebar. Confirmed via `getBoundingClientRect()`: before the fix the link
+   row's right edge sat at x=1090.8 while the sidebar's left edge was at x=1036 (an ~82px real overlap
+   region); after adding `min-width: 0` to `.link-row`, the row's right edge moved to x=1008, clear of the
+   sidebar. This was a genuine bug a real user would have hit too, not a test artifact.
+2. **Test-script bug, not an app bug, but worth recording**: an earlier version of the browser test used
+   an ambiguous `.link-row` selector and picked up the automatic `clones` link (created by the earlier
+   Clone action, per D60) instead of the manually-added `relates_to` link, making it look like the "add
+   link" feature wasn't working. Rewritten to scope the assertion to the row matching the intended link
+   label, which confirmed the feature was correct all along.
+
+### Verification
+
+Standalone Playwright/Chromium scripts (same approach as prior UI batches), against a locally running
+server, SQLite, demo-seeded:
+
+1. Watch toggle: "☆ Watch (0)" → click → "★ Watching (1)" → click again → back to "☆ Watch (0)". Vote
+   toggle: same pattern independently.
+2. Clone: clicking Clone on TH-1 navigates the drawer to the new cloned issue (a fresh key), whose Links
+   section already shows the automatic `clones` link back to TH-1 (D60) without any extra action.
+3. Links: starting from 1 link row (the automatic clone link), adding a `relates_to` link to TH-2 brings
+   the count to 2; the new row shows TH-2's actual summary and is clickable, navigating the drawer to
+   TH-2; from TH-2's own drawer the same link appears (bidirectional) and its delete button works,
+   bringing TH-2's link count back to 0.
+4. Full edit: opening Edit on TH-1 shows editable fields pre-filled with current values; changing
+   summary/description/priority/assignee/story points/labels and clicking Save persists correctly (the
+   drawer re-renders in read mode showing the new values, `edit-error` stays hidden); opening Edit again,
+   changing the summary, and clicking Cancel discards the change (the drawer shows the previously-saved
+   summary, not the discarded one).
+5. Re-ran the login and hierarchy/resolution-picker browser tests from the two prior batches against the
+   same build to confirm no regression -- both still pass unchanged.
+
+All checks passed after the layout fix; no committed test files or screenshots (scratchpad only).
+
+### What is still not built
+
+Project-management UI (create/archive/recycle-bin), the issue recycle bin, bulk actions, and reorder/move
+still have no UI in `web/` -- see `NEXT.md`.
+
 ## 2026-07-31 — Resolution picker and Epic/parent picker added to the demo UI
 
 Fixed two broken UI paths identified while planning the next batch of `web/` work: completing an issue

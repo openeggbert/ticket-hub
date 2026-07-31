@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased — Full edit, clone, links, and watch/vote UI in the issue drawer
+
+- Added an actions row to the issue drawer: Watch/Unwatch toggle (shows count), Vote/Unvote toggle (shows
+  count), Clone (navigates to the new cloned issue), and Edit (switches the drawer into an editable form
+  for summary/description/priority/assignee/story points/due date/labels, with Save calling
+  `PATCH /api/issues/{key}` and Cancel discarding the in-progress edit).
+- Added a Links section to the drawer: lists every link touching the issue (correct outward/inward label,
+  e.g. "blocks" vs. "is blocked by"), a form to add a new link (target key + fixed link-type catalog), and
+  a remove button per link. Links are clickable to navigate directly to the linked issue.
+- The drawer now also shows the issue's parent (when linked, clickable) -- previously invisible in the UI
+  even though `parentIssueKey` was already part of the issue JSON.
+- Found and fixed two real bugs via this batch's own browser testing:
+  - `web/app.js`: watch/vote/clone/link mutations all correctly re-render the drawer from fresh server
+    state, but a naive first attempt at wiring the "Add link" form's target-issue click handler would
+    have needed the page-wide `bindIssueLinks()` helper, which (as already learned in the resolution/
+    hierarchy-picker batch) re-registers duplicate listeners on background view elements -- avoided by
+    scoping link-row click handlers to the freshly-rendered drawer only.
+  - `web/styles.css`: a genuine CSS layout bug -- `.link-list` is a grid container, and CSS grid items get
+    an implicit content-based minimum width unless overridden, so a long link row (`.link-row`) refused to
+    shrink below its own content's intrinsic width and visually overflowed 80+px into the drawer's meta
+    sidebar column, making the delete-link button in that overlap region unclickable (Playwright's own
+    "element intercepts pointer events" check caught this; a real user would have hit the same dead
+    click). Fixed with an explicit `min-width: 0` on `.link-row`. Verified with `getBoundingClientRect()`
+    measurements before and after: the row's right edge moved from 1090px (82px past the sidebar's left
+    edge at 1036px) to 1008px (clear of it).
+- Verified end-to-end with a headless browser (Playwright/Chromium): watch/vote toggles flip and revert
+  correctly with accurate counts; cloning navigates to the new issue and the clone's own Links section
+  already shows the automatic `clones` link back to the original (D60); adding a `relates_to` link shows
+  the correct target summary and label, is clickable to navigate, and is deletable from either linked
+  issue's side (confirming links are genuinely bidirectional through the UI, not just the API); a full
+  edit (summary/description/priority/assignee/story points/labels) saves correctly and an in-progress
+  edit can be cancelled without persisting.
+
 ## Unreleased — Fixed two broken UI paths: completing an issue, and setting an Epic/parent on create
 
 - **Resolution picker** (`web/app.js`, drawer): completing an issue via the UI previously called

@@ -379,86 +379,218 @@ async function applyStatusChange(issueKey, statusKey, resolution, expectedVersio
   }
 }
 
+function editFieldsMarkup(issue) {
+  return `
+    <label class="wide">Summary<input id="edit-summary" value="${escapeHtml(issue.summary)}" maxlength="255" required></label>
+    <label class="wide">Description<textarea id="edit-description" rows="6">${escapeHtml(issue.description)}</textarea></label>
+    <label>Priority<select id="edit-priority">${['highest', 'high', 'medium', 'low', 'lowest'].map(key => `<option value="${key}" ${key === issue.priority.key ? 'selected' : ''}>${key[0].toUpperCase()}${key.slice(1)}</option>`).join('')}</select></label>
+    <label>Assignee<select id="edit-assignee">
+      <option value="">Unassigned</option>
+      <option value="demo@ticket-hub.local" ${issue.assignee?.email === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
+      <option value="alex@ticket-hub.local" ${issue.assignee?.email === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
+      <option value="sam@ticket-hub.local" ${issue.assignee?.email === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
+    </select></label>
+    <label>Story points<input id="edit-story-points" type="number" min="0" max="10000" step="0.5" value="${issue.storyPoints ?? ''}"></label>
+    <label>Due date<input id="edit-due-date" type="date" value="${issue.dueDate ?? ''}"></label>
+    <label class="wide">Labels<input id="edit-labels" value="${escapeHtml(issue.labels.join(', '))}"></label>`;
+}
+
 async function openIssue(issueKey) {
   issueDrawer.classList.remove('hidden');
   drawerBackdrop.classList.remove('hidden');
   issueDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   try {
-    const [issue, comments] = await Promise.all([
+    const [issue, comments, links, watchers, voters] = await Promise.all([
       api(`/api/issues/${encodeURIComponent(issueKey)}`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/comments`)
+      api(`/api/issues/${encodeURIComponent(issueKey)}/comments`),
+      api(`/api/issues/${encodeURIComponent(issueKey)}/links`),
+      api(`/api/issues/${encodeURIComponent(issueKey)}/watchers`),
+      api(`/api/issues/${encodeURIComponent(issueKey)}/voters`)
     ]);
     state.currentIssue = issue;
-    issueDrawer.innerHTML = `
-      <div class="drawer-header"><span class="issue-key">${escapeHtml(issue.key)}</span><button class="icon-button" id="close-drawer" aria-label="Close">×</button></div>
-      <div class="drawer-content">
-        <span class="issue-type"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)} · ${escapeHtml(issue.projectName)}</span>
-        <h1>${escapeHtml(issue.summary)}</h1>
-        <div class="drawer-layout">
-          <div>
-            <section class="drawer-section"><h3>Description</h3><div class="description">${escapeHtml(issue.description || 'No description provided.')}</div></section>
-            <section class="drawer-section">
-              <h3>Comments</h3>
-              <div class="comment-list">${comments.items.length ? comments.items.map(comment => `
-                <article class="comment"><span class="small-avatar">${escapeHtml(initials(comment.author.displayName))}</span><div class="comment-body"><header><strong>${escapeHtml(comment.author.displayName)}</strong><span>${escapeHtml(relativeDate(comment.createdAt))}</span></header><p>${escapeHtml(comment.body)}</p></div></article>`).join('') : '<div class="empty-state">No comments yet.</div>'}</div>
-              <form class="comment-form" id="comment-form"><textarea name="body" rows="3" required placeholder="Add a comment…"></textarea><button class="primary-button" type="submit">Comment</button></form>
-            </section>
+
+    const isWatching = watchers.items.some(user => user.id === state.principal?.userId);
+    const isVoting = voters.items.some(user => user.id === state.principal?.userId);
+
+    function render(editing) {
+      issueDrawer.innerHTML = `
+        <div class="drawer-header"><span class="issue-key">${escapeHtml(issue.key)}</span><button class="icon-button" id="close-drawer" aria-label="Close">×</button></div>
+        <div class="drawer-content">
+          <span class="issue-type"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)} · ${escapeHtml(issue.projectName)}</span>
+          <div class="drawer-actions">
+            <button type="button" class="secondary-button" id="watch-toggle">${isWatching ? '★ Watching' : '☆ Watch'} (${watchers.items.length})</button>
+            <button type="button" class="secondary-button" id="vote-toggle">${isVoting ? '▲ Voted' : '△ Vote'} (${voters.items.length})</button>
+            <button type="button" class="secondary-button" id="clone-issue">⧉ Clone</button>
+            ${editing ? '' : '<button type="button" class="secondary-button" id="edit-issue">✎ Edit</button>'}
           </div>
-          <aside class="meta-list">
-            <div class="meta-row"><span>Status</span><select id="drawer-status" class="status-select">${STATUSES.map(status => `<option value="${status.key}" ${status.key === issue.status.key ? 'selected' : ''}>${status.name}</option>`).join('')}</select></div>
-            <div class="meta-row" id="drawer-resolution-row" ${STATUSES.find(status => status.key === issue.status.key)?.category === 'done' ? '' : 'hidden'}>
-              <span>Resolution</span>
-              ${issue.resolution ? `<strong>${escapeHtml(resolutionLabel(issue.resolution))}</strong>` : `
-              <select id="drawer-resolution">${RESOLUTIONS.map(resolution => `<option value="${resolution.key}">${resolution.name}</option>`).join('')}</select>
-              <div class="resolution-actions">
-                <button type="button" class="secondary-button" id="resolution-cancel">Cancel</button>
-                <button type="button" class="primary-button" id="resolution-confirm">Confirm</button>
-              </div>`}
+          ${editing
+            ? `<div class="form-grid" id="edit-form">${editFieldsMarkup(issue)}</div>
+               <div id="edit-error" class="form-error hidden"></div>
+               <div class="modal-footer" style="padding:0 0 20px"><button type="button" class="secondary-button" id="edit-cancel">Cancel</button><button type="button" class="primary-button" id="edit-save">Save changes</button></div>`
+            : `<h1>${escapeHtml(issue.summary)}</h1>`}
+          <div class="drawer-layout">
+            <div>
+              ${editing ? '' : `<section class="drawer-section"><h3>Description</h3><div class="description">${escapeHtml(issue.description || 'No description provided.')}</div></section>`}
+              <section class="drawer-section">
+                <h3>Links</h3>
+                <div class="link-list">${links.items.length ? links.items.map(link => `
+                  <div class="link-row">
+                    <span class="link-label">${escapeHtml(link.label)}</span>
+                    <span class="issue-key" data-issue-key="${escapeHtml(link.otherIssueKey)}">${escapeHtml(link.otherIssueKey)}</span>
+                    <span class="link-summary">${escapeHtml(link.otherIssueSummary)}</span>
+                    <button type="button" class="icon-button" data-delete-link="${escapeHtml(link.id)}" aria-label="Remove link">×</button>
+                  </div>`).join('') : '<div class="empty-state">No links yet.</div>'}</div>
+                <form class="link-form" id="link-form">
+                  <select name="linkType">
+                    <option value="blocks">blocks</option>
+                    <option value="relates_to">relates to</option>
+                    <option value="duplicates">duplicates</option>
+                  </select>
+                  <input name="targetIssueKey" placeholder="Issue key, e.g. TH-3" required>
+                  <button class="secondary-button" type="submit">Add link</button>
+                </form>
+              </section>
+              <section class="drawer-section">
+                <h3>Comments</h3>
+                <div class="comment-list">${comments.items.length ? comments.items.map(comment => `
+                  <article class="comment"><span class="small-avatar">${escapeHtml(initials(comment.author.displayName))}</span><div class="comment-body"><header><strong>${escapeHtml(comment.author.displayName)}</strong><span>${escapeHtml(relativeDate(comment.createdAt))}</span></header><p>${escapeHtml(comment.body)}</p></div></article>`).join('') : '<div class="empty-state">No comments yet.</div>'}</div>
+                <form class="comment-form" id="comment-form"><textarea name="body" rows="3" required placeholder="Add a comment…"></textarea><button class="primary-button" type="submit">Comment</button></form>
+              </section>
             </div>
-            <div class="meta-row"><span>Priority</span>${priorityChip(issue)}</div>
-            <div class="meta-row"><span>Assignee</span>${assigneeMarkup(issue)}</div>
-            <div class="meta-row"><span>Reporter</span>${escapeHtml(issue.reporter.displayName)}</div>
-            ${issue.parentIssueKey ? `<div class="meta-row"><span>Parent</span><strong class="issue-key" id="drawer-parent-link" style="cursor:pointer">${escapeHtml(issue.parentIssueKey)}</strong></div>` : ''}
-            <div class="meta-row"><span>Story points</span><strong>${issue.storyPoints ?? '—'}</strong></div>
-            <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(issue.dueDate))}</strong></div>
-            <div class="meta-row"><span>Labels</span><div>${labelsMarkup(issue.labels) || '—'}</div></div>
-            <div class="meta-row"><span>Created</span><strong>${escapeHtml(formatDate(issue.createdAt))}</strong></div>
-            <div class="meta-row"><span>Updated</span><strong>${escapeHtml(relativeDate(issue.updatedAt))}</strong></div>
-          </aside>
-        </div>
-      </div>`;
-    document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
-    if (issue.parentIssueKey) {
-      document.querySelector('#drawer-parent-link').addEventListener('click', () => openIssue(issue.parentIssueKey));
-    }
-    document.querySelector('#drawer-status').addEventListener('change', async event => {
-      const newStatusKey = event.target.value;
-      const newStatus = STATUSES.find(status => status.key === newStatusKey);
-      if (newStatus?.category === 'done' && !issue.resolution) {
-        document.querySelector('#drawer-resolution-row').hidden = false;
-        return;
+            <aside class="meta-list">
+              <div class="meta-row"><span>Status</span><select id="drawer-status" class="status-select">${STATUSES.map(status => `<option value="${status.key}" ${status.key === issue.status.key ? 'selected' : ''}>${status.name}</option>`).join('')}</select></div>
+              <div class="meta-row" id="drawer-resolution-row" ${STATUSES.find(status => status.key === issue.status.key)?.category === 'done' ? '' : 'hidden'}>
+                <span>Resolution</span>
+                ${issue.resolution ? `<strong>${escapeHtml(resolutionLabel(issue.resolution))}</strong>` : `
+                <select id="drawer-resolution">${RESOLUTIONS.map(resolution => `<option value="${resolution.key}">${resolution.name}</option>`).join('')}</select>
+                <div class="resolution-actions">
+                  <button type="button" class="secondary-button" id="resolution-cancel">Cancel</button>
+                  <button type="button" class="primary-button" id="resolution-confirm">Confirm</button>
+                </div>`}
+              </div>
+              ${editing ? '' : `
+              <div class="meta-row"><span>Priority</span>${priorityChip(issue)}</div>
+              <div class="meta-row"><span>Assignee</span>${assigneeMarkup(issue)}</div>`}
+              <div class="meta-row"><span>Reporter</span>${escapeHtml(issue.reporter.displayName)}</div>
+              ${issue.parentIssueKey ? `<div class="meta-row"><span>Parent</span><strong class="issue-key" id="drawer-parent-link" style="cursor:pointer">${escapeHtml(issue.parentIssueKey)}</strong></div>` : ''}
+              ${editing ? '' : `
+              <div class="meta-row"><span>Story points</span><strong>${issue.storyPoints ?? '—'}</strong></div>
+              <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(issue.dueDate))}</strong></div>
+              <div class="meta-row"><span>Labels</span><div>${labelsMarkup(issue.labels) || '—'}</div></div>`}
+              <div class="meta-row"><span>Created</span><strong>${escapeHtml(formatDate(issue.createdAt))}</strong></div>
+              <div class="meta-row"><span>Updated</span><strong>${escapeHtml(relativeDate(issue.updatedAt))}</strong></div>
+            </aside>
+          </div>
+        </div>`;
+
+      document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
+      if (issue.parentIssueKey) {
+        document.querySelector('#drawer-parent-link').addEventListener('click', () => openIssue(issue.parentIssueKey));
       }
-      await applyStatusChange(issue.key, newStatusKey, null, issue.version);
-    });
-    document.querySelector('#resolution-confirm')?.addEventListener('click', async () => {
-      const resolution = document.querySelector('#drawer-resolution').value;
-      const statusKey = document.querySelector('#drawer-status').value;
-      await applyStatusChange(issue.key, statusKey, resolution, issue.version);
-    });
-    document.querySelector('#resolution-cancel')?.addEventListener('click', () => {
-      document.querySelector('#drawer-status').value = issue.status.key;
-      document.querySelector('#drawer-resolution-row').hidden = true;
-    });
-    document.querySelector('#comment-form').addEventListener('submit', async event => {
-      event.preventDefault();
-      const body = new FormData(event.currentTarget).get('body').trim();
-      if (!body) return;
-      try {
-        await api(`/api/issues/${encodeURIComponent(issue.key)}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
-        showToast('Comment added');
-        await openIssue(issue.key);
-      } catch (error) { showToast(error.message); }
-    });
+      document.querySelectorAll('.link-row [data-issue-key]').forEach(element => {
+        element.addEventListener('click', () => openIssue(element.dataset.issueKey));
+      });
+
+      document.querySelector('#watch-toggle').addEventListener('click', async () => {
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}/watch`, { method: isWatching ? 'DELETE' : 'POST' });
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      });
+      document.querySelector('#vote-toggle').addEventListener('click', async () => {
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}/vote`, { method: isVoting ? 'DELETE' : 'POST' });
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      });
+      document.querySelector('#clone-issue').addEventListener('click', async () => {
+        try {
+          const cloned = await api(`/api/issues/${encodeURIComponent(issue.key)}/clone`, { method: 'POST' });
+          showToast(`${issue.key} cloned as ${cloned.key}`);
+          await renderCurrentView();
+          await openIssue(cloned.key);
+        } catch (error) { showToast(error.message); }
+      });
+      document.querySelector('#link-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}/links`, {
+            method: 'POST',
+            body: JSON.stringify({ targetIssueKey: values.targetIssueKey.trim(), linkType: values.linkType })
+          });
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      });
+      document.querySelectorAll('[data-delete-link]').forEach(button => {
+        button.addEventListener('click', async () => {
+          try {
+            await api(`/api/issue-links/${encodeURIComponent(button.dataset.deleteLink)}`, { method: 'DELETE' });
+            await openIssue(issue.key);
+          } catch (error) { showToast(error.message); }
+        });
+      });
+
+      document.querySelector('#drawer-status').addEventListener('change', async event => {
+        const newStatusKey = event.target.value;
+        const newStatus = STATUSES.find(status => status.key === newStatusKey);
+        if (newStatus?.category === 'done' && !issue.resolution) {
+          document.querySelector('#drawer-resolution-row').hidden = false;
+          return;
+        }
+        await applyStatusChange(issue.key, newStatusKey, null, issue.version);
+      });
+      document.querySelector('#resolution-confirm')?.addEventListener('click', async () => {
+        const resolution = document.querySelector('#drawer-resolution').value;
+        const statusKey = document.querySelector('#drawer-status').value;
+        await applyStatusChange(issue.key, statusKey, resolution, issue.version);
+      });
+      document.querySelector('#resolution-cancel')?.addEventListener('click', () => {
+        document.querySelector('#drawer-status').value = issue.status.key;
+        document.querySelector('#drawer-resolution-row').hidden = true;
+      });
+      document.querySelector('#comment-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const body = new FormData(event.currentTarget).get('body').trim();
+        if (!body) return;
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+          showToast('Comment added');
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      });
+
+      if (editing) {
+        document.querySelector('#edit-cancel').addEventListener('click', () => render(false));
+        document.querySelector('#edit-save').addEventListener('click', async () => {
+          const errorElement = document.querySelector('#edit-error');
+          const storyPointsValue = document.querySelector('#edit-story-points').value;
+          const payload = {
+            summary: document.querySelector('#edit-summary').value.trim(),
+            description: document.querySelector('#edit-description').value.trim(),
+            priorityKey: document.querySelector('#edit-priority').value,
+            assigneeEmail: document.querySelector('#edit-assignee').value || null,
+            storyPoints: storyPointsValue ? Number(storyPointsValue) : null,
+            dueDate: document.querySelector('#edit-due-date').value || null,
+            labels: document.querySelector('#edit-labels').value.split(',').map(value => value.trim()).filter(Boolean),
+            expectedVersion: issue.version
+          };
+          try {
+            await api(`/api/issues/${encodeURIComponent(issue.key)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+            showToast(`${issue.key} updated`);
+            await renderCurrentView();
+            await openIssue(issue.key);
+          } catch (error) {
+            errorElement.textContent = error.message;
+            errorElement.classList.remove('hidden');
+          }
+        });
+      } else {
+        document.querySelector('#edit-issue').addEventListener('click', () => render(true));
+      }
+    }
+
+    render(false);
   } catch (error) {
     issueDrawer.innerHTML = `<div class="drawer-header"><span>Issue</span><button class="icon-button" id="close-drawer">×</button></div><div class="drawer-content"><div class="error-banner">${escapeHtml(error.message)}</div></div>`;
     document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
