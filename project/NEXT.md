@@ -128,35 +128,30 @@ anything from the removed/deferred list without an explicit new product conversa
   `README.md`'s "Server verification" section. This closes the one standing cross-phase verification gap
   that every prior batch's report had to caveat.
 
-## Issue drawer and project management UI: done. Immediate next step: issue recycle bin, bulk, reorder/move
+## Login, hierarchy/resolution pickers, issue drawer, project management, and issue recycle bin: done. Immediate next step: bulk actions and reorder/move
 
 `web/` now covers: a minimal login screen; an Epic/parent picker on create; an inline resolution picker on
-status change; full edit/clone/links/watch-vote in the issue drawer; and, this batch, project-management
-(create, archive/unarchive, recycle bin -- restore/permanent-delete, all gated the same way the server
-gates them, with a non-admin's attempt surfacing the resulting 403 rather than being hidden client-side
-except where hiding a control entirely is itself the intended UX, like the recycle-bin toggle). Every one
-of these was verified end-to-end with a real headless browser (Playwright/Chromium), not just `curl` --
-full detail in `docs/VERIFICATION.md`. That same browser testing caught and fixed two real bugs: a CSS
-layout bug (a link row overflowing into the drawer's sidebar and blocking clicks) and a state-management
-bug (`state.view`/`selectedProject`/filters were never reset on logout, so a second user in the same
-browser tab could land on a project they can't access or one the first user just archived/deleted).
+status change; full edit/clone/links/watch-vote and a Delete action in the issue drawer; project management
+(create, archive/unarchive, recycle bin); and, this batch, the issue recycle bin (symmetric to the project
+one) -- all gated the same way the server gates them, with a non-admin's attempt surfacing the resulting
+403 rather than being hidden client-side except where hiding a control entirely is itself the intended UX
+(the recycle-bin toggles). Every one of these was verified end-to-end with a real headless browser
+(Playwright/Chromium), not just `curl` -- full detail in `docs/VERIFICATION.md`. That testing has caught
+and fixed real bugs along the way: a CSS layout bug (a link row overflowing into the drawer's sidebar and
+blocking clicks) and a state-management bug (`state.view`/`selectedProject`/filters were never reset on
+logout, so a second user in the same browser tab could land on a project they can't access or one the
+first user just archived/deleted).
 
 What is still missing from `web/`:
 
-1. The issue recycle bin (`DELETE`/`POST .../restore`/`DELETE .../permanent`, `GET /api/issues/deleted`)
-   -- there is no delete-issue action anywhere in the drawer yet, and no recycle-bin view for issues
-   (project recycle bin exists now; issue recycle bin does not, symmetric gap).
-2. Bulk actions (`POST /api/issues/bulk/*`) -- would need multi-select on the Issues table view, which
+1. Bulk actions (`POST /api/issues/bulk/*`) -- would need multi-select on the Issues table view, which
    doesn't exist yet (rows are single-click-to-open only).
-3. The reorder/move actions (`POST /api/issues/{key}/reorder`, `POST /api/issues/{key}/move`) -- reorder
+2. The reorder/move actions (`POST /api/issues/{key}/reorder`, `POST /api/issues/{key}/move`) -- reorder
    naturally wants drag-and-drop on the Board view (not yet interactive; today's board is read-only,
    clicking a card just opens the drawer) and/or a manual "move before/after" picker; move wants a
    project picker somewhere in the drawer.
-4. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
-   Phase 4/5 if that is prioritized instead; use judgment on ordering.
 3. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
-   Phase 4/5 if that is prioritized instead; use judgment on ordering, but note it either way as the
-   remaining "written but not reachable from the demo UI" gap.
+   Phase 4/5 if that is prioritized instead; use judgment on ordering.
 
 ## Finish Phase 3, then continue the roadmap
 

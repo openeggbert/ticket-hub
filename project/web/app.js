@@ -190,6 +190,22 @@ function issueRows(issues) {
     </tr>`).join('');
 }
 
+function deletedIssueRows(issues) {
+  if (!issues.length) {
+    return `<tr><td colspan="7"><div class="empty-state"><strong>The recycle bin is empty</strong></div></td></tr>`;
+  }
+  return issues.map(issue => `
+    <tr>
+      <td><span class="issue-type" title="${escapeHtml(issue.type.name)}"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)}</span></td>
+      <td><span class="issue-key">${escapeHtml(issue.key)}</span></td>
+      <td class="issue-summary">${escapeHtml(issue.summary)}</td>
+      <td>${statusChip(issue)}</td>
+      <td>${priorityChip(issue)}</td>
+      <td>${assigneeMarkup(issue)}</td>
+      <td><div class="project-card-actions"><button type="button" class="secondary-button" data-restore-issue="${escapeHtml(issue.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-issue="${escapeHtml(issue.key)}">Delete permanently</button></div></td>
+    </tr>`).join('');
+}
+
 function tablePanel(issues, title = 'Issues') {
   return `
     <div class="panel">
@@ -254,26 +270,77 @@ async function fetchIssues() {
 }
 
 async function renderIssues() {
+  await renderIssuesView(false);
+}
+
+// Mirrors renderProjectsView's active/recycle-bin toggle: `showingDeleted`
+// swaps the filter bar and normal issue table for the recycle bin (D22,
+// global-administrator-only to view/restore/purge, same split as projects).
+async function renderIssuesView(showingDeleted) {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  await fetchIssues();
+  let issues;
+  if (showingDeleted) {
+    try {
+      issues = (await api('/api/issues/deleted')).items;
+    } catch (error) {
+      showError(error);
+      return;
+    }
+  } else {
+    await fetchIssues();
+    issues = state.issues;
+  }
+  const isAdmin = Boolean(state.principal?.isAdmin);
   const projectOptions = state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('');
   const statusOptions = STATUSES.map(status => `<option value="${status.key}" ${status.key === state.status ? 'selected' : ''}>${status.name}</option>`).join('');
   content.innerHTML = `
-    ${pageHeader('Issues', 'Search, filter, and inspect the work items in a project.', state.selectedProject || 'All projects')}
+    <div class="page-header">
+      <div>
+        <span class="eyebrow">${escapeHtml(state.selectedProject || 'All projects')}</span>
+        <h1>${showingDeleted ? 'Issue recycle bin' : 'Issues'}</h1>
+        <p>${showingDeleted ? 'Issues moved to the recycle bin (90-day retention).' : 'Search, filter, and inspect the work items in a project.'}</p>
+      </div>
+      <div class="page-actions">
+        ${isAdmin ? `<button type="button" class="secondary-button" id="toggle-issue-recycle-bin">${showingDeleted ? '← Back to issues' : '🗑 Recycle bin'}</button>` : ''}
+      </div>
+    </div>
     <div class="panel">
+      ${showingDeleted ? '' : `
       <div class="filter-bar">
         <select id="issue-project-filter"><option value="">All projects</option>${projectOptions}</select>
         <select id="issue-status-filter"><option value="">All statuses</option>${statusOptions}</select>
         <input id="issue-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key or summary">
         <button class="secondary-button" id="clear-filters">Clear</button>
-      </div>
+      </div>`}
       <div style="overflow-x:auto">
         <table class="issue-table">
-          <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th></tr></thead>
-          <tbody>${issueRows(state.issues)}</tbody>
+          <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th>${showingDeleted ? '<th>Actions</th>' : ''}</tr></thead>
+          <tbody>${showingDeleted ? deletedIssueRows(issues) : issueRows(issues)}</tbody>
         </table>
       </div>
     </div>`;
+
+  document.querySelector('#toggle-issue-recycle-bin')?.addEventListener('click', () => renderIssuesView(!showingDeleted));
+
+  if (showingDeleted) {
+    document.querySelectorAll('[data-restore-issue]').forEach(button => button.addEventListener('click', async () => {
+      const key = button.dataset.restoreIssue;
+      try {
+        await api(`/api/issues/${encodeURIComponent(key)}/restore`, { method: 'POST' });
+        showToast(`${key} restored`);
+        await renderIssuesView(true);
+      } catch (error) { showToast(error.message); }
+    }));
+    document.querySelectorAll('[data-permanent-issue]').forEach(button => button.addEventListener('click', async () => {
+      const key = button.dataset.permanentIssue;
+      try {
+        await api(`/api/issues/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
+        showToast(`${key} permanently deleted`);
+        await renderIssuesView(true);
+      } catch (error) { showToast(error.message); }
+    }));
+    return;
+  }
 
   document.querySelector('#issue-project-filter').addEventListener('change', event => {
     state.selectedProject = event.target.value || null;
@@ -517,6 +584,7 @@ async function openIssue(issueKey) {
             <button type="button" class="secondary-button" id="vote-toggle">${isVoting ? '▲ Voted' : '△ Vote'} (${voters.items.length})</button>
             <button type="button" class="secondary-button" id="clone-issue">⧉ Clone</button>
             ${editing ? '' : '<button type="button" class="secondary-button" id="edit-issue">✎ Edit</button>'}
+            ${editing ? '' : '<button type="button" class="secondary-button" id="delete-issue">🗑 Delete</button>'}
           </div>
           ${editing
             ? `<div class="form-grid" id="edit-form">${editFieldsMarkup(issue)}</div>
@@ -604,6 +672,14 @@ async function openIssue(issueKey) {
           showToast(`${issue.key} cloned as ${cloned.key}`);
           await renderCurrentView();
           await openIssue(cloned.key);
+        } catch (error) { showToast(error.message); }
+      });
+      document.querySelector('#delete-issue')?.addEventListener('click', async () => {
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}`, { method: 'DELETE' });
+          showToast(`${issue.key} moved to the recycle bin`);
+          closeDrawer();
+          await renderCurrentView();
         } catch (error) { showToast(error.message); }
       });
       document.querySelector('#link-form').addEventListener('submit', async event => {

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — Issue recycle bin UI
+
+- Added a Delete button (🗑) to the issue drawer's actions row (`DELETE /api/issues/{key}`), closing the
+  drawer and refreshing the current view on success. A non-member/insufficient-role click surfaces the
+  server's 403 as a toast (verified: a TH member who isn't a project admin gets "Actor lacks the required
+  role on project TH", and the drawer stays open since nothing actually happened).
+- Added a recycle-bin toggle to the Issues view, symmetric to the project recycle bin added last batch:
+  visible only to global administrators, swaps the filter bar and normal issue table for a
+  `GET /api/issues/deleted` list with Restore and Delete-permanently buttons per row (`renderIssues()` now
+  delegates to `renderIssuesView(showingDeleted)`, mirroring `renderProjectsView`'s pattern exactly).
+  Deleted-issue rows are deliberately not clickable to open the drawer (a soft-deleted issue isn't found by
+  ordinary `GET /api/issues/{key}` lookup).
+- Verified end-to-end with a headless browser (Playwright/Chromium): deleting an issue via the drawer
+  removes it from the active Issues table and closes the drawer; it appears in the recycle bin; restoring
+  it returns it to the active table; deleting and permanently deleting it removes it from the recycle bin
+  for good; a non-admin sees no recycle-bin toggle at all, and a role-insufficient delete attempt fails
+  with the server's exact error surfaced as a toast rather than silently succeeding or crashing.
+
 ## Unreleased — Project-management UI: create, archive, and recycle bin
 
 - Added a "New project" modal (`POST /api/projects`, global-admin-only server-side) and, on each project

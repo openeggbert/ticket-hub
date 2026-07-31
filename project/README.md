@@ -359,8 +359,13 @@ whatever the first user last had open, including a project they can't access or 
 archived/deleted — fixed by resetting all of `state` on every login-screen transition, not just the
 signed-in user.
 
-Still missing from `web/`: the issue recycle bin, bulk actions, and reorder/move UI. Those routes are all
-live-verified via `curl` (above) but still not reachable from the demo UI.
+A fifth follow-up batch then added the issue recycle bin, symmetric to the project one: a Delete button in
+the drawer's actions row, and a recycle-bin toggle in the Issues view (global-admin-only, with
+Restore/Delete-permanently per row). Browser-verified the same way, including a project-role-insufficient
+delete attempt failing with the server's exact 403 message rather than silently succeeding.
+
+Still missing from `web/`: bulk actions and reorder/move UI. Those routes are all live-verified via `curl`
+(above) but still not reachable from the demo UI.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
