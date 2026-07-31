@@ -233,6 +233,8 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `POST` | `/api/issues/{key}/comments` | session + CSRF, project member | add comment |
 | `PATCH` | `/api/issues/{key}/comments/{id}` | session + CSRF, author or project admin | `{body, expectedVersion?}` — full-replacement edit (D81) |
 | `DELETE` | `/api/issues/{key}/comments/{id}` | session + CSRF, author or project admin | tombstone delete (D82) |
+| `GET` | `/api/issues/{key}/comments/{id}/reactions` | session, or anon if enabled | current reactions |
+| `POST`/`DELETE` | `/api/issues/{key}/comments/{id}/reactions/{key}` | session + CSRF | react/un-react (no project role required, D84) |
 | `POST` | `/api/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
 | `POST` | `/api/issues/{key}/reorder` | session + CSRF, project member | `{beforeIssueKey?}` — manual ordering (D31) |
 | `POST` | `/api/issues/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
@@ -297,6 +299,15 @@ The watch/vote routes are the one exception among issue writes: they require onl
 session, not project-Member-or-above, since watching/voting is self-referential and doesn't mutate the
 issue itself. `POST` is idempotent (watching/voting twice is a no-op, still `200`); `DELETE` on a watch/
 vote that doesn't exist is also `200`, not `404`.
+
+`{key}` in `POST`/`DELETE /api/issues/{key}/comments/{id}/reactions/{key}` is a path segment from the
+fixed eight-reaction catalog (D84: `thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`,
+`rocket`, `eyes` -- GitHub's well-known reaction set, chosen as a conservative default since the decision
+register calls for "a fixed reaction set" without enumerating one). Reactions are self-service like
+watch/vote (no project-role check), and each user may add each reaction key at most once per comment;
+`POST`/`DELETE` are idempotent the same way watch/vote are. `GET .../reactions` returns
+`{items: [{reactionKey, user}, ...]}` -- the caller groups by `reactionKey` for counts/highlighting, the
+same "server stays dumb, client aggregates" split used for issue links.
 
 Session-authenticated writes require the `X-CSRF-Token` header to match the readable `th_csrf` cookie
 set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has now been compiled and
@@ -404,6 +415,22 @@ deleting a comment all work through the real HTTP layer; a non-author, non-globa
 Edit/Delete buttons on someone else's comment at all (the client-side simplification above), and the
 authorization tests separately confirm the server itself also rejects such an attempt with 403.
 
+An eighth batch added the next Phase 4 feature: fixed emoji reactions on comments (D84). Added
+`comment_reactions` (migration `009_comment_reactions.sql`, a three-column composite-key many-to-many
+table mirroring `issue_watchers`/`issue_votes`) with `IDatabase::addCommentReaction`/
+`removeCommentReaction`/`listCommentReactions` in both adapters, matching `TicketService` methods with
+the same self-service/no-project-role reasoning as watch/vote, and the two new API routes above. Since
+the decision register calls for "a fixed reaction set" without naming one, this uses GitHub's own
+well-known eight-reaction set (`thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`,
+`rocket`, `eyes`) as a conservative, familiar default -- documented explicitly as a filled product-decision
+gap. `web/` renders all eight as small pill buttons under each comment, showing a per-reaction count and
+highlighting the ones the current viewer has added; clicking toggles react/un-react through the real HTTP
+layer. Browser-verified: reacting shows the button go active with a "1" count; clicking again removes it
+(button reverts, count disappears); a second, different reaction key can coexist with an active one; and,
+switching to a second user, the count is shared (visible to both) while each user's own "active" highlight
+is independent -- confirmed by alex reacting to a comment demo had already reacted to and the count going
+from 1 to 2 without alex seeing demo's own active state carried over.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -411,8 +438,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
   hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, simple cloning,
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
-  renumbering, moving an issue between projects, and (Phase 4) comment editing/tombstone delete, in both
-  database adapters),
+  renumbering, moving an issue between projects, and (Phase 4) comment editing/tombstone delete and fixed
+  emoji reactions, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the
@@ -425,7 +452,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   same-project moves, unknown-project moves, and moving an issue with a parent or with children; comment
   editing: version increment, `editedAt` set, stale-edit conflict, editing an unknown comment; tombstone
   delete: soft-deleted comments excluded from listing and `findCommentById`, the row and body still
-  physically present, deleting an already-deleted comment is a no-op),
+  physically present, deleting an already-deleted comment is a no-op; comment reactions: idempotent
+  add/remove per (comment, user, key), multiple users and multiple keys per comment listed correctly),
   `identity_integration_tests` (create-user, login success/failure, generic-error anti-enumeration check,
   minimal lockout, session validate/expire/logout), `authorization_integration_tests` (project-role
   gating on issue writes/edits/cloning/links/reorder/move — including the "member of source but not
@@ -433,9 +461,10 @@ What **was** compiled and tested in this environment, with all warnings enabled
   the full project lifecycle: create/archive/soft-delete/restore/permanently-delete against both
   project-admin and global-administrator paths, confirming watch/vote require no project role unlike
   everything else, the issue recycle bin's project-admin-vs-global-admin split, bulk actions applying
-  the same per-issue authorization on a mixed batch of accessible/inaccessible/unknown keys, and comment
+  the same per-issue authorization on a mixed batch of accessible/inaccessible/unknown keys, comment
   edit/delete's simplified author-or-project-admin permissions, including the global-admin-can-moderate-
-  any-comment case and unknown-comment nullopt/false returns),
+  any-comment case and unknown-comment nullopt/false returns, and comment reactions requiring no project
+  role (like watch/vote) while still rejecting an unknown reaction key or an unknown comment id),
   `workflow_integration_tests` (every Epic/Sub-task hierarchy rejection case, resolution
   required/rejected-if-unknown on completion, resolution cleared on reopen, the sub-task-completion gate,
   reopening leaving a sub-task's status untouched, clone field-copy correctness, the
@@ -453,8 +482,9 @@ What **was** compiled and tested in this environment, with all warnings enabled
   rank/counter allocation, alias resolution, and the same-project/unknown-project/parent/children
   rejection cases, through `PostgresDatabase` directly); Phase 4 repeated it for `editComment`/
   `deleteComment`/`findCommentById` (version increment, `editedAt`, stale-edit conflict, tombstone
-  exclusion from listing, no-op on an already-deleted comment, through `PostgresDatabase` directly) — all
-  passing.
+  exclusion from listing, no-op on an already-deleted comment) and for `addCommentReaction`/
+  `removeCommentReaction`/`listCommentReactions` (idempotent add/remove, multiple users and reaction keys
+  per comment listed correctly), through `PostgresDatabase` directly — all passing.
 
 `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) are now
 built and live-verified as described in "Server verification" above — including every route added across

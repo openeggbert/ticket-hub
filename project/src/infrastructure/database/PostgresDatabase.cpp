@@ -1324,6 +1324,51 @@ WHERE id = $2 AND deleted_at IS NULL
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
+bool PostgresDatabase::addCommentReaction(const std::string& commentId, const std::string& userId,
+                                          const std::string& reactionKey) {
+    auto connection = connect(connectionString_);
+    const std::string resolvedUserId = requireUserId(connection.get(), userId);
+    auto result = execParams(connection.get(), R"SQL(
+INSERT INTO comment_reactions(comment_id, user_id, reaction_key) VALUES ($1, $2, $3)
+ON CONFLICT (comment_id, user_id, reaction_key) DO NOTHING
+)SQL",
+                             {commentId, resolvedUserId, reactionKey},
+                             "Add comment reaction");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool PostgresDatabase::removeCommentReaction(const std::string& commentId, const std::string& userId,
+                                             const std::string& reactionKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+DELETE FROM comment_reactions WHERE comment_id = $1 AND user_id = $2 AND reaction_key = $3
+)SQL",
+                             {commentId, userId, reactionKey},
+                             "Remove comment reaction");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::vector<Domain::CommentReaction> PostgresDatabase::listCommentReactions(const std::string& commentId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT r.reaction_key, u.id, u.display_name, u.email
+FROM comment_reactions r JOIN users u ON u.id = r.user_id
+WHERE r.comment_id = $1
+ORDER BY r.reaction_key, u.display_name
+)SQL",
+                             {commentId},
+                             "List comment reactions");
+    std::vector<Domain::CommentReaction> reactions;
+    const int rowCount = PQntuples(result.get());
+    for (int row = 0; row < rowCount; ++row) {
+        Domain::CommentReaction reaction;
+        reaction.reactionKey = value(result.get(), row, 0);
+        reaction.user = readUserSummary(result.get(), row, 1);
+        reactions.push_back(std::move(reaction));
+    }
+    return reactions;
+}
+
 Domain::DashboardStats PostgresDatabase::dashboardStats() {
     auto connection = connect(connectionString_);
     auto result = exec(connection.get(), R"SQL(

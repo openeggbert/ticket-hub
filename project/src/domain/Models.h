@@ -243,6 +243,37 @@ struct Comment {
     std::optional<std::string> editedAt;
 };
 
+// Fixed emoji reaction catalog (D84): the decision register calls for "a
+// fixed reaction set" on comments without enumerating one, so this uses
+// GitHub's well-known eight-reaction set as a conservative, familiar
+// default. Each user may add each reaction at most once per comment
+// (enforced by the `comment_reactions` composite primary key), matching
+// D84's own wording; issues keep the separate, unrelated voting feature
+// (D79).
+constexpr const char* CommentReactionThumbsUp = "thumbs_up";
+constexpr const char* CommentReactionThumbsDown = "thumbs_down";
+constexpr const char* CommentReactionLaugh = "laugh";
+constexpr const char* CommentReactionHooray = "hooray";
+constexpr const char* CommentReactionConfused = "confused";
+constexpr const char* CommentReactionHeart = "heart";
+constexpr const char* CommentReactionRocket = "rocket";
+constexpr const char* CommentReactionEyes = "eyes";
+
+inline bool isValidCommentReactionKey(const std::string& reactionKey) {
+    return reactionKey == CommentReactionThumbsUp || reactionKey == CommentReactionThumbsDown
+        || reactionKey == CommentReactionLaugh || reactionKey == CommentReactionHooray
+        || reactionKey == CommentReactionConfused || reactionKey == CommentReactionHeart
+        || reactionKey == CommentReactionRocket || reactionKey == CommentReactionEyes;
+}
+
+// One (comment, user, reaction) row, as returned by `listCommentReactions` --
+// the API layer groups these by `reactionKey` into per-reaction counts and
+// user lists.
+struct CommentReaction {
+    std::string reactionKey;
+    UserSummary user;
+};
+
 struct Issue {
     std::string id;
     std::string key;

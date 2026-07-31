@@ -60,8 +60,12 @@ remain as the long-term aspirational baseline only — do not build against them
   original body simply remain in the database, excluded from ordinary listing); simplified permissions --
   the comment's own author can always edit/delete it, otherwise the actor needs project-Admin-or-above (or
   global admin), no separate edit-own/edit-all/delete-own/delete-all matrix. Same optimistic-locking
-  contract (`expectedVersion` -> `Domain::ConcurrencyConflict`, 409) as issue edits. See "Not yet built"
-  below for the rest of Phase 4.
+  contract (`expectedVersion` -> `Domain::ConcurrencyConflict`, 409) as issue edits.
+- **Fixed emoji reactions on comments (Phase 4, partial, D84):** a `comment_reactions` many-to-many table
+  (mirroring `issue_watchers`/`issue_votes`) with a fixed eight-key reaction set (GitHub's own set,
+  chosen as a conservative default since the decision register does not enumerate one); self-service,
+  no project-role check, same reasoning as watch/vote (D20/D79); idempotent add/remove. See "Not yet
+  built" below for the rest of Phase 4.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -69,10 +73,9 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Rest of Phase 4: the full Markdown editor/toolbar/preview (D16), emoji reactions (D84), `@handle`
-  mentions with autocomplete (D80, needs a new `users.handle` column, D56), the fixed in-app notification
-  set (D14), simplified worklogs (D13), and the append-only admin/security audit log (D23) are not
-  implemented yet.
+- Rest of Phase 4: the full Markdown editor/toolbar/preview (D16), `@handle` mentions with autocomplete
+  (D80, needs a new `users.handle` column, D56), the fixed in-app notification set (D14), simplified
+  worklogs (D13), and the append-only admin/security audit log (D23) are not implemented yet.
 - Attachments and the Kanban board are not implemented (Phase 5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).

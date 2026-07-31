@@ -67,6 +67,11 @@ public:
                                                const std::string& actorUserId,
                                                std::optional<std::int64_t> expectedVersion = std::nullopt) override;
     bool deleteComment(const std::string& commentId, const std::string& actorUserId) override;
+    bool addCommentReaction(const std::string& commentId, const std::string& userId,
+                            const std::string& reactionKey) override;
+    bool removeCommentReaction(const std::string& commentId, const std::string& userId,
+                               const std::string& reactionKey) override;
+    std::vector<Domain::CommentReaction> listCommentReactions(const std::string& commentId) override;
     Domain::DashboardStats dashboardStats() override;
 
     Domain::Issue reorderIssue(const std::string& issueKey, std::optional<std::string> beforeIssueKey) override;

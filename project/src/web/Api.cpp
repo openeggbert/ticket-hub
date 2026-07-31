@@ -124,6 +124,13 @@ crow::json::wvalue commentJson(const Domain::Comment& comment) {
     return json;
 }
 
+crow::json::wvalue commentReactionJson(const Domain::CommentReaction& reaction) {
+    crow::json::wvalue json;
+    json["reactionKey"] = reaction.reactionKey;
+    json["user"] = userJson(reaction.user);
+    return json;
+}
+
 crow::json::wvalue issueLinkJson(const Domain::IssueLink& link) {
     const auto labels = Domain::linkTypeLabels(link.linkType);
     crow::json::wvalue json;
@@ -885,6 +892,75 @@ void registerApiRoutes(crow::SimpleApp& app,
             return jsonResponse(200, std::move(responseBody));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Fixed emoji reactions on comments (D84): self-service only, no
+    // project-role check -- any authenticated user may react to any comment,
+    // same reasoning as watch/vote. `reactionKey` is a path segment from the
+    // fixed Domain::isValidCommentReactionKey set (e.g. "thumbs_up").
+    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>/reactions")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& reaction : service->listCommentReactions(issueKey, commentId, resolvePrincipal(request, authService))) {
+                items.emplace_back(commentReactionJson(reaction));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>/reactions/<string>")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId, const std::string& reactionKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            // The return value only signals whether a row was newly
+            // inserted (idempotent, like watch/vote) -- an unknown issue,
+            // comment, or reaction key throws std::invalid_argument instead
+            // of returning false, so there is no not-found case to check here.
+            service->addCommentReaction(issueKey, commentId, reactionKey, *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>/reactions/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId, const std::string& reactionKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            service->removeCommentReaction(issueKey, commentId, reactionKey, *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {

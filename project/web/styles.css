@@ -223,6 +223,9 @@ button { cursor: pointer; }
 .comment-body header { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
 .comment-body header span { color: var(--muted); font-size: 11px; }
 .comment-body p { margin: 0; color: #44546f; line-height: 1.5; white-space: pre-wrap; }
+.comment-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.reaction-button { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 2px 8px; font-size: 12px; cursor: pointer; line-height: 1.6; }
+.reaction-button--active { border-color: var(--primary); background: var(--surface-soft); }
 .comment-actions { display: flex; gap: 10px; margin-top: 6px; }
 .comment-actions .ghost-button { padding: 3px 6px; font-size: 12px; }
 .comment-edit-textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: white; color: var(--text); resize: vertical; }

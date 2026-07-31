@@ -76,6 +76,24 @@ public:
                                                std::optional<std::int64_t> expectedVersion = std::nullopt);
     bool deleteComment(const std::string& issueKey, const std::string& commentId, const Domain::Principal& actor);
 
+    // --- Fixed emoji reactions on comments (Phase 4, D84) ---
+    // Self-service only, same reasoning as watch/vote (D20/D79): no
+    // project-role check, just an authenticated actor and an existing
+    // comment. `reactionKey` must be one of Domain::isValidCommentReactionKey,
+    // and both the issue and the comment must exist, or this throws
+    // std::invalid_argument (matching watchIssue's own unknown-issue
+    // behavior, rather than editComment/deleteComment's nullopt/false
+    // not-found convention). add/remove return true only when a row was
+    // actually inserted/removed -- reacting (or un-reacting) twice with the
+    // same key is a no-op, matching watch/vote.
+    bool addCommentReaction(const std::string& issueKey, const std::string& commentId,
+                            const std::string& reactionKey, const Domain::Principal& actor);
+    bool removeCommentReaction(const std::string& issueKey, const std::string& commentId,
+                               const std::string& reactionKey, const Domain::Principal& actor);
+    std::vector<Domain::CommentReaction> listCommentReactions(const std::string& issueKey,
+                                                               const std::string& commentId,
+                                                               const std::optional<Domain::Principal>& actor);
+
     // Simple field-copy clone (D60): summary/description/type/priority/labels
     // into a new issue in the same project, plus a `clones`/`is cloned by`
     // link back to the original. Assignee, story points, due date, and
