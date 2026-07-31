@@ -254,6 +254,20 @@ int main() {
         require(!database.editComment("00000000-0000-4000-8000-00000000dead", "n/a", demoUserId, std::nullopt).has_value(),
                "editing an unknown comment returns nullopt");
 
+        // --- Fixed emoji reactions on comments (D84) ---
+        require(database.addCommentReaction(comment.id, demoUserId, "thumbs_up"), "reacting to a comment succeeds");
+        require(!database.addCommentReaction(comment.id, demoUserId, "thumbs_up"),
+               "reacting twice with the same key is a no-op");
+        require(database.addCommentReaction(comment.id, alexUserId, "thumbs_up"),
+               "a second user can react with the same key");
+        require(database.addCommentReaction(comment.id, demoUserId, "heart"),
+               "the same user can react with a different key");
+        require(database.listCommentReactions(comment.id).size() == 3, "all three reactions are listed");
+        require(database.removeCommentReaction(comment.id, demoUserId, "heart"), "removing a reaction succeeds");
+        require(!database.removeCommentReaction(comment.id, demoUserId, "heart"),
+               "removing an already-removed reaction is a no-op");
+        require(database.listCommentReactions(comment.id).size() == 2, "two reactions remain");
+
         require(database.deleteComment(comment.id, demoUserId), "a comment can be soft-deleted");
         require(database.listComments(created.key).empty(), "a soft-deleted comment no longer appears in the list");
         require(!database.findCommentById(comment.id).has_value(), "a soft-deleted comment is not found by findCommentById");

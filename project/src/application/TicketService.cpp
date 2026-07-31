@@ -263,6 +263,46 @@ bool TicketService::deleteComment(const std::string& issueKey, const std::string
     return database_->deleteComment(commentId, actor.userId);
 }
 
+bool TicketService::addCommentReaction(const std::string& issueKey, const std::string& commentId,
+                                       const std::string& reactionKey, const Domain::Principal& actor) {
+    if (!Domain::isValidCommentReactionKey(reactionKey)) {
+        throw std::invalid_argument("Unknown reaction key: " + reactionKey);
+    }
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    if (!database_->findIssueByKey(normalizedKey)) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    if (!database_->findCommentById(commentId)) {
+        throw std::invalid_argument("Unknown comment id: " + commentId);
+    }
+    return database_->addCommentReaction(commentId, actor.userId, reactionKey);
+}
+
+bool TicketService::removeCommentReaction(const std::string& issueKey, const std::string& commentId,
+                                          const std::string& reactionKey, const Domain::Principal& actor) {
+    if (!Domain::isValidCommentReactionKey(reactionKey)) {
+        throw std::invalid_argument("Unknown reaction key: " + reactionKey);
+    }
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    if (!database_->findIssueByKey(normalizedKey)) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    if (!database_->findCommentById(commentId)) {
+        throw std::invalid_argument("Unknown comment id: " + commentId);
+    }
+    return database_->removeCommentReaction(commentId, actor.userId, reactionKey);
+}
+
+std::vector<Domain::CommentReaction> TicketService::listCommentReactions(
+    const std::string& issueKey, const std::string& commentId, const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    if (!database_->findIssueByKey(normalizedKey)) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    return database_->listCommentReactions(commentId);
+}
+
 Domain::Issue TicketService::cloneIssue(const std::string& issueKey, const Domain::Principal& actor) {
     const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
     const auto source = database_->findIssueByKey(normalizedKey);

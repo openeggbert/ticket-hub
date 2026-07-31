@@ -129,6 +129,18 @@ public:
     // mechanism this decision calls for. Returns false if the comment does
     // not exist or is already deleted.
     virtual bool deleteComment(const std::string& commentId, const std::string& actorUserId) = 0;
+    // --- Fixed emoji reactions on comments (Phase 4, D84) ---
+    // addCommentReaction/removeCommentReaction return true only if a row was
+    // actually inserted/removed (idempotent: reacting twice with the same key,
+    // or un-reacting with no existing reaction, is a no-op), matching the
+    // watchIssue/voteIssue convention. `reactionKey` must satisfy
+    // Domain::isValidCommentReactionKey; enforcing that is the caller's job
+    // (TicketService), not this layer's.
+    virtual bool addCommentReaction(const std::string& commentId, const std::string& userId,
+                                    const std::string& reactionKey) = 0;
+    virtual bool removeCommentReaction(const std::string& commentId, const std::string& userId,
+                                       const std::string& reactionKey) = 0;
+    virtual std::vector<Domain::CommentReaction> listCommentReactions(const std::string& commentId) = 0;
     virtual Domain::DashboardStats dashboardStats() = 0;
 
     // --- Manual ordering (Phase 3, D31) ---

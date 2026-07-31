@@ -28,6 +28,10 @@ Current schema migrations:
   migration, it sets `rank_order` explicitly in its own `INSERT` rather than relying on the backfill.
 - `008_comment_editing.sql` — comment edited-flag (Phase 4 of `REDUCED_SCOPE_ROADMAP.md`, D81). Adds
   `comments.edited_at`, nullable, set by `IDatabase::editComment` on every edit.
+- `009_comment_reactions.sql` — fixed emoji reactions on comments (Phase 4 of
+  `REDUCED_SCOPE_ROADMAP.md`, D84). Adds `comment_reactions`, a three-column composite-primary-key
+  many-to-many table (`comment_id`, `user_id`, `reaction_key`) mirroring `issue_watchers`/`issue_votes`,
+  with `reaction_key` constrained to a fixed eight-value set.
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, and an explicit `rank_order` (equal to `issue_number`) for each seeded issue.
 
@@ -243,6 +247,24 @@ watch/vote by "browse" access rather than a write-capable role, and this reduced
 equivalent is simply being an authenticated user (D58). `watchIssue`/`voteIssue` return `true` only when
 the row was newly inserted (idempotent on a repeat call); `unwatchIssue`/`unvoteIssue` return `true` only
 when a row was actually removed.
+
+### `comment_reactions`
+
+`comment_id`, `user_id`, `reaction_key`, `created_at`; composite PK `(comment_id, user_id, reaction_key)`;
+`ON DELETE CASCADE` on both foreign keys; `reaction_key` constrained (`CHECK`) to a fixed set:
+`thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`, `rocket`, `eyes` -- GitHub's
+well-known eight-reaction set, chosen as a conservative default since the decision register (D84) calls
+for "a fixed reaction set" without enumerating one. Structurally the same shape as
+`issue_watchers`/`issue_votes` with one extra key column for the reaction itself, since a user may add
+more than one distinct reaction to the same comment (just not the same reaction twice).
+`TicketService::addCommentReaction`/`removeCommentReaction` mirror `watchIssue`/`voteIssue` exactly: no
+project-role check, just an authenticated actor and an existing comment (an unknown issue, comment, or
+reaction key throws `std::invalid_argument`, matching `watchIssue`'s own unknown-issue behavior rather
+than `editComment`/`deleteComment`'s nullopt/false convention). `IDatabase::addCommentReaction`/
+`removeCommentReaction` return `true` only when a row was actually inserted/removed (idempotent on a
+repeat call). `IDatabase::listCommentReactions` returns the raw `(reactionKey, user)` rows for a comment;
+the API and UI group them by `reactionKey` for per-reaction counts and highlighting, the same
+server-stays-dumb/client-aggregates split used for issue links.
 
 ### `attachments`
 

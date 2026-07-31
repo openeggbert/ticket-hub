@@ -214,6 +214,44 @@ int main() {
         require(tickets.unvoteIssue("WEB-1", sam), "a non-member can remove their own vote");
     }
 
+    // --- Fixed emoji reactions on comments are self-service and require no project role (D84) ---
+    {
+        const auto reactionComment = tickets.addComment("WEB-1", "Comment for reaction tests", alex);
+
+        require(tickets.addCommentReaction("WEB-1", reactionComment.id, "thumbs_up", sam),
+               "a non-member can still react to a comment");
+        require(!tickets.addCommentReaction("WEB-1", reactionComment.id, "thumbs_up", sam),
+               "reacting again with the same key is a no-op");
+        require(tickets.listCommentReactions("WEB-1", reactionComment.id, demo).size() == 1,
+               "the reaction is visible to any authenticated reader");
+        require(tickets.removeCommentReaction("WEB-1", reactionComment.id, "thumbs_up", sam),
+               "a non-member can remove their own reaction");
+
+        bool invalidReactionKeyRejected = false;
+        try {
+            tickets.addCommentReaction("WEB-1", reactionComment.id, "not_a_real_reaction", sam);
+        } catch (const std::invalid_argument&) {
+            invalidReactionKeyRejected = true;
+        }
+        require(invalidReactionKeyRejected, "an unknown reaction key is rejected");
+
+        bool unknownCommentRejectedOnAdd = false;
+        try {
+            tickets.addCommentReaction("WEB-1", "00000000-0000-4000-8000-00000000dead", "thumbs_up", sam);
+        } catch (const std::invalid_argument&) {
+            unknownCommentRejectedOnAdd = true;
+        }
+        require(unknownCommentRejectedOnAdd, "reacting to an unknown comment is rejected");
+
+        bool unknownCommentRejectedOnRemove = false;
+        try {
+            tickets.removeCommentReaction("WEB-1", "00000000-0000-4000-8000-00000000dead", "thumbs_up", sam);
+        } catch (const std::invalid_argument&) {
+            unknownCommentRejectedOnRemove = true;
+        }
+        require(unknownCommentRejectedOnRemove, "un-reacting to an unknown comment is rejected");
+    }
+
     // --- Issue recycle bin: project-admin-vs-global-admin split (D22, mirrors D88) ---
     {
         CreateIssueRequest binRequest;

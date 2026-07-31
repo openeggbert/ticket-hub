@@ -1378,6 +1378,52 @@ WHERE id = ? AND deleted_at IS NULL
     return sqlite3_changes(database_) > 0;
 }
 
+bool SqliteDatabase::addCommentReaction(const std::string& commentId, const std::string& userId,
+                                        const std::string& reactionKey) {
+    std::scoped_lock lock(mutex_);
+    const std::string resolvedUserId = requireUserId(database_, userId);
+    Statement statement(database_, R"SQL(
+INSERT OR IGNORE INTO comment_reactions(comment_id, user_id, reaction_key) VALUES (?, ?, ?)
+)SQL");
+    statement.bind(1, commentId);
+    statement.bind(2, resolvedUserId);
+    statement.bind(3, reactionKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+bool SqliteDatabase::removeCommentReaction(const std::string& commentId, const std::string& userId,
+                                           const std::string& reactionKey) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+DELETE FROM comment_reactions WHERE comment_id = ? AND user_id = ? AND reaction_key = ?
+)SQL");
+    statement.bind(1, commentId);
+    statement.bind(2, userId);
+    statement.bind(3, reactionKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+std::vector<Domain::CommentReaction> SqliteDatabase::listCommentReactions(const std::string& commentId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT r.reaction_key, u.id, u.display_name, u.email
+FROM comment_reactions r JOIN users u ON u.id = r.user_id
+WHERE r.comment_id = ?
+ORDER BY r.reaction_key, u.display_name
+)SQL");
+    statement.bind(1, commentId);
+    std::vector<Domain::CommentReaction> reactions;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        Domain::CommentReaction reaction;
+        reaction.reactionKey = text(statement.get(), 0);
+        reaction.user = readUserSummary(statement.get(), 1);
+        reactions.push_back(std::move(reaction));
+    }
+    return reactions;
+}
+
 Domain::DashboardStats SqliteDatabase::dashboardStats() {
     Domain::DashboardStats stats;
     {

@@ -1,7 +1,7 @@
 # Ticket Hub next work
 
 Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, and UI; Phase 4
-(Collaboration) started with comment editing/tombstone delete — see below)
+(Collaboration) started with comment editing/tombstone delete and fixed emoji reactions — see below)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -149,8 +149,28 @@ anything from the removed/deferred list without an explicit new product conversa
   test coverage for `findCommentById`/`editComment`/`deleteComment` (success, version-increment,
   `edited_at` set, stale-version conflict, unknown-comment no-op, non-author-non-admin Forbidden,
   self-edit succeeds, global-admin can edit/delete any comment). Full detail in
-  `docs/VERIFICATION.md`. Rest of Phase 4 (D16, D84, D80/D56, D14, D13, D23) is not yet implemented --
-  see "Not yet built" in `docs/SCOPE.md`.
+  `docs/VERIFICATION.md`.
+- **Phase 4 continued (fixed emoji reactions on comments, D84), this batch:** migration
+  `009_comment_reactions.sql` adds `comment_reactions` (both backends) -- a three-column composite-key
+  many-to-many table (`comment_id`, `user_id`, `reaction_key`) mirroring `issue_watchers`/`issue_votes`,
+  with `reaction_key` constrained to a fixed eight-value set (`thumbs_up`, `thumbs_down`, `laugh`,
+  `hooray`, `confused`, `heart`, `rocket`, `eyes` -- GitHub's own well-known reaction set, chosen as a
+  conservative default since the decision register calls for "a fixed reaction set" without enumerating
+  one). `IDatabase::addCommentReaction`/`removeCommentReaction`/`listCommentReactions` in both adapters,
+  matching `TicketService` methods with the same self-service/no-project-role reasoning as watch/vote
+  (D20/D79) -- an unknown issue, comment, or reaction key throws `std::invalid_argument` (matching
+  `watchIssue`'s own unknown-issue behavior, not `editComment`/`deleteComment`'s nullopt/false
+  convention); add/remove return `true` only when a row was actually inserted/removed (idempotent on a
+  repeat call). New `GET /api/issues/{key}/comments/{id}/reactions` and
+  `POST`/`DELETE /api/issues/{key}/comments/{id}/reactions/{key}` routes in `Api.cpp`. `web/` renders all
+  eight reactions as small pill buttons under each comment with a live count, highlighting the ones the
+  current viewer has added; clicking toggles react/un-react. Browser-verified with Playwright/Chromium
+  across two users: reacting shows the button go active with a count, clicking again removes it, a
+  second distinct reaction key can coexist, and -- switching users -- the count is shared while each
+  user's own "active" highlight is independently correct (explicitly asserted, not assumed). New
+  SQLite-integration, authorization-integration, and live-PostgreSQL test coverage. Full detail in
+  `docs/VERIFICATION.md`. Rest of Phase 4 (D16, D80/D56, D14, D13, D23) is not yet implemented -- see
+  "Not yet built" in `docs/SCOPE.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) has started. Immediate next step: continue Phase 4
 
@@ -171,15 +191,15 @@ where the new checkboxes/reorder buttons live inside the same table row that alr
 drawer on click.
 
 There is no remaining gap between what the API exposes (for Phases 1-3) and what the demo UI can reach.
-Comment editing/tombstone delete (D81/D82/D83) is the first Phase 4 slice, and it is also already fully
-covered in the UI. What's left is the rest of Phase 4, Phase 5, or optional UX polish:
+Comment editing/tombstone delete (D81/D82/D83) and fixed emoji reactions (D84) are the first two Phase 4
+slices, and both are also already fully covered in the UI. What's left is the rest of Phase 4, Phase 5,
+or optional UX polish:
 
 1. Continue Phase 4 (Collaboration) per `docs/REDUCED_SCOPE_ROADMAP.md`: D16 (full Markdown
-   editor/toolbar/preview), D84 (fixed emoji reactions on comments -- the next most self-contained
-   slice, mirrors the existing `issue_watchers`/`issue_votes` many-to-many pattern), D80/D56 (`@handle`
-   mentions with autocomplete, needs a new `users.handle` column), D14 (the fixed in-app notification
-   set), D13 (simplified worklogs), and D23 (the append-only admin/security audit log). Then Phase 5
-   (Attachments and Kanban board).
+   editor/toolbar/preview), D80/D56 (`@handle` mentions with autocomplete, needs a new `users.handle`
+   column -- the next most self-contained slice), D14 (the fixed in-app notification set, depends on
+   D80's mention-parsing for one of its three notification types), D13 (simplified worklogs), and D23
+   (the append-only admin/security audit log). Then Phase 5 (Attachments and Kanban board).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (today's board is read-only, clicking a card just opens the drawer; the Issues table's
    up/down buttons are the only reorder UI); a friendlier bulk-status picker that also supports
@@ -205,17 +225,22 @@ later-phase features early, and do not implement anything from `docs/REMOVED_AND
 
 Core, CLI, all seven test binaries, and the `ticket-hub` server target itself all compile and pass/run
 cleanly on both SQLite and PostgreSQL, in every supported build configuration, including a live HTTP
-smoke test of essentially every route across all three completed phases and, across seven batches, a
+smoke test of essentially every route across all three completed phases and, across eight batches, a
 real-browser (Playwright/Chromium) test of every write route the demo UI now exposes: login/logout,
 hierarchy/resolution pickers, full edit/clone/links/watch-vote/delete in the issue drawer, project
-management, the issue recycle bin, reorder/move/bulk actions, and now comment editing/tombstone delete
+management, the issue recycle bin, reorder/move/bulk actions, comment editing/tombstone delete
 (add/edit/cancel/delete as the author, plus a cross-user check that a non-author, non-admin user cannot
-see Edit/Delete on someone else's comment). The long-standing "server target unverified because
-`github.com` is unreachable" limitation recorded in every prior session no longer applies in this
-environment, and there is no longer a gap between what the API exposes for Phases 1-3 (plus the
-comment-editing slice of Phase 4) and what the demo UI can reach. `findCommentById`/`editComment`/
-`deleteComment` gained dedicated SQLite-integration coverage (success, version-increment, `edited_at`
-set, stale-version conflict, unknown-comment no-op) and authorization-integration coverage
-(non-author-non-admin Forbidden, self-edit succeeds, global-admin can edit/delete any comment). Full
-detail, including exactly what was exercised (and the several real bugs this browser testing caught and
-fixed along the way), is in `docs/VERIFICATION.md`.
+see Edit/Delete on someone else's comment), and now fixed emoji reactions (react/un-react toggling with a
+live count, a second distinct reaction key coexisting with the first, and a cross-user check that counts
+are shared while each user's own "active" highlight is independently correct). The long-standing "server
+target unverified because `github.com` is unreachable" limitation recorded in every prior session no
+longer applies in this environment, and there is no longer a gap between what the API exposes for
+Phases 1-3 (plus the comment-editing and reactions slices of Phase 4) and what the demo UI can reach.
+`findCommentById`/`editComment`/`deleteComment` gained dedicated SQLite-integration coverage (success,
+version-increment, `edited_at` set, stale-version conflict, unknown-comment no-op) and
+authorization-integration coverage (non-author-non-admin Forbidden, self-edit succeeds, global-admin can
+edit/delete any comment); `addCommentReaction`/`removeCommentReaction`/`listCommentReactions` gained the
+same three-layer coverage (SQLite-integration idempotency/listing, authorization-integration no-project-
+role/unknown-key/unknown-comment rejection, and a live-PostgreSQL smoke test). Full detail, including
+exactly what was exercised (and the several real bugs this browser testing caught and fixed along the
+way), is in `docs/VERIFICATION.md`.

@@ -1,5 +1,93 @@
 # Verification record
 
+## 2026-07-31 — Fixed emoji reactions on comments (D84)
+
+Second Phase 4 (Collaboration) slice: comments can now receive a fixed set of emoji reactions, mirroring
+the existing self-service watch/vote pattern (D20/D79).
+
+### What changed
+
+- Migration `009_comment_reactions.sql` (both backends) adds `comment_reactions`: a three-column
+  composite-primary-key many-to-many table (`comment_id`, `user_id`, `reaction_key`), `ON DELETE CASCADE`
+  on both foreign keys, `reaction_key` constrained (`CHECK`) to a fixed eight-value set. The decision
+  register (D84) calls for "a fixed reaction set" without naming one, so this uses GitHub's own
+  well-known set (`thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`, `rocket`, `eyes`) as
+  a conservative, familiar default -- a filled product-decision gap, documented here and in `docs/SCHEMA.md`.
+- `Domain::CommentReaction` (`reactionKey` + `UserSummary user`) and `Domain::isValidCommentReactionKey`.
+- `IDatabase` gained `addCommentReaction`/`removeCommentReaction` (idempotent: return `true` only when a
+  row was actually inserted/removed, matching `watchIssue`/`voteIssue`) and `listCommentReactions`
+  (returns the raw `(reactionKey, user)` rows for a comment). Implemented in both `SqliteDatabase` and
+  `PostgresDatabase`.
+- `TicketService::addCommentReaction`/`removeCommentReaction`/`listCommentReactions`: no project-role
+  check, same reasoning as watch/vote -- any authenticated user may react to any comment. Unlike
+  `editComment`/`deleteComment`'s nullopt/false not-found convention, an unknown issue, comment, or
+  reaction key throws `std::invalid_argument`, matching `watchIssue`'s own unknown-issue behavior (chosen
+  deliberately so the add/remove boolean can keep meaning "idempotent no-op" without being overloaded
+  with a second, conflicting "not found" meaning -- see the design note below).
+- `Api.cpp`: new `GET /api/issues/{key}/comments/{id}/reactions` and
+  `POST`/`DELETE /api/issues/{key}/comments/{id}/reactions/{key}` routes, following the established
+  auth/CSRF/error-mapping pattern. The POST/DELETE handlers ignore the service-layer boolean entirely
+  (mirroring the existing watch/vote route handlers) and always return `{ok: true}` on success, since a
+  not-found now throws instead.
+- `web/app.js`: a `COMMENT_REACTIONS` catalog (key + emoji) drives a row of eight pill buttons under each
+  comment, fetched via one reactions request per comment alongside the existing per-issue fetches. Each
+  button shows a live count and highlights (`.reaction-button--active`) when the current viewer has that
+  reaction; clicking POSTs or DELETEs depending on the button's current state and re-renders. `web/styles.css`
+  gained `.comment-reactions`/`.reaction-button`/`.reaction-button--active`.
+
+### A design correction caught during implementation
+
+The first cut of `TicketService::addCommentReaction`/`removeCommentReaction` returned `false` for "the
+comment does not exist" -- copying `editComment`/`deleteComment`'s convention -- while also trying to
+return the database layer's own idempotency signal (`true` only if a row was newly inserted/removed) on
+the success path. Those two conflate into one `bool`: a `false` could mean either "already reacted,
+harmless" or "comment does not exist, and reacting silently failed" and the caller could not tell which.
+Caught by a newly written test (`reacting again with the same key is a no-op` failed after the return
+value was collapsed to always `true` on success) before this ever reached the API layer. Fixed by making
+unknown-issue/comment/key cases throw `std::invalid_argument` instead of returning `false`, freeing the
+boolean to mean only "idempotent no-op" -- consistent with `watchIssue`'s own behavior, which already
+throws for an unknown issue key rather than returning `false`.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green, including new assertions in `sqlite_integration_tests`
+   (react/react-again-no-op/second-user-same-key/second-key-same-user, `listCommentReactions` count,
+   remove/remove-again-no-op, remaining-count-after-remove) and `authorization_integration_tests`
+   (a non-project-member can still react, `listCommentReactions` visible to any authenticated reader,
+   removing one's own reaction, an unknown reaction key rejected, reacting/un-reacting to an unknown
+   comment rejected).
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly (SQLite-only
+   naturally excludes the SQLite-specific integration/identity/authorization/workflow test binaries when
+   SQLite itself is off, as already documented; PostgreSQL-only compiles the core/CLI/domain/migration/
+   crypto targets).
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised
+   `addCommentReaction`/`removeCommentReaction`/`listCommentReactions` directly against
+   `PostgresDatabase` and a local PostgreSQL 16 server (created and dropped for this check), alongside a
+   re-check of `findCommentById`/`editComment` from the prior batch -- all passed.
+5. Standalone Playwright/Chromium script, against a locally running server, SQLite, demo-seeded: logged
+   in as `demo`, added a comment, confirmed all eight reaction buttons render; clicked `thumbs_up` and
+   confirmed it goes active with a "1" count; clicked it again and confirmed it reverts to inactive with
+   no count; clicked `heart` and confirmed it can be active alongside the (now inactive) `thumbs_up`
+   button. Logged out, logged in as `alex`, opened the same issue, and confirmed the `heart` count reads
+   "1" (shared state, correct before alex has reacted); clicked `heart` as alex and confirmed the count
+   becomes "2". A second, focused script explicitly asserted the `reaction-button--active` CSS class
+   (not just the visible count) before and after alex's own click, confirming alex's own highlight starts
+   `false` (only demo had reacted) and flips to `true` only after alex's own click -- the count and the
+   per-viewer highlight are tracked independently, as intended.
+6. Re-ran the full comment-editing/tombstone-delete browser test from the previous batch against the same
+   build to confirm no regression from the new reaction markup inside each comment -- unchanged pass.
+
+All checks passed. No committed test scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+The rest of Phase 4 remains unimplemented: the full Markdown editor/toolbar/preview (D16), `@handle`
+mentions with autocomplete (D80, needs a new `users.handle` column, D56), the fixed in-app notification
+set (D14), simplified worklogs (D13), and the append-only admin/security audit log (D23). Phase 5
+(attachments and the Kanban board) is untouched.
+
 ## 2026-07-31 — Comment editing and tombstone delete (D81/D82/D83): Phase 4 started
 
 First Phase 4 (Collaboration) slice: comments can now be edited (with an `edited_at` marker, D81) and

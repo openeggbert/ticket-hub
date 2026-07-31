@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — Fixed emoji reactions on comments (D84)
+
+- **Fixed emoji reactions (D84)**: comments can now receive reactions via
+  `POST`/`DELETE /api/issues/{key}/comments/{id}/reactions/{key}`, where `{key}` is one of a fixed
+  eight-value catalog (`thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`, `rocket`,
+  `eyes` -- GitHub's well-known reaction set, used as a conservative default since the decision register
+  calls for "a fixed reaction set" without naming one). Migration `009_comment_reactions.sql` adds
+  `comment_reactions` (both backends), a three-column composite-key many-to-many table mirroring
+  `issue_watchers`/`issue_votes`.
+- Self-service, no project-role check -- same reasoning as watch/vote (D20/D79): any authenticated user
+  may react to any comment. Idempotent: reacting (or un-reacting) twice with the same key is a no-op.
+  `GET /api/issues/{key}/comments/{id}/reactions` returns the raw `(reactionKey, user)` list; the client
+  groups it into per-reaction counts and highlights the viewer's own reactions.
+- `web/`: each comment shows all eight reactions as small pill buttons with a live count, highlighting the
+  ones the current viewer has added; clicking toggles react/un-react. Browser-verified across two users,
+  confirming counts are shared while each user's own "active" highlight is independent.
+- New SQLite-integration, authorization-integration, and live-PostgreSQL coverage for
+  `addCommentReaction`/`removeCommentReaction`/`listCommentReactions`.
+
 ## Unreleased — Comment editing and tombstone delete (D81/D82/D83): Phase 4 started
 
 - **Comment editing (D81)**: comments can now be edited via `PATCH /api/issues/{key}/comments/{id}`, with

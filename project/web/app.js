@@ -20,6 +20,18 @@ function resolutionLabel(resolutionKey) {
   return RESOLUTIONS.find(r => r.key === resolutionKey)?.name || resolutionKey;
 }
 
+// Fixed emoji reaction catalog (D84), matching Domain::isValidCommentReactionKey.
+const COMMENT_REACTIONS = [
+  { key: 'thumbs_up', emoji: '👍' },
+  { key: 'thumbs_down', emoji: '👎' },
+  { key: 'laugh', emoji: '😄' },
+  { key: 'hooray', emoji: '🎉' },
+  { key: 'confused', emoji: '😕' },
+  { key: 'heart', emoji: '❤️' },
+  { key: 'rocket', emoji: '🚀' },
+  { key: 'eyes', emoji: '👀' }
+];
+
 // Fixed Epic -> Story/Task/Bug -> Sub-task hierarchy (D5, D29, D64-D66):
 // 1 = Epic (no parent allowed), -1 = Sub-task (parent required, must be a
 // Story/Task/Bug), 0 = Story/Task/Bug (parent optional, must be an Epic).
@@ -672,6 +684,13 @@ async function openIssue(issueKey) {
     ]);
     state.currentIssue = issue;
 
+    // Fixed emoji reactions (D84): one reactions list per comment, fetched
+    // alongside everything else -- fine at demo scale, mirrors the
+    // watchers/voters fetch-once-per-open pattern above.
+    const reactionLists = await Promise.all(comments.items.map(comment =>
+      api(`/api/issues/${encodeURIComponent(issueKey)}/comments/${encodeURIComponent(comment.id)}/reactions`)));
+    const reactionsByComment = new Map(comments.items.map((comment, index) => [comment.id, reactionLists[index].items]));
+
     const isWatching = watchers.items.some(user => user.id === state.principal?.userId);
     const isVoting = voters.items.some(user => user.id === state.principal?.userId);
 
@@ -725,6 +744,7 @@ async function openIssue(issueKey) {
                   // UI simplification, not a security boundary (the server
                   // enforces the real rule regardless).
                   const canModerate = comment.author.id === state.principal?.userId || state.principal?.isAdmin;
+                  const reactions = reactionsByComment.get(comment.id) || [];
                   return `
                   <article class="comment" data-comment-id="${escapeHtml(comment.id)}">
                     <span class="small-avatar">${escapeHtml(initials(comment.author.displayName))}</span>
@@ -734,6 +754,13 @@ async function openIssue(issueKey) {
                         <span>${escapeHtml(relativeDate(comment.createdAt))}${comment.editedAt ? ' (edited)' : ''}</span>
                       </header>
                       <p class="comment-body-text" data-raw-body="${escapeHtml(comment.body)}">${escapeHtml(comment.body)}</p>
+                      <div class="comment-reactions">${COMMENT_REACTIONS.map(reaction => {
+                        const reactedUsers = reactions.filter(entry => entry.reactionKey === reaction.key);
+                        const mine = reactedUsers.some(entry => entry.user.id === state.principal?.userId);
+                        return `<button type="button" class="reaction-button${mine ? ' reaction-button--active' : ''}"
+                          data-toggle-reaction="${escapeHtml(comment.id)}" data-reaction-key="${reaction.key}"
+                          title="${reaction.key}">${reaction.emoji}${reactedUsers.length ? ` ${reactedUsers.length}` : ''}</button>`;
+                      }).join('')}</div>
                       ${canModerate ? `<div class="comment-actions">
                         <button type="button" class="ghost-button" data-edit-comment="${escapeHtml(comment.id)}">Edit</button>
                         <button type="button" class="ghost-button" data-delete-comment="${escapeHtml(comment.id)}">Delete</button>
@@ -876,6 +903,15 @@ async function openIssue(issueKey) {
         try {
           await api(`/api/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(button.dataset.deleteComment)}`, { method: 'DELETE' });
           showToast('Comment deleted');
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      }));
+      document.querySelectorAll('[data-toggle-reaction]').forEach(button => button.addEventListener('click', async () => {
+        const commentId = button.dataset.toggleReaction;
+        const reactionKey = button.dataset.reactionKey;
+        const path = `/api/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(commentId)}/reactions/${encodeURIComponent(reactionKey)}`;
+        try {
+          await api(path, { method: button.classList.contains('reaction-button--active') ? 'DELETE' : 'POST' });
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
       }));
