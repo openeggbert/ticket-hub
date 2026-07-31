@@ -161,6 +161,37 @@
     </form>
   </div>
 
+  <div class="modal-backdrop hidden" id="project-modal" role="dialog" aria-modal="true" aria-labelledby="project-title">
+    <form class="modal" id="project-form">
+      <div class="modal-header">
+        <div>
+          <span class="eyebrow">Workspace</span>
+          <h2 id="project-title">New project</h2>
+        </div>
+        <button type="button" class="icon-button" data-close-modal aria-label="Close">×</button>
+      </div>
+      <div class="form-grid">
+        <label>
+          Key
+          <input name="key" maxlength="12" required placeholder="e.g. QA" style="text-transform:uppercase">
+        </label>
+        <label>
+          Name
+          <input name="name" maxlength="255" required placeholder="Project name">
+        </label>
+        <label class="wide">
+          Description
+          <textarea name="description" rows="4" placeholder="What is this project for?"></textarea>
+        </label>
+      </div>
+      <div id="project-error" class="form-error hidden"></div>
+      <div class="modal-footer">
+        <button type="button" class="secondary-button" data-close-modal>Cancel</button>
+        <button type="submit" class="primary-button">Create project</button>
+      </div>
+    </form>
+  </div>
+
   <div class="drawer-backdrop hidden" id="issue-drawer-backdrop"></div>
   <aside class="issue-drawer hidden" id="issue-drawer" aria-label="Issue details"></aside>
 

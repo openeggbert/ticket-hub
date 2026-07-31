@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — Project-management UI: create, archive, and recycle bin
+
+- Added a "New project" modal (`POST /api/projects`, global-admin-only server-side) and, on each project
+  card in the Projects view, Archive/Unarchive (`PATCH .../archived`) and Delete-to-recycle-bin
+  (`DELETE /api/projects/{key}`) buttons. A non-admin's click surfaces the server's 403 as a toast, same
+  pattern as every other write in this app -- no client-side role gate duplicates the server's check.
+- Added a project recycle-bin view, toggled from the Projects view (only shown to global administrators,
+  `state.principal.isAdmin`, matching D88's admin-only restore/purge split): lists deleted projects with
+  Restore and Delete-permanently buttons.
+- Found and fixed a real bug via this batch's own browser testing, unrelated to project management
+  specifically: `state` (current view, selected project, filters, cached project/issue lists) was never
+  reset on logout. A second user logging into the same browser tab landed on whatever
+  tab/project/filters the previous user last had open -- which could reference a project the new user has
+  no access to, or one that had since been archived or deleted. `showLoginScreen()` (called on explicit
+  logout and on any session-expiry 401) now resets all of `state` back to its initial shape, factored into
+  a shared `initialState()` function used both for the module-level `const state` and for this reset.
+- Verified end-to-end with a headless browser (Playwright/Chromium): creating a project and seeing it in
+  the grid; a duplicate key rejected inline with the server's exact message; archiving a project drops it
+  from the active grid and the sidebar shortcuts (D87); delete moves it to the recycle bin, restore brings
+  it back to the active grid, and permanent delete removes it from the recycle bin too; a non-admin sees
+  neither the recycle-bin toggle nor a working create-project action (403 surfaced as an inline error); and
+  -- the state-reset fix above -- logging out of one account and into another lands cleanly on the
+  Dashboard rather than hanging on whatever view the prior session was showing.
+
 ## Unreleased — Full edit, clone, links, and watch/vote UI in the issue drawer
 
 - Added an actions row to the issue drawer: Watch/Unwatch toggle (shows count), Vote/Unvote toggle (shows

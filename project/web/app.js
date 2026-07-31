@@ -29,20 +29,25 @@ function issueTypeHierarchyLevel(issueTypeKey) {
   return 0;
 }
 
-const state = {
-  view: 'dashboard',
-  projects: [],
-  issues: [],
-  dashboard: null,
-  selectedProject: null,
-  search: '',
-  status: '',
-  currentIssue: null,
-  principal: null
-};
+function initialState() {
+  return {
+    view: 'dashboard',
+    projects: [],
+    issues: [],
+    dashboard: null,
+    selectedProject: null,
+    search: '',
+    status: '',
+    currentIssue: null,
+    principal: null
+  };
+}
+
+const state = initialState();
 
 const content = document.querySelector('#content');
 const createModal = document.querySelector('#create-modal');
+const projectModal = document.querySelector('#project-modal');
 const issueDrawer = document.querySelector('#issue-drawer');
 const drawerBackdrop = document.querySelector('#issue-drawer-backdrop');
 const toast = document.querySelector('#toast');
@@ -112,8 +117,14 @@ function showToast(message) {
   window.setTimeout(() => toast.classList.add('hidden'), 2600);
 }
 
+// Resets all navigation/data state (view, selected project, filters,
+// cached lists) back to defaults, not just the principal -- otherwise a
+// second user logging into the same browser tab lands on whatever
+// tab/project/filters the previous user last had open, which can reference
+// a project the new user has no access to or that no longer exists.
 function showLoginScreen() {
-  state.principal = null;
+  Object.assign(state, initialState());
+  document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === 'dashboard'));
   appShell.classList.add('hidden');
   loginScreen.classList.remove('hidden');
   loginForm.querySelector('input[name="email"]').focus();
@@ -322,21 +333,105 @@ async function renderBoard() {
   bindIssueLinks();
 }
 
-function renderProjects() {
+async function renderProjects() {
+  await renderProjectsView(false);
+}
+
+// `showingDeleted` toggles between the active project grid and the recycle
+// bin (D88/D89: global-administrator-only to view/restore/purge). Archiving
+// and moving to the recycle bin require project-admin-or-above; the server
+// is the actual authorization check -- a non-admin's click just surfaces the
+// resulting 403 as a toast, same pattern as every other write in this app.
+async function renderProjectsView(showingDeleted) {
+  content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  let projects = state.projects;
+  if (showingDeleted) {
+    try {
+      projects = (await api('/api/projects/deleted')).items;
+    } catch (error) {
+      showError(error);
+      return;
+    }
+  }
+  const isAdmin = Boolean(state.principal?.isAdmin);
   content.innerHTML = `
-    ${pageHeader('Projects', 'Choose a project to see its issues and board.', 'Workspace')}
+    <div class="page-header">
+      <div>
+        <span class="eyebrow">Workspace</span>
+        <h1>${showingDeleted ? 'Project recycle bin' : 'Projects'}</h1>
+        <p>${showingDeleted ? 'Projects moved to the recycle bin (90-day retention).' : 'Choose a project to see its issues and board.'}</p>
+      </div>
+      <div class="page-actions">
+        ${isAdmin ? `<button type="button" class="secondary-button" id="toggle-recycle-bin">${showingDeleted ? '← Back to projects' : '🗑 Recycle bin'}</button>` : ''}
+        ${showingDeleted ? '' : '<button type="button" class="primary-button" id="new-project-button">＋ New project</button>'}
+      </div>
+    </div>
     <div class="project-grid">
-      ${state.projects.map(project => `
+      ${projects.length ? projects.map(project => `
         <article class="project-card" data-project-card="${escapeHtml(project.key)}">
           <div class="project-card-head"><span class="project-avatar">${escapeHtml(project.key.slice(0, 2))}</span><div><h3>${escapeHtml(project.name)}</h3><span class="issue-key">${escapeHtml(project.key)}</span></div></div>
           <p>${escapeHtml(project.description)}</p>
           <div class="project-card-stats"><div><strong>${project.issueCount}</strong><span>Total issues</span></div><div><strong>${project.openIssueCount}</strong><span>Open issues</span></div><div><strong>${escapeHtml(project.lead?.displayName || '—')}</strong><span>Lead</span></div></div>
-        </article>`).join('')}
+          <div class="project-card-actions">${showingDeleted
+            ? `<button type="button" class="secondary-button" data-restore-project="${escapeHtml(project.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-project="${escapeHtml(project.key)}">Delete permanently</button>`
+            : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
+        </article>`).join('') : `<div class="empty-state">${showingDeleted ? 'The recycle bin is empty.' : 'No projects yet.'}</div>`}
     </div>`;
+
   document.querySelectorAll('[data-project-card]').forEach(card => card.addEventListener('click', () => {
     state.selectedProject = card.dataset.projectCard;
     navigate('board');
   }));
+  document.querySelector('#toggle-recycle-bin')?.addEventListener('click', () => renderProjectsView(!showingDeleted));
+  document.querySelector('#new-project-button')?.addEventListener('click', openProjectModal);
+
+  const stopAnd = handler => event => { event.stopPropagation(); return handler(event); };
+  document.querySelectorAll('[data-archive-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
+    const key = button.dataset.archiveProject;
+    const archived = button.dataset.archived !== 'true';
+    try {
+      await api(`/api/projects/${encodeURIComponent(key)}/archived`, { method: 'PATCH', body: JSON.stringify({ archived }) });
+      showToast(`${key} ${archived ? 'archived' : 'unarchived'}`);
+      await loadBaseData();
+      await renderProjectsView(false);
+    } catch (error) { showToast(error.message); }
+  })));
+  document.querySelectorAll('[data-delete-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
+    const key = button.dataset.deleteProject;
+    try {
+      await api(`/api/projects/${encodeURIComponent(key)}`, { method: 'DELETE' });
+      showToast(`${key} moved to the recycle bin`);
+      await loadBaseData();
+      await renderProjectsView(false);
+    } catch (error) { showToast(error.message); }
+  })));
+  document.querySelectorAll('[data-restore-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
+    const key = button.dataset.restoreProject;
+    try {
+      await api(`/api/projects/${encodeURIComponent(key)}/restore`, { method: 'POST' });
+      showToast(`${key} restored`);
+      await loadBaseData();
+      await renderProjectsView(true);
+    } catch (error) { showToast(error.message); }
+  })));
+  document.querySelectorAll('[data-permanent-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
+    const key = button.dataset.permanentProject;
+    try {
+      await api(`/api/projects/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
+      showToast(`${key} permanently deleted`);
+      await renderProjectsView(true);
+    } catch (error) { showToast(error.message); }
+  })));
+}
+
+function openProjectModal() {
+  document.querySelector('#project-error').classList.add('hidden');
+  projectModal.classList.remove('hidden');
+  projectModal.querySelector('input[name="key"]').focus();
+}
+
+function closeProjectModal() {
+  projectModal.classList.add('hidden');
 }
 
 async function renderCurrentView() {
@@ -344,7 +439,7 @@ async function renderCurrentView() {
     if (state.view === 'dashboard') await renderDashboard();
     else if (state.view === 'board') await renderBoard();
     else if (state.view === 'issues') await renderIssues();
-    else renderProjects();
+    else await renderProjects();
   } catch (error) {
     showError(error);
   }
@@ -665,8 +760,11 @@ document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('cl
 document.querySelector('#create-button').addEventListener('click', openCreateModal);
 document.querySelector('#create-project').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
 document.querySelector('#create-issue-type').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
-document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click', closeCreateModal));
+document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click', () => {
+  button.closest('.modal-backdrop')?.classList.add('hidden');
+}));
 createModal.addEventListener('click', event => { if (event.target === createModal) closeCreateModal(); });
+projectModal.addEventListener('click', event => { if (event.target === projectModal) closeProjectModal(); });
 drawerBackdrop.addEventListener('click', closeDrawer);
 document.querySelector('#menu-button').addEventListener('click', () => document.querySelector('#sidebar').classList.toggle('open'));
 
@@ -716,6 +814,29 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
   }
 });
 
+document.querySelector('#project-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const values = Object.fromEntries(new FormData(form).entries());
+  const payload = {
+    key: values.key.trim().toUpperCase(),
+    name: values.name.trim(),
+    description: values.description.trim()
+  };
+  const errorElement = document.querySelector('#project-error');
+  try {
+    const created = await api('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
+    form.reset();
+    closeProjectModal();
+    showToast(`${created.key} created`);
+    await loadBaseData();
+    await renderProjectsView(false);
+  } catch (error) {
+    errorElement.textContent = error.message;
+    errorElement.classList.remove('hidden');
+  }
+});
+
 loginForm.addEventListener('submit', async event => {
   event.preventDefault();
   loginError.classList.add('hidden');
@@ -746,6 +867,7 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     closeCreateModal();
+    closeProjectModal();
     closeDrawer();
     document.querySelector('#sidebar').classList.remove('open');
   }
