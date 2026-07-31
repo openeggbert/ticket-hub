@@ -37,6 +37,25 @@ void executeSql(const std::filesystem::path& databasePath, const std::string& sq
     }
 }
 
+int scalarInt(const std::filesystem::path& databasePath, const std::string& sql) {
+    sqlite3* database = nullptr;
+    if (sqlite3_open(databasePath.string().c_str(), &database) != SQLITE_OK) {
+        throw std::runtime_error("cannot open SQLite test database");
+    }
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK) {
+        sqlite3_close(database);
+        throw std::runtime_error("cannot prepare SQLite test query");
+    }
+    int value = 0;
+    if (sqlite3_step(statement) == SQLITE_ROW) {
+        value = sqlite3_column_int(statement, 0);
+    }
+    sqlite3_finalize(statement);
+    sqlite3_close(database);
+    return value;
+}
+
 } // namespace
 
 int main() {
@@ -107,6 +126,46 @@ int main() {
             conflictDetected = true;
         }
         require(conflictDetected, "stale status update is rejected");
+
+        TicketHub::Domain::EditIssueRequest edit;
+        edit.summary = "Verify portable database architecture (edited)";
+        edit.description = "Updated by the SQLite integration test.";
+        edit.priorityKey = "highest";
+        edit.assigneeEmail = "sam@ticket-hub.local";
+        edit.labels = {"database"};
+        edit.storyPoints = 5.0;
+        edit.dueDate = "2026-12-31";
+        const auto edited = database.editIssue(created.key, edit, demoUserId, done->version);
+        require(edited.has_value(), "edit succeeds");
+        require(edited->summary == edit.summary, "summary is updated");
+        require(edited->description == edit.description, "description is updated");
+        require(edited->priority.key == "highest", "priority is updated");
+        require(edited->assignee.has_value() && edited->assignee->email == "sam@ticket-hub.local",
+               "assignee is updated");
+        require(edited->storyPoints.has_value() && *edited->storyPoints == 5.0, "story points are updated");
+        require(edited->dueDate.has_value() && *edited->dueDate == "2026-12-31", "due date is updated");
+        require(edited->labels.size() == 1 && edited->labels[0] == "database", "labels are fully replaced");
+        require(edited->version == done->version + 1, "edit increments the optimistic-lock version");
+        require(edited->resolution.has_value() && *edited->resolution == "fixed",
+               "editing standard fields does not disturb the resolution set by the earlier status change");
+
+        bool editConflictDetected = false;
+        try {
+            database.editIssue(created.key, edit, demoUserId, done->version);
+        } catch (const TicketHub::Domain::ConcurrencyConflict&) {
+            editConflictDetected = true;
+        }
+        require(editConflictDetected, "stale edit is rejected");
+
+        TicketHub::Domain::EditIssueRequest unassign = edit;
+        unassign.assigneeEmail = std::nullopt;
+        const auto unassigned = database.editIssue(created.key, unassign, demoUserId, edited->version);
+        require(unassigned.has_value() && !unassigned->assignee.has_value(), "assignee can be cleared");
+
+        const auto editHistoryCount = scalarInt(databasePath,
+            "SELECT COUNT(*) FROM issue_history WHERE issue_id = '" + created.id
+            + "' AND field_name IN ('summary','description','priority','assignee','story_points','due_date')");
+        require(editHistoryCount >= 6, "each changed field writes an issue_history row");
 
         const auto comment = database.addComment({created.key, "Database adapter smoke test passed."}, demoUserId);
         require(!comment.id.empty(), "comment receives an id");

@@ -20,6 +20,14 @@ std::string joinErrors(const std::vector<std::string>& errors) {
     }
     return message.str();
 }
+
+void normalizeLabels(std::vector<std::string>& labels) {
+    for (auto& label : labels) {
+        label = Domain::normalizeLabel(label);
+    }
+    std::sort(labels.begin(), labels.end());
+    labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
+}
 } // namespace
 
 TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database)
@@ -131,11 +139,7 @@ Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, con
     if (request.assigneeEmail) {
         request.assigneeEmail = Domain::normalizeEmail(*request.assigneeEmail);
     }
-    for (auto& label : request.labels) {
-        label = Domain::normalizeLabel(label);
-    }
-    std::sort(request.labels.begin(), request.labels.end());
-    request.labels.erase(std::unique(request.labels.begin(), request.labels.end()), request.labels.end());
+    normalizeLabels(request.labels);
     const auto errors = Domain::validateCreateIssue(request);
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
@@ -158,6 +162,27 @@ bool TicketService::changeStatus(const std::string& issueKey,
     }
     requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     return database_->changeIssueStatus(normalizedKey, statusKey, actor.userId, resolution, expectedVersion);
+}
+
+std::optional<Domain::Issue> TicketService::editIssue(const std::string& issueKey,
+                                                       Domain::EditIssueRequest request,
+                                                       const Domain::Principal& actor,
+                                                       const std::optional<std::int64_t> expectedVersion) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        return std::nullopt;
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    if (request.assigneeEmail) {
+        request.assigneeEmail = Domain::normalizeEmail(*request.assigneeEmail);
+    }
+    normalizeLabels(request.labels);
+    const auto errors = Domain::validateEditIssue(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->editIssue(normalizedKey, request, actor.userId, expectedVersion);
 }
 
 std::vector<Domain::Comment> TicketService::listComments(const std::string& issueKey,

@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased — Phase 3 (partial, continued): full issue edit (reduced scope)
+
+- Added `Domain::EditIssueRequest` and `IDatabase::editIssue`/`TicketService::editIssue` (D129): a
+  full-replacement edit of an issue's standard fields (summary, description, priority, assignee, story
+  points, due date, labels) sharing `changeIssueStatus`'s optimistic-locking contract (`expectedVersion`
+  -> `Domain::ConcurrencyConflict` on a mismatch) and requiring the same project-Member-or-above role.
+  Returns `nullopt` for an unknown issue rather than throwing. Does not edit `issueTypeKey` or
+  `parentIssueKey` -- re-typing or re-parenting an issue is not yet implemented.
+- Each changed field writes one `issue_history` row (`summary`/`description`/`priority`/`assignee`/
+  `story_points`/`due_date`); an unchanged field writes none.
+- Factored the summary/description/priority/storyPoints/labels validation shared between
+  `validateCreateIssue` and the new `validateEditIssue` into one internal helper
+  (`appendIssueContentErrors`) instead of duplicating it; factored the label
+  normalize-sort-dedupe logic shared between `createIssue` and `editIssue` into `normalizeLabels` in
+  `TicketService.cpp`.
+- Added `PATCH /api/issues/{key}` to `Api.cpp` for the new edit use case (**not yet compiled** — see
+  "Known verification limitation" in `README.md`). While there, fixed a real bug: `POST /api/issues`,
+  `PATCH /api/issues/{key}/status`, and `POST /api/issues/{key}/comments` were each missing a
+  `catch (const Domain::Forbidden&)` handler, so a project-role authorization failure on any of those
+  three routes would have fallen through to the generic handler and returned HTTP 500 instead of 403.
+- Extended `sqlite_integration_tests` with `editIssue` coverage (every field, label replacement,
+  assignee clearing, the stale-version conflict, and one `issue_history` row per changed field) and
+  `authorization_integration_tests` with role-gating coverage for `editIssue` (non-member rejected,
+  member permitted, unknown issue returns `nullopt`).
+- Manually verified `editIssue` (every field, label replacement, assignee clearing, the stale-version
+  conflict, and editing an unknown issue) against a live local PostgreSQL 16 server.
+
 ## Unreleased — Phase 3 (partial): fixed workflow and hierarchy (reduced scope)
 
 - Added the fixed Epic -> Story/Task/Bug -> Sub-task hierarchy (D5, D29, D64-D66) as an

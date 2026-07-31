@@ -899,6 +899,126 @@ VALUES ($1, $2, $3, 'status', $4, $5)
     }
 }
 
+namespace {
+std::string historyText(const std::optional<std::string>& value) {
+    return value.value_or(std::string());
+}
+std::string historyText(const std::optional<double>& value) {
+    return value ? std::to_string(*value) : std::string();
+}
+} // namespace
+
+std::optional<Domain::Issue> PostgresDatabase::editIssue(const std::string& issueKey,
+                                                         const Domain::EditIssueRequest& request,
+                                                         const std::string& actorUserId,
+                                                         const std::optional<std::int64_t> expectedVersion) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin edit issue transaction");
+    try {
+        auto current = execParams(connection.get(), R"SQL(
+SELECT i.id, i.summary, i.description, pr.priority_key, assignee.email,
+       i.story_points, i.due_date::text, i.version
+FROM issues i
+JOIN priorities pr ON pr.id = i.priority_id
+LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
+WHERE i.deleted_at IS NULL
+  AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
+FOR UPDATE OF i
+)SQL",
+                                  {issueKey},
+                                  "Lock issue for edit");
+        if (PQntuples(current.get()) == 0) {
+            exec(connection.get(), "ROLLBACK", "Rollback missing issue transaction");
+            return std::nullopt;
+        }
+        const std::string issueId = value(current.get(), 0, 0);
+        const std::string oldSummary = value(current.get(), 0, 1);
+        const std::string oldDescription = value(current.get(), 0, 2);
+        const std::string oldPriorityKey = value(current.get(), 0, 3);
+        const std::optional<std::string> oldAssigneeEmail = optionalValue(current.get(), 0, 4);
+        std::optional<double> oldStoryPoints;
+        if (PQgetisnull(current.get(), 0, 5) == 0) {
+            oldStoryPoints = std::stod(value(current.get(), 0, 5));
+        }
+        const std::optional<std::string> oldDueDate = optionalValue(current.get(), 0, 6);
+        const std::int64_t currentVersion = int64Value(current.get(), 0, 7);
+        if (expectedVersion && *expectedVersion != currentVersion) {
+            throw Domain::ConcurrencyConflict("Issue was modified by another user");
+        }
+
+        const std::string priorityId = lookupId(connection.get(), "priorities", "priority_key", request.priorityKey);
+        std::optional<std::string> assigneeId;
+        if (request.assigneeEmail && !request.assigneeEmail->empty()) {
+            assigneeId = lookupId(connection.get(), "users", "email", *request.assigneeEmail);
+        }
+        const std::string actorId = requireUserId(connection.get(), actorUserId);
+
+        execParams(connection.get(), R"SQL(
+UPDATE issues
+SET summary = $1, description = $2, priority_id = $3, assignee_user_id = $4,
+    story_points = $5::double precision, due_date = $6::date, version = version + 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = $7
+)SQL",
+                   {request.summary,
+                    request.description,
+                    priorityId,
+                    assigneeId,
+                    request.storyPoints ? std::optional<std::string>(std::to_string(*request.storyPoints)) : std::nullopt,
+                    request.dueDate,
+                    issueId},
+                   "Update issue fields");
+
+        execParams(connection.get(), "DELETE FROM issue_labels WHERE issue_id = $1", {issueId}, "Clear issue labels");
+        for (const auto& labelName : request.labels) {
+            execParams(connection.get(),
+                       "INSERT INTO labels(id, name) VALUES ($1, $2) ON CONFLICT(name) DO NOTHING",
+                       {Common::uuidV4(), labelName},
+                       "Insert label");
+            execParams(connection.get(), R"SQL(
+INSERT INTO issue_labels(issue_id, label_id)
+SELECT $1, id FROM labels WHERE name = $2
+ON CONFLICT DO NOTHING
+)SQL",
+                       {issueId, labelName},
+                       "Link label");
+        }
+
+        auto recordHistory = [&](const char* field, const std::string& oldValue, const std::string& newValue) {
+            if (oldValue == newValue) {
+                return;
+            }
+            std::optional<std::string> oldParam = oldValue.empty() ? std::nullopt : std::optional<std::string>(oldValue);
+            std::optional<std::string> newParam = newValue.empty() ? std::nullopt : std::optional<std::string>(newValue);
+            execParams(connection.get(), R"SQL(
+INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+VALUES ($1, $2, $3, $4, $5, $6)
+)SQL",
+                       {Common::uuidV4(), issueId, actorId, std::string(field), oldParam, newParam},
+                       "Insert edit history");
+        };
+        recordHistory("summary", oldSummary, request.summary);
+        recordHistory("description", oldDescription, request.description);
+        recordHistory("priority", oldPriorityKey, request.priorityKey);
+        recordHistory("assignee", historyText(oldAssigneeEmail), historyText(request.assigneeEmail));
+        recordHistory("story_points", historyText(oldStoryPoints), historyText(request.storyPoints));
+        recordHistory("due_date", historyText(oldDueDate), historyText(request.dueDate));
+
+        exec(connection.get(), "COMMIT", "Commit edit issue transaction");
+        auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
+                                 {issueId}, "Read edited issue");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Edited issue could not be read back");
+        }
+        return readIssue(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback edit issue transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
 std::vector<Domain::Comment> PostgresDatabase::listComments(const std::string& issueKey) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), R"SQL(

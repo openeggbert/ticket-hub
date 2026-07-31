@@ -544,6 +544,8 @@ void registerApiRoutes(crow::SimpleApp& app,
                 }
             }
             return jsonResponse(201, issueJson(service->createIssue(std::move(create), *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
@@ -557,6 +559,53 @@ void registerApiRoutes(crow::SimpleApp& app,
             return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/issues/<string>")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::EditIssueRequest edit;
+            edit.summary = requiredString(body, "summary");
+            edit.description = optionalString(body, "description").value_or("");
+            edit.priorityKey = requiredString(body, "priorityKey");
+            edit.assigneeEmail = optionalString(body, "assigneeEmail");
+            edit.dueDate = optionalString(body, "dueDate");
+            if (body.has("storyPoints") && body["storyPoints"].t() != crow::json::type::Null) {
+                edit.storyPoints = body["storyPoints"].d();
+            }
+            if (body.has("labels") && body["labels"].t() == crow::json::type::List) {
+                for (const auto& label : body["labels"]) {
+                    if (label.t() == crow::json::type::String) {
+                        edit.labels.emplace_back(label.s());
+                    }
+                }
+            }
+            std::optional<std::int64_t> expectedVersion;
+            if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
+                expectedVersion = body["expectedVersion"].i();
+            }
+            auto issue = service->editIssue(issueKey, std::move(edit), *principal, expectedVersion);
+            return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
+        } catch (const Domain::ConcurrencyConflict& error) {
+            return errorResponse(409, error.what());
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }
@@ -591,6 +640,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(409, error.what());
         } catch (const Domain::WorkflowViolation& error) {
             return errorResponse(422, error.what());
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
@@ -630,6 +681,8 @@ void registerApiRoutes(crow::SimpleApp& app,
                 return errorResponse(400, "Request body must be valid JSON");
             }
             return jsonResponse(201, commentJson(service->addComment(issueKey, requiredString(body, "body"), *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {

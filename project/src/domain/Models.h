@@ -216,6 +216,24 @@ struct CreateIssueRequest {
     std::optional<std::string> dueDate;
 };
 
+// Full-replacement edit of an issue's standard fields, applied with the same
+// optimistic-locking contract as changeIssueStatus (D129). This is a PUT-style
+// request, not a JSON-merge-patch: every field here is always the caller's
+// intended final value (an absent optional field means "no value", not
+// "leave whatever is there alone") -- the caller is expected to pre-populate
+// an edit form/request from the current issue. `issueTypeKey` and
+// `parentIssueKey` are intentionally not editable yet; re-typing or
+// re-parenting an issue after creation is not yet implemented (see NEXT.md).
+struct EditIssueRequest {
+    std::string summary;
+    std::string description;
+    std::string priorityKey;
+    std::optional<std::string> assigneeEmail;
+    std::vector<std::string> labels;
+    std::optional<double> storyPoints;
+    std::optional<std::string> dueDate;
+};
+
 struct AddCommentRequest {
     std::string issueKey;
     std::string body;

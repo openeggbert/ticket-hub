@@ -28,6 +28,42 @@ std::string upper(const std::string& value) {
     return result;
 }
 
+// Shared between validateCreateIssue and validateEditIssue: the standard
+// content fields both requests carry (summary/description/priorityKey/
+// storyPoints/labels). projectKey/issueTypeKey (create-only) and the
+// hierarchy/parentIssueKey rules (checked against database state, not pure
+// input validation) are each caller's own responsibility.
+void appendIssueContentErrors(std::vector<std::string>& errors,
+                              const std::string& summary,
+                              const std::string& description,
+                              const std::string& priorityKey,
+                              const std::optional<double>& storyPoints,
+                              const std::vector<std::string>& labels) {
+    if (summary.empty()) {
+        errors.emplace_back("summary is required");
+    } else if (summary.size() > 255) {
+        errors.emplace_back("summary must not exceed 255 characters");
+    }
+    if (description.size() > 100000) {
+        errors.emplace_back("description must not exceed 100000 characters");
+    }
+    if (priorityKey.empty()) {
+        errors.emplace_back("priorityKey is required");
+    }
+    if (storyPoints.has_value() && (*storyPoints < 0.0 || *storyPoints > 10000.0)) {
+        errors.emplace_back("storyPoints must be between 0 and 10000");
+    }
+    if (labels.size() > 50) {
+        errors.emplace_back("an issue may have at most 50 labels");
+    }
+    if (std::any_of(labels.begin(), labels.end(), [](const std::string& label) {
+            const auto normalized = normalizeLabel(label);
+            return normalized.empty() || normalized.size() > 64;
+        })) {
+        errors.emplace_back("labels must contain 1-64 characters after trimming");
+    }
+}
+
 } // namespace
 
 std::string normalizeProjectKey(const std::string& value) {
@@ -63,33 +99,19 @@ std::vector<std::string> validateCreateIssue(const CreateIssueRequest& request) 
     if (!isValidProjectKey(normalizedKey)) {
         errors.emplace_back("projectKey must contain 2-12 uppercase letters or digits and start with a letter");
     }
-    if (request.summary.empty()) {
-        errors.emplace_back("summary is required");
-    } else if (request.summary.size() > 255) {
-        errors.emplace_back("summary must not exceed 255 characters");
-    }
-    if (request.description.size() > 100000) {
-        errors.emplace_back("description must not exceed 100000 characters");
-    }
     if (request.issueTypeKey.empty()) {
         errors.emplace_back("issueTypeKey is required");
     }
-    if (request.priorityKey.empty()) {
-        errors.emplace_back("priorityKey is required");
-    }
-    if (request.storyPoints.has_value() && (*request.storyPoints < 0.0 || *request.storyPoints > 10000.0)) {
-        errors.emplace_back("storyPoints must be between 0 and 10000");
-    }
-    if (request.labels.size() > 50) {
-        errors.emplace_back("an issue may have at most 50 labels");
-    }
-    if (std::any_of(request.labels.begin(), request.labels.end(), [](const std::string& label) {
-            const auto normalized = normalizeLabel(label);
-            return normalized.empty() || normalized.size() > 64;
-        })) {
-        errors.emplace_back("labels must contain 1-64 characters after trimming");
-    }
+    appendIssueContentErrors(errors, request.summary, request.description, request.priorityKey,
+                             request.storyPoints, request.labels);
 
+    return errors;
+}
+
+std::vector<std::string> validateEditIssue(const EditIssueRequest& request) {
+    std::vector<std::string> errors;
+    appendIssueContentErrors(errors, request.summary, request.description, request.priorityKey,
+                             request.storyPoints, request.labels);
     return errors;
 }
 

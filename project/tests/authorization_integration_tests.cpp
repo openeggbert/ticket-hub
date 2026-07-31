@@ -56,6 +56,7 @@ int main() {
     using TicketHub::Application::TicketService;
     using TicketHub::Domain::CreateIssueRequest;
     using TicketHub::Domain::CreateProjectRequest;
+    using TicketHub::Domain::EditIssueRequest;
     using TicketHub::Domain::Forbidden;
     using TicketHub::Domain::Principal;
     using TicketHub::Infrastructure::Database::SqliteDatabase;
@@ -107,6 +108,26 @@ int main() {
         // Alex is WEB's project admin (rank 2), which satisfies the member-rank
         // (1) requirement for ordinary writes too.
         require(tickets.changeStatus("WEB-1", "in-progress", alex), "a project admin can change status too");
+
+        EditIssueRequest webEdit;
+        webEdit.summary = "Should be rejected";
+        webEdit.description = "Sam is not a WEB project member.";
+        webEdit.priorityKey = "medium";
+        require(throwsForbidden([&] { tickets.editIssue("WEB-1", webEdit, sam); }),
+               "non-member cannot edit another project's issue");
+
+        EditIssueRequest thEdit;
+        thEdit.summary = "Edited by a TH member";
+        thEdit.description = "Alex is a member of TH.";
+        thEdit.priorityKey = "high";
+        const auto edited = tickets.editIssue(created.key, thEdit, alex);
+        require(edited.has_value() && edited->summary == thEdit.summary, "a TH member can edit a TH issue");
+
+        EditIssueRequest missingEdit;
+        missingEdit.summary = "n/a";
+        missingEdit.priorityKey = "medium";
+        require(!tickets.editIssue("TH-9999", missingEdit, demo).has_value(),
+               "editing an unknown issue returns nullopt rather than throwing");
     }
 
     // --- Anonymous read-access toggle (D59, off by default) ---

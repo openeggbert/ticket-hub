@@ -97,6 +97,16 @@ public:
                                    const std::string& actorUserId,
                                    std::optional<std::string> resolution = std::nullopt,
                                    std::optional<std::int64_t> expectedVersion = std::nullopt) = 0;
+    // Full-replacement edit of an issue's standard fields (D129), with the
+    // same optimistic-locking contract as changeIssueStatus: a mismatched
+    // `expectedVersion` throws Domain::ConcurrencyConflict, and every changed
+    // field writes one issue_history row. Returns nullopt if the issue does
+    // not exist (or is soft-deleted). Does not touch `issueTypeKey` or
+    // `parentIssueKey` -- neither is editable yet.
+    virtual std::optional<Domain::Issue> editIssue(const std::string& issueKey,
+                                                   const Domain::EditIssueRequest& request,
+                                                   const std::string& actorUserId,
+                                                   std::optional<std::int64_t> expectedVersion = std::nullopt) = 0;
     virtual std::vector<Domain::Comment> listComments(const std::string& issueKey) = 0;
     virtual Domain::Comment addComment(const Domain::AddCommentRequest& request,
                                        const std::string& authorUserId) = 0;

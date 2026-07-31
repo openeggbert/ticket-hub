@@ -35,6 +35,9 @@ Implemented now:
 - **the fixed workflow's hardcoded transition rules, enforced transactionally in `changeIssueStatus`**:
   a resolution is required to complete an issue and is cleared automatically on reopen, and an issue
   cannot complete while it has an unfinished sub-task,
+- **full-replacement issue edit with optimistic locking** (D129): summary, description, priority,
+  assignee, story points, due date and labels, sharing the same `expectedVersion`/409 contract as status
+  changes, with one `issue_history` row per field that actually changed,
 - every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
@@ -197,9 +200,16 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `GET` | `/api/issues` | session, or anon if enabled | filter by `project`, `status`, `q` |
 | `POST` | `/api/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
 | `GET` | `/api/issues/{key}` | session, or anon if enabled | current key or permanent alias |
+| `PATCH` | `/api/issues/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
 | `PATCH` | `/api/issues/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
 | `GET` | `/api/issues/{key}/comments` | session, or anon if enabled | live comments |
 | `POST` | `/api/issues/{key}/comments` | session + CSRF, project member | add comment |
+
+`PATCH /api/issues/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
+priorityKey, assigneeEmail?, storyPoints?, dueDate?, labels?, expectedVersion?}`. Every editable field
+is always the caller's intended final value (e.g. omitting `assigneeEmail` unassigns the issue, it does
+not leave the current assignee alone) -- the caller is expected to pre-populate the request from the
+current issue. It does not change `issueTypeKey` or `parentIssueKey`; neither is editable yet.
 
 Issue responses include `version` and `resolution`. A stale `expectedVersion` returns HTTP 409. A
 missing/insufficient project role or global-admin requirement returns HTTP 403. An anonymous read while
@@ -230,34 +240,42 @@ What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
 - `ticket-hub-core` (domain, application, infrastructure/database — including the identity/session code,
-  fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, and the fixed
-  hierarchy/workflow rules, in both database adapters),
+  fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
+  hierarchy/workflow rules, and full-replacement issue edit, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
-  `sqlite_integration_tests`, `identity_integration_tests` (create-user, login success/failure,
-  generic-error anti-enumeration check, minimal lockout, session validate/expire/logout),
-  `authorization_integration_tests` (project-role gating on issue writes, not-found semantics under
-  authorization, the anonymous-read-access toggle, and the full project lifecycle: create/archive/
-  soft-delete/restore/permanently-delete, each checked against both the project-admin and
-  global-administrator authorization paths), `workflow_integration_tests` (new — every Epic/Sub-task
-  hierarchy rejection case, resolution required/rejected-if-unknown on completion, resolution cleared on
-  reopen, the sub-task-completion gate blocking and then permitting a parent's completion, and reopening
-  a parent leaving its sub-task's status untouched), and `crypto_tests` — all passing.
+  `sqlite_integration_tests` (now including `editIssue`: every field, label replacement, assignee
+  clearing, the stale-version conflict, and one `issue_history` row per changed field),
+  `identity_integration_tests` (create-user, login success/failure, generic-error anti-enumeration check,
+  minimal lockout, session validate/expire/logout), `authorization_integration_tests` (project-role
+  gating on issue writes and edits, not-found semantics under authorization, the anonymous-read-access
+  toggle, and the full project lifecycle: create/archive/soft-delete/restore/permanently-delete, each
+  checked against both the project-admin and global-administrator authorization paths),
+  `workflow_integration_tests` (every Epic/Sub-task hierarchy rejection case, resolution
+  required/rejected-if-unknown on completion, resolution cleared on reopen, the sub-task-completion gate
+  blocking and then permitting a parent's completion, and reopening a parent leaving its sub-task's
+  status untouched), and `crypto_tests` — all passing.
 - Additionally, migrations, seed data, `create-user`, and a full login → validate-session → logout cycle
   were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite) in
   Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code
   (`createProject`, `setProjectArchived`, `softDeleteProject`, `listDeletedProjects`, `restoreProject`,
-  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it again for
+  `permanentlyDeleteProject`, `installation_settings` get/set); Phase 3 repeated it again, first for
   `createIssue` (with `parentIssueKey`) and `changeIssueStatus` (with `resolution`, the sub-task gate,
-  and the reopen-clears-resolution rule) — all passing.
+  and the reopen-clears-resolution rule), then again for `editIssue` (every field, label replacement,
+  assignee clearing, the stale-version conflict, and editing an unknown issue) — all passing.
 
 What was **not** compiled or tested: `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the
 `ticket-hub` server target). The session-cookie/CSRF wiring in `Api.cpp`, the Phase 2 project-CRUD and
-anonymous-read-toggle routes, and the Phase 3 `parentIssueKey`/`resolution` request fields and the new
-HTTP 422 mapping for `Domain::WorkflowViolation`, follow the exact patterns already used by the
-surrounding (previously-verified) route handlers, but none of it has been built or exercised against a
-real HTTP client. Build and smoke-test the server target in an environment with network access to
-`github.com` (or a preinstalled Crow package) before trusting it in production.
+anonymous-read-toggle routes, and the Phase 3 `parentIssueKey`/`resolution` request fields, the new
+`PATCH /api/issues/{key}` full-edit route, and the HTTP 422 mapping for `Domain::WorkflowViolation`,
+follow the exact patterns already used by the surrounding (previously-verified) route handlers, but none
+of it has been built or exercised against a real HTTP client. (While adding the edit route, three
+existing routes -- `POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST
+/api/issues/{key}/comments` -- were found to be missing a `catch (const Domain::Forbidden&)` handler,
+which would have surfaced a project-role authorization failure as HTTP 500 instead of 403; fixed
+alongside the new route, still equally unverified.) Build and smoke-test the server target in an
+environment with network access to `github.com` (or a preinstalled Crow package) before trusting it in
+production.
 
 Schema migrations are files such as `001_initial.sql` and `003_product_foundation.sql`. The runner:
 

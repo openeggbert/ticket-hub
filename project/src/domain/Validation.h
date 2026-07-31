@@ -13,6 +13,7 @@ std::string normalizeLabel(const std::string& value);
 bool isValidProjectKey(const std::string& value);
 bool isValidIssueKey(const std::string& value);
 std::vector<std::string> validateCreateIssue(const CreateIssueRequest& request);
+std::vector<std::string> validateEditIssue(const EditIssueRequest& request);
 
 std::string normalizeEmail(const std::string& value);
 bool isValidEmail(const std::string& value);

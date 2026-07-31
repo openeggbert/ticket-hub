@@ -53,6 +53,14 @@ public:
                       const Domain::Principal& actor,
                       std::optional<std::string> resolution = std::nullopt,
                       std::optional<std::int64_t> expectedVersion = std::nullopt);
+    // Full-replacement edit of an issue's standard fields (D129); see
+    // Domain::EditIssueRequest for the PUT-style contract and
+    // IDatabase::editIssue for the optimistic-locking/history behavior.
+    // Returns nullopt if the issue does not exist.
+    std::optional<Domain::Issue> editIssue(const std::string& issueKey,
+                                           Domain::EditIssueRequest request,
+                                           const Domain::Principal& actor,
+                                           std::optional<std::int64_t> expectedVersion = std::nullopt);
     Domain::Comment addComment(const std::string& issueKey, const std::string& body, const Domain::Principal& actor);
 
     // --- Project lifecycle (Phase 2, D3/D87/D88/D89) ---

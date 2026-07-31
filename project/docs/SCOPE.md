@@ -33,7 +33,9 @@ remain as the long-term aspirational baseline only — do not build against them
 - **Fixed hierarchy and workflow rules (Phase 3, partial):** the Epic -> Story/Task/Bug -> Sub-task
   hierarchy is enforced on issue creation (D5, D29, D64-D66); status transitions enforce the fixed
   workflow rules (D68-D70) -- resolution required on completion, cleared on reopen, and a parent cannot
-  complete while any sub-task is unfinished. See "Not yet built" below for the rest of Phase 3.
+  complete while any sub-task is unfinished; full-replacement issue edit with the same optimistic-locking
+  contract as status changes (D129) -- summary, description, priority, assignee, story points, due date,
+  labels, one `issue_history` row per changed field. See "Not yet built" below for the rest of Phase 3.
 - Domain, migration, crypto, identity, SQLite integration, authorization, and workflow tests (7/7
   passing; see `docs/VERIFICATION.md`).
 
@@ -41,13 +43,13 @@ remain as the long-term aspirational baseline only — do not build against them
 
 - The session-cookie/CSRF wiring and the Phase 2/3 route additions in `src/web/Api.cpp` have not been
   compiled or smoke-tested (Crow is unavailable in this sandbox); there is also no login page,
-  project-management UI, or hierarchy/resolution UI in `web/` yet.
+  project-management UI, or hierarchy/resolution/edit UI in `web/` yet.
 - Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
   to Phase 6, alongside REST rate limiting.
-- Rest of Phase 3: full issue edit beyond status (summary/description/priority/assignee/labels/due date
-  with optimistic locking), simple cloning (D60), the fixed issue-link catalog (D17), self-only watchers
-  (D20), voting (D79), simple bulk actions (D36), always-allowed project moves (D37), and the integer
-  rank/renumber migration (D31) that replaces the unused `issues.rank_value` text column.
+- Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
+  `issueTypeKey`/`parentIssueKey`), simple cloning (D60), the fixed issue-link catalog (D17), self-only
+  watchers (D20), voting (D79), simple bulk actions (D36), always-allowed project moves (D37), and the
+  integer rank/renumber migration (D31) that replaces the unused `issues.rank_value` text column.
 - Comments/mentions/reactions, attachments, and the Kanban board are not implemented (Phase 4-5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).

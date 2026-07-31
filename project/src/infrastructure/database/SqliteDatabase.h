@@ -60,6 +60,10 @@ public:
                            const std::string& actorUserId,
                            std::optional<std::string> resolution = std::nullopt,
                            std::optional<std::int64_t> expectedVersion = std::nullopt) override;
+    std::optional<Domain::Issue> editIssue(const std::string& issueKey,
+                                           const Domain::EditIssueRequest& request,
+                                           const std::string& actorUserId,
+                                           std::optional<std::int64_t> expectedVersion = std::nullopt) override;
     std::vector<Domain::Comment> listComments(const std::string& issueKey) override;
     Domain::Comment addComment(const Domain::AddCommentRequest& request,
                                const std::string& authorUserId) override;
