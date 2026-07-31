@@ -20,11 +20,11 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 110 / 142
-- Decisions remaining: 32
+- Decisions completed: 124 / 142
+- Decisions remaining: 18
 - KEEP_FOR_V1: 22
-- SIMPLIFY_FOR_V1: 42
-- DEFER_AFTER_V1: 22
+- SIMPLIFY_FOR_V1: 44
+- DEFER_AFTER_V1: 34
 - REMOVE_COMPLETELY: 7
 - ARCHITECTURE_ONLY: 0
 - ALREADY_IMPLEMENTED_AND_KEEP: 17
@@ -145,20 +145,20 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 107 | Backup consistency mode | Both offline/read-only and online snapshot; PostgreSQL defaults to online, SQLite short read-only window | Offline/maintenance-window backup only for both databases; no online consistent snapshot logic | SIMPLIFY_FOR_V1 | Online consistent snapshot requires nontrivial transaction/replication-slot handling; simpler maintenance-window approach sufficient for small deployments | 10-15h | DONE |
 | 108 | Restore safety | Restore into isolated temporary environment, verify manifest/checksums/schema/integrity, then atomic switch, keep old data for rollback | Direct restore into target database via ticket-hub restore command with a confirmation warning; admin responsible for their own pre-restore backup; no isolated staging environment | SIMPLIFY_FOR_V1 | Isolated-environment restore orchestration is nontrivial; direct restore with a clear warning is acceptable for small self-hosted deployments | 15-25h | DONE |
 | 109 | Backup version direction | Forward migrate older supported backups; reject newer backups in older app; no downgrade | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Natural consequence of the existing ordered checksummed migration system | 0-2h | DONE |
-| 110 | Very old backup compatibility |  |  |  |  |  | PENDING |
-| 111 | Application upgrades |  |  |  |  |  | PENDING |
-| 112 | Automatic application updates |  |  |  |  |  | PENDING |
-| 113 | Release channels |  |  |  |  |  | PENDING |
-| 114 | Changing database backend |  |  |  |  |  | PENDING |
-| 115 | Inbound email features |  |  |  |  |  | PENDING |
-| 116 | Unknown inbound email sender |  |  |  |  |  | PENDING |
-| 117 | Reply trimming |  |  |  |  |  | PENDING |
-| 118 | Inbound email body format |  |  |  |  |  | PENDING |
-| 119 | Duplicate filenames in inbound email |  |  |  |  |  | PENDING |
-| 120 | Inbound mail transport |  |  |  |  |  | PENDING |
-| 121 | IMAP delivery mode |  |  |  |  |  | PENDING |
-| 122 | Inbound email idempotency |  |  |  |  |  | PENDING |
-| 123 | Inbound email processing failure |  |  |  |  |  | PENDING |
+| 110 | Very old backup compatibility | Documented LTS migration checkpoints for very old backups (bridge releases) | Defer entirely; no LTS bridge planning needed for a first V1 release with no legacy backups to migrate | DEFER_AFTER_V1 | Premature multi-year version planning for a product that has no prior versions yet | 5-10h | DONE |
+| 111 | Application upgrades | Staged upgrade check/apply plus rolling upgrades where possible; preflight checks DB/schema/space/storage/jobs/backup/migration path | Use existing ticket-hub migrate command only; no separate upgrade check/apply wizard, no rolling upgrades | SIMPLIFY_FOR_V1 | Rolling upgrades moot after Kubernetes/multi-instance removal (Decision 50) and job infra removal (Decision 51); existing migrate command suffices | 10-15h | DONE |
+| 112 | Automatic application updates | Notify only; checks and reports available versions/release notes/security alerts, never auto-installs | Simple in-app admin banner when a newer version is available; no email delivery (email removed in Decision 14/52) | SIMPLIFY_FOR_V1 | Already the cheapest concept; only the delivery channel changed from email to in-app since email was removed | 0-2h | DONE |
+| 113 | Release channels | Stable, LTS, Preview release channels | No release channels in V1; single version line with semver tags | DEFER_AFTER_V1 | Multiple support channels only matter once several versions with different lifecycles exist; premature for a first release | 3-5h | DONE |
+| 114 | Changing database backend | Database-neutral application export/import for SQLite<->PostgreSQL migration, rebuilding FTS indexes | No migration tool in V1; admin picks a database at install time and stays on it | DEFER_AFTER_V1 | Standalone cross-engine data migration tool remains expensive even after FTS simplification in Decision 43 | 15-25h | DONE |
+| 115 | Inbound email features | Create issues and turn replies into comments; subject/body/attachment mapping, sender mapping, anti-spoofing/loop protection | No inbound email in V1; issues/comments created via UI only. Confirms entire block 116-123 as moot. | DEFER_AFTER_V1 | Outbound email backend was removed in Decision 52; inbound email has no purpose without it, and user explicitly wanted no inbound email in V1 | 40-60h (covers block 115-123) | DONE |
+| 116 | Unknown inbound email sender | Always reject unknown sender; only existing active user may create/comment by email | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
+| 117 | Reply trimming | Reply-above-marker with conservative fallback stripping | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
+| 118 | Inbound email body format | Prefer text/plain; sanitized HTML-to-Markdown fallback | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
+| 119 | Duplicate filenames in inbound email | Store all as separate immutable attachments; filenames not unique | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
+| 120 | Inbound mail transport | Pluggable IMAP, mail pipe, HTTP webhook adapters | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
+| 121 | IMAP delivery mode | IMAP IDLE with configurable polling fallback | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
+| 122 | Inbound email idempotency | Message-ID/UID/checksum-based idempotency plus quarantine | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115 | 0h (already counted in Decision 115) | DONE |
+| 123 | Inbound email processing failure | Retry with backoff then dead-letter queue; atomic processing | Confirmed moot; no inbound email in V1 | DEFER_AFTER_V1 | Depends on inbound email removed in Decision 115; concludes the email block | 0h (already counted in Decision 115) | DONE |
 | 124 | REST rate limiting |  |  |  |  |  | PENDING |
 | 125 | REST request and batch limits |  |  |  |  |  | PENDING |
 | 126 | REST pagination |  |  |  |  |  | PENDING |
