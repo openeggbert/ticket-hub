@@ -56,10 +56,11 @@ remain as the long-term aspirational baseline only — do not build against them
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
-- `web/` now has a minimal login screen, an Epic/parent picker on issue create, and a resolution picker
-  on status changes, but still no project-management UI, or edit/link/clone/watch/vote/recycle-bin/
-  bulk-action/reorder/move UI -- the routes themselves are built and live-verified (see above), but
-  nothing in the demo UI calls any of those write routes yet.
+- `web/` now covers the full single-issue lifecycle: login, an Epic/parent picker on create, a resolution
+  picker on status changes, and (this batch) full edit, clone, links, and watch/vote in the issue drawer.
+  Still no project-management UI, issue recycle-bin UI, bulk-action UI, or reorder/move UI -- the routes
+  themselves are built and live-verified (see above), but nothing in the demo UI calls those write routes
+  yet.
 - Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch

@@ -339,9 +339,19 @@ issue showing/applying the resolution picker; reopening clearing the resolution 
 that direction. A race condition in the picker's own async refresh (caught by this same browser test) was
 fixed with a request-id guard. Full detail is in `docs/VERIFICATION.md`.
 
-Project-management UI (create/archive/recycle-bin), full edit, links, clone, watch/vote, the issue
-recycle bin, bulk actions, and reorder/move UI still do not exist in `web/`. Those routes are all
-live-verified via `curl` (above) but still not reachable from the demo UI.
+A third follow-up batch then added full edit, clone, links, and watch/vote to the issue drawer — an
+actions row (Watch/Vote toggles with live counts, Clone, Edit) and a Links section (list with correct
+bidirectional labels, add form, delete). Browser-verified the same way: watch/vote toggling and
+reverting correctly; cloning navigating to the new issue, whose Links section already shows the automatic
+`clones` link (D60); adding and deleting a link, confirmed bidirectional (visible and deletable from
+either linked issue); a full edit saving correctly and a cancelled edit discarding its changes. This
+testing caught a genuine CSS layout bug — a link row could overflow into the drawer's sidebar column and
+block clicks on whatever sat underneath it there (`.link-list`, a CSS grid container, was letting its
+items claim their full content width instead of shrinking) — fixed with an explicit `min-width: 0`.
+
+The issue drawer now covers the full single-issue lifecycle. Still missing from `web/`: project-management
+UI (create/archive/recycle-bin), the issue recycle bin, bulk actions, and reorder/move UI. Those routes
+are all live-verified via `curl` (above) but still not reachable from the demo UI.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

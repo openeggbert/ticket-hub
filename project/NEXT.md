@@ -128,25 +128,33 @@ anything from the removed/deferred list without an explicit new product conversa
   `README.md`'s "Server verification" section. This closes the one standing cross-phase verification gap
   that every prior batch's report had to caveat.
 
-## Login, hierarchy picker, and resolution picker: done. Immediate next step: everything else in `web/`
+## Issue drawer UI is now feature-complete. Immediate next step: project management, recycle bin, bulk, reorder/move
 
-`web/index.html`/`app.js`/`styles.css` now have: a minimal login screen (probes `GET /api/auth/me` on
-load, shows a sign-in form on 401, `app.js`'s `api()` attaches `X-CSRF-Token` from the `th_csrf` cookie on
-every non-`GET` request and treats any `401` as session-expired); an Epic/parent picker on issue create
-(narrows candidates and label text to the fixed hierarchy, D5/D29/D64-D66, server remains the actual
-source of truth); and an inline resolution picker in the drawer's status control (previously completing
-an issue via the UI always 422'd since `resolution` was never sent). All three verified end-to-end with a
-real headless browser (Playwright/Chromium), not just `curl` -- full detail in `docs/VERIFICATION.md`.
+`web/index.html`/`app.js`/`styles.css` now cover the full single-issue lifecycle: a minimal login screen;
+an Epic/parent picker on create; an inline resolution picker on status change; and, this batch, full edit,
+clone, links (list/add/delete, bidirectional), and watch/vote, all as an actions row plus a Links section
+in the issue drawer. Every one of these was verified end-to-end with a real headless browser
+(Playwright/Chromium), not just `curl` -- full detail in `docs/VERIFICATION.md`. That same browser testing
+caught and fixed a real CSS layout bug (a link row could visually overflow into the drawer's sidebar
+column and block clicks on whatever was underneath it there).
 
-What is still missing from `web/`:
+What is still missing from `web/` -- none of it touches the issue drawer, so it's naturally the next
+distinct area of work:
 
 1. Project-management UI: create/archive/recycle-bin (`POST /api/projects`, `PATCH .../archived`,
-   `DELETE`/`POST .../restore`/`DELETE .../permanent`, `GET /api/projects/deleted`).
-2. Full edit (`PATCH /api/issues/{key}`), links (`GET`/`POST .../links`, `DELETE /api/issue-links/{id}`),
-   clone (`POST .../clone`), watch/vote (`POST`/`DELETE .../watch`, `.../vote`, `GET .../watchers`,
-   `.../voters`), the issue recycle bin (`DELETE`/`POST .../restore`/`DELETE .../permanent`,
-   `GET /api/issues/deleted`), bulk actions (`POST /api/issues/bulk/*`), and the reorder/move actions
-   (`POST .../reorder`, `POST .../move`) all only exist as API routes today.
+   `DELETE`/`POST .../restore`/`DELETE .../permanent`, `GET /api/projects/deleted`). Currently the only
+   way to see projects is the read-only Projects view and the sidebar shortcuts; there is no way to
+   create, archive, or manage a project from the UI at all.
+2. The issue recycle bin (`DELETE`/`POST .../restore`/`DELETE .../permanent`, `GET /api/issues/deleted`)
+   -- there is no delete-issue action anywhere in the drawer yet, and no recycle-bin view.
+3. Bulk actions (`POST /api/issues/bulk/*`) -- would need multi-select on the Issues table view, which
+   doesn't exist yet (rows are single-click-to-open only).
+4. The reorder/move actions (`POST /api/issues/{key}/reorder`, `POST /api/issues/{key}/move`) -- reorder
+   naturally wants drag-and-drop on the Board view (not yet interactive; today's board is read-only,
+   clicking a card just opens the drawer) and/or a manual "move before/after" picker; move wants a
+   project picker somewhere in the drawer.
+5. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
+   Phase 4/5 if that is prioritized instead; use judgment on ordering.
 3. This is UI work, not core/database/application work -- it does not block continuing the roadmap into
    Phase 4/5 if that is prioritized instead; use judgment on ordering, but note it either way as the
    remaining "written but not reachable from the demo UI" gap.
