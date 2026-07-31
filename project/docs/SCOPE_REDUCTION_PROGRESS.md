@@ -20,14 +20,14 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 
 ## Summary counters (updated after every 10 decisions)
 
-- Decisions completed: 137 / 142
-- Decisions remaining: 5
-- KEEP_FOR_V1: 23
+- Decisions completed: 142 / 142
+- Decisions remaining: 0
+- KEEP_FOR_V1: 26
 - SIMPLIFY_FOR_V1: 51
 - DEFER_AFTER_V1: 38
 - REMOVE_COMPLETELY: 7
 - ARCHITECTURE_ONLY: 0
-- ALREADY_IMPLEMENTED_AND_KEEP: 18
+- ALREADY_IMPLEMENTED_AND_KEEP: 20
 - Cumulative estimated hours saved: see SCOPE_REDUCTION_ESTIMATE.md running totals
 
 
@@ -172,8 +172,8 @@ This file is the authoritative, persistent record of the interactive scope-reduc
 | 134 | Secrets management | Pluggable secrets backend: env vars, Docker/Kubernetes secrets, restricted files, encrypted DB values, future Vault | Environment variables only (.env file / Docker secrets); no pluggable backend, no encrypted DB values, no Vault | SIMPLIFY_FOR_V1 | Kubernetes secrets moot after Decision 50; env vars are the standard sufficient approach for small Docker Compose deployments | 8-12h | DONE |
 | 135 | Encryption at rest | Pluggable policy; infrastructure encryption default; optional application encryption for attachments and sensitive custom fields with external keys | Rely on infrastructure/disk-level encryption only; no application-level encryption in Ticket Hub code | SIMPLIFY_FOR_V1 | Custom-fields half already moot after Decision 9; application encryption for attachments not justified for V1 | 10-15h | DONE |
 | 136 | Issue recycle-bin retention | Configurable retention, default 90 days: 30/90/365 or never | Fixed 90-day retention, on-demand check, no admin config, no background job (consistent with Decisions 89 and 102) | SIMPLIFY_FOR_V1 | Same pattern as project and attachment recycle-bin retention | 3-5h | DONE |
-| 137 | SQLite product scope |  |  |  |  |  | PENDING |
-| 138 | Server platforms |  |  |  |  |  | PENDING |
-| 139 | Browser support |  |  |  |  |  | PENDING |
-| 140 | Frontend architecture |  |  |  |  |  | PENDING |
-| 141 | License |  |  |  |  |  | PENDING |
+| 137 | SQLite product scope | Same user-facing features with operational limits; one server process, limited worker concurrency, no horizontal scaling; no deliberately cut-down edition | Keep both: PostgreSQL primary, SQLite with full feature parity, as originally decided | KEEP_FOR_V1 | User chose to preserve the dual-database promise despite the recurring cost this creates across many other decisions (FTS, backup, etc.) | 0h (kept as-is) | DONE |
+| 138 | Server platforms | Linux fully supported; Windows/macOS best-effort buildable/runnable | Confirmed unchanged | KEEP_FOR_V1 | Already minimal; no testing/support commitments beyond Linux, consistent with Docker-only distribution (Decision 50) | 0h | DONE |
+| 139 | Browser support | Latest two major Chrome/Firefox/Edge/Safari; progressive degradation for older; no IE | Confirmed unchanged | KEEP_FOR_V1 | Natural consequence of modern vanilla JS without polyfills; no extra work required | 0h | DONE |
+| 140 | Frontend architecture | Crow serves real HTML/URLs; vanilla JS progressive enhancement for nav/boards/dialogs/filters/forms/REST/SSE; no framework; no initial PWA | Confirmed; hybrid HTML + vanilla JS as core non-negotiable identity, SSE mention dropped as moot after Decision 130 | ALREADY_IMPLEMENTED_AND_KEEP | Already implemented in prototype (Crow + vanilla HTML/CSS/JS); core non-negotiable product identity from CLAUDE.md | 0h | DONE |
+| 141 | License | MIT License | Confirmed unchanged | ALREADY_IMPLEMENTED_AND_KEEP | Legal choice, no implementation cost, LICENSE file already exists in prototype | 0h | DONE |
