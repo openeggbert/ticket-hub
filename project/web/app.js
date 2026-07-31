@@ -272,6 +272,23 @@ function relativeDate(value) {
   return formatDate(value);
 }
 
+// Simplified worklogs (D12/D13): time is entered/displayed as "1h 30m",
+// stored server-side as a plain integer of seconds (no duration type in
+// JSON).
+function formatDuration(totalSeconds) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.round((totalSeconds % 3600) / 60);
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  return `${minutes}m`;
+}
+
+function parseDurationToSeconds(text) {
+  const match = String(text ?? '').trim().match(/^(?:(\d+)h)?\s*(?:(\d+)m)?$/i);
+  if (!match || (!match[1] && !match[2])) return null;
+  return (Number(match[1] || 0) * 3600) + (Number(match[2] || 0) * 60);
+}
+
 function getCookie(name) {
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
@@ -966,12 +983,13 @@ async function openIssue(issueKey) {
   drawerBackdrop.classList.remove('hidden');
   issueDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   try {
-    const [issue, comments, links, watchers, voters] = await Promise.all([
+    const [issue, comments, links, watchers, voters, worklogs] = await Promise.all([
       api(`/api/issues/${encodeURIComponent(issueKey)}`),
       api(`/api/issues/${encodeURIComponent(issueKey)}/comments`),
       api(`/api/issues/${encodeURIComponent(issueKey)}/links`),
       api(`/api/issues/${encodeURIComponent(issueKey)}/watchers`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/voters`)
+      api(`/api/issues/${encodeURIComponent(issueKey)}/voters`),
+      api(`/api/issues/${encodeURIComponent(issueKey)}/worklogs`)
     ]);
     state.currentIssue = issue;
 
@@ -1022,6 +1040,24 @@ async function openIssue(issueKey) {
                   </select>
                   <input name="targetIssueKey" placeholder="Issue key, e.g. TH-3" required>
                   <button class="secondary-button" type="submit">Add link</button>
+                </form>
+              </section>
+              <section class="drawer-section">
+                <h3>Time tracking</h3>
+                <div class="worklog-list">${worklogs.items.length ? worklogs.items.map(worklog => `
+                  <div class="worklog-row" data-worklog-id="${escapeHtml(worklog.id)}">
+                    <span class="small-avatar">${escapeHtml(initials(worklog.author.displayName))}</span>
+                    <div class="worklog-details">
+                      <span><strong>${escapeHtml(formatDuration(worklog.timeSpentSeconds))}</strong> by ${escapeHtml(worklog.author.displayName)} on ${escapeHtml(formatDate(worklog.workDate))}</span>
+                      ${worklog.comment ? `<span class="worklog-comment">${escapeHtml(worklog.comment)}</span>` : ''}
+                    </div>
+                    <button type="button" class="icon-button" data-delete-worklog="${escapeHtml(worklog.id)}" aria-label="Delete worklog">×</button>
+                  </div>`).join('') : '<div class="empty-state">No time logged yet.</div>'}</div>
+                <form class="worklog-form" id="worklog-form">
+                  <input name="workDate" type="date" required value="${new Date().toISOString().slice(0, 10)}">
+                  <input name="duration" placeholder="e.g. 1h 30m" required pattern="^(\\d+h)?\\s*(\\d+m)?$">
+                  <input name="comment" placeholder="What did you work on? (optional)">
+                  <button class="secondary-button" type="submit">Log time</button>
                 </form>
               </section>
               <section class="drawer-section">
@@ -1180,6 +1216,30 @@ async function openIssue(issueKey) {
         document.querySelector('#drawer-status').value = issue.status.key;
         document.querySelector('#drawer-resolution-row').hidden = true;
       });
+      document.querySelector('#worklog-form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+        const timeSpentSeconds = parseDurationToSeconds(values.duration);
+        if (!timeSpentSeconds) {
+          showToast('Duration must look like "1h 30m", "2h", or "45m"');
+          return;
+        }
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}/worklogs`, {
+            method: 'POST',
+            body: JSON.stringify({ workDate: values.workDate, timeSpentSeconds, comment: values.comment || null })
+          });
+          showToast('Time logged');
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      });
+      document.querySelectorAll('[data-delete-worklog]').forEach(button => button.addEventListener('click', async () => {
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}/worklogs/${encodeURIComponent(button.dataset.deleteWorklog)}`, { method: 'DELETE' });
+          showToast('Worklog deleted');
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      }));
       attachMarkdownToolbar(document.querySelector('#comment-form textarea[name=body]'));
       attachMentionAutocomplete(document.querySelector('#comment-form textarea[name=body]'));
       document.querySelector('#comment-form').addEventListener('submit', async event => {

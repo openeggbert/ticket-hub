@@ -88,6 +88,14 @@ public:
     bool markNotificationRead(const std::string& notificationId, const std::string& userId) override;
     bool markAllNotificationsRead(const std::string& userId) override;
 
+    std::vector<Domain::Worklog> listWorklogs(const std::string& issueKey) override;
+    Domain::Worklog addWorklog(const Domain::AddWorklogRequest& request, const std::string& authorUserId) override;
+    std::optional<Domain::Worklog> findWorklogById(const std::string& worklogId) override;
+    std::optional<Domain::Worklog> editWorklog(const std::string& worklogId,
+                                               const Domain::EditWorklogRequest& request,
+                                               std::optional<std::int64_t> expectedVersion = std::nullopt) override;
+    bool deleteWorklog(const std::string& worklogId, const std::string& actorUserId) override;
+
     Domain::DashboardStats dashboardStats() override;
 
     Domain::Issue reorderIssue(const std::string& issueKey, std::optional<std::string> beforeIssueKey) override;

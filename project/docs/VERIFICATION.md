@@ -1,5 +1,71 @@
 # Verification record
 
+## 2026-07-31 — Simplified worklogs (D12/D13)
+
+Fifth Phase 4 (Collaboration) slice, and the last one before D23 (audit log) closes out the phase: issues
+can now have time logged against them.
+
+### What changed
+
+- Migration `011_worklogs.sql` (both backends) adds `worklogs` (`id`, `issue_id`, `author_user_id`,
+  `work_date`, `time_spent_seconds`, `comment` nullable, `deleted_at`/`deleted_by_user_id`, `created_at`,
+  `updated_at`, `version`) -- no `remaining_adjustment_mode`/`remaining_estimate_seconds_after` columns
+  from the original baseline schema, since D12 dropped time estimates from V1 entirely.
+- `Domain::Worklog`/`AddWorklogRequest`/`EditWorklogRequest`; `Domain::validateAddWorklog`/
+  `validateEditWorklog` (workDate required, timeSpentSeconds in `(0, 3600000]` seconds, comment ≤ 10000
+  chars).
+- `IDatabase::listWorklogs`/`addWorklog`/`findWorklogById`/`editWorklog`/`deleteWorklog` in both
+  adapters, mirroring the comment CRUD implementation exactly: `editWorklog` shares `editComment`/
+  `editIssue`'s optimistic-locking contract (`expectedVersion` -> `Domain::ConcurrencyConflict`);
+  `deleteWorklog` is a tombstone delete.
+- `TicketService::addWorklog`/`editWorklog`/`deleteWorklog`: deliberately drop D83's author-or-admin
+  permission split. All three require only project-Member-or-above on the issue's project -- the same
+  level as any other issue write -- so any project member may edit or delete *any* worklog on an issue
+  they can access, not just the one they logged themselves. This is D13's explicit simplification
+  ("no separate own-vs-others edit/delete permission split"), and is deliberately more permissive than
+  comments.
+- `Api.cpp`: new `GET`/`POST /api/issues/{key}/worklogs` and `PATCH`/`DELETE
+  /api/issues/{key}/worklogs/{id}` routes, following the established auth/CSRF/error-mapping pattern.
+- `web/`: a "Time tracking" section in the issue drawer. `formatDuration`/`parseDurationToSeconds`
+  convert between a plain integer of seconds and a free-text "1h 30m" style duration. Each logged entry
+  shows a Delete button unconditionally (no client-side author check, since the server itself allows any
+  project member to delete any entry -- unlike comments, where the client hides Edit/Delete for
+  non-authors as a UX simplification). The log-time form's duration field has an HTML5 `pattern`
+  attribute as a first line of defense against malformed input, plus a JS-level parse-and-toast fallback.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green, including new assertions in `sqlite_integration_tests` (full
+   CRUD round-trip, version increment on edit, stale-version conflict, tombstone semantics -- excluded
+   from listing/lookup but the row still physically present) and `authorization_integration_tests` (a
+   non-member rejected on another project's issue; a different project member editing and then deleting
+   someone else's worklog both succeed, explicitly asserting the no-own-vs-others-split behavior; editing
+   an unknown worklog id still respects the project-role check before the not-found path; unknown-worklog
+   edit/delete return nullopt/false rather than throwing).
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised `addWorklog`/
+   `listWorklogs`/`findWorklogById`/`editWorklog` (including the stale-version-conflict rejection) and
+   `deleteWorklog` directly against `PostgresDatabase` and a local PostgreSQL 16 server -- all passed.
+5. Standalone Playwright/Chromium script, against a locally running server, SQLite, demo-seeded: opened
+   an issue with no logged time and confirmed the empty state; logged "1h 30m" with a comment and
+   confirmed the row shows both the correctly-formatted duration and the comment text; deleted the entry
+   and confirmed the list returns to empty; submitted a garbage duration value and confirmed no new
+   worklog row appeared -- the input's HTML5 `pattern` attribute blocks the browser's native form
+   submission before the JS `submit` handler (and its `parseDurationToSeconds` fallback) ever fires, so
+   this particular check exercised the HTML5-level guard, not the JS-level one; the JS fallback exists
+   for completeness (e.g. a submission path that bypasses native validation) but was not itself
+   triggered by this check.
+
+All checks passed. No committed test scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+Only D23 (the append-only admin/security audit log) remains open in Phase 4. Phase 5 (attachments and
+the Kanban board) is untouched. There is no worklog totals/summary view (e.g. "time logged this week"),
+just the per-issue list -- not called for by D12/D13's simplification.
+
 ## 2026-07-31 — Markdown editor toolbar, live preview, and sanitized rendering (D16)
 
 Fourth Phase 4 (Collaboration) slice: comment bodies and issue descriptions now render as formatted

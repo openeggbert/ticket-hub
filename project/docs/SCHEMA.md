@@ -36,6 +36,9 @@ Current schema migrations:
   of `REDUCED_SCOPE_ROADMAP.md`, D56/D80/D14). Adds `users.handle` (nullable, unique via a partial index
   since SQLite's `ALTER TABLE ADD COLUMN` cannot itself carry a `UNIQUE` constraint) and the `notifications`
   table.
+- `011_worklogs.sql` — simplified worklogs (Phase 4 of `REDUCED_SCOPE_ROADMAP.md`, D12/D13). Adds
+  `worklogs`, with a tombstone delete (`deleted_at`/`deleted_by_user_id`) and the same optimistic-locking
+  `version` column comments/issues already use.
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, an explicit `rank_order` (equal to `issue_number`) for each seeded issue, and (since `010_mentions_and_notifications.sql`, which `seed-demo` always applies first) a `handle` for each of the three demo users.
 
@@ -307,6 +310,20 @@ than `editComment`/`deleteComment`'s nullopt/false convention). `IDatabase::addC
 repeat call). `IDatabase::listCommentReactions` returns the raw `(reactionKey, user)` rows for a comment;
 the API and UI group them by `reactionKey` for per-reaction counts and highlighting, the same
 server-stays-dumb/client-aggregates split used for issue links.
+
+### `worklogs`
+
+`id`, `issue_id`, `author_user_id`, `work_date` (`DATE` in PostgreSQL, `TEXT` ISO date in SQLite, same
+convention as `issues.due_date`), `time_spent_seconds`, `comment` (nullable), `deleted_at`,
+`deleted_by_user_id`, `created_at`, `updated_at`, `version` -- migration `011_worklogs.sql` (Phase 4,
+D12/D13). No `remaining_adjustment_mode`/`remaining_estimate_seconds_after` columns from the original
+baseline schema (`docs/DATA_MODEL.md`): D12 dropped time estimates from V1 entirely, so there is nothing
+for a worklog to adjust. `IDatabase::editWorklog` shares `editComment`/`editIssue`'s optimistic-locking
+contract (`expectedVersion` -> `Domain::ConcurrencyConflict`); `IDatabase::deleteWorklog` is a tombstone
+delete, same mechanism as comments/issues/projects. `TicketService::addWorklog`/`editWorklog`/
+`deleteWorklog` all require only project-Member-or-above on the issue's project (D13: no separate
+own-vs-others permission split) -- unlike comments (D83's author-or-admin rule), any project member may
+edit or delete *any* worklog on an issue they can access, not just the one they logged themselves.
 
 ### `attachments`
 

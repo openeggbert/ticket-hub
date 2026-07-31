@@ -241,6 +241,10 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `DELETE` | `/api/issues/{key}/comments/{id}` | session + CSRF, author or project admin | tombstone delete (D82) |
 | `GET` | `/api/issues/{key}/comments/{id}/reactions` | session, or anon if enabled | current reactions |
 | `POST`/`DELETE` | `/api/issues/{key}/comments/{id}/reactions/{key}` | session + CSRF | react/un-react (no project role required, D84) |
+| `GET` | `/api/issues/{key}/worklogs` | session, or anon if enabled | logged time entries |
+| `POST` | `/api/issues/{key}/worklogs` | session + CSRF, project member | `{workDate, timeSpentSeconds, comment?}` (D12/D13) |
+| `PATCH` | `/api/issues/{key}/worklogs/{id}` | session + CSRF, project member | full-replacement edit, no own-vs-others split |
+| `DELETE` | `/api/issues/{key}/worklogs/{id}` | session + CSRF, project member | tombstone delete, no own-vs-others split |
 | `POST` | `/api/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
 | `POST` | `/api/issues/{key}/reorder` | session + CSRF, project member | `{beforeIssueKey?}` — manual ordering (D31) |
 | `POST` | `/api/issues/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
@@ -498,6 +502,26 @@ in the eighth batch's reaction test, the seventh batch's comment-editing test, a
 mentions/notifications test (unaffected by the `.comment-body-text` markup changing from `<p>` to `<div>`
 to legally contain the new block-level Markdown output).
 
+An eleventh batch added simplified worklogs (D12/D13). Migration `011_worklogs.sql` adds `worklogs`
+(`id`, `issue_id`, `author_user_id`, `work_date`, `time_spent_seconds`, `comment` nullable, plus the same
+tombstone-delete and `version` columns comments/issues already use) -- no remaining-estimate linkage,
+since D12 dropped time estimates from V1 entirely, so there is nothing for a worklog to adjust. The
+permission model deliberately differs from comments: D13 drops the own-vs-others edit/delete split
+entirely, so `TicketService::addWorklog`/`editWorklog`/`deleteWorklog` all require only
+project-Member-or-above on the issue's project -- any project member may edit or delete *any* worklog on
+an issue they can access, not just the one they logged themselves (unlike D83's author-or-admin rule for
+comments). `editWorklog` shares the same `expectedVersion` -> `Domain::ConcurrencyConflict` (409)
+optimistic-locking contract as comment/issue edits. New `GET`/`POST /api/issues/{key}/worklogs` and
+`PATCH`/`DELETE /api/issues/{key}/worklogs/{id}` routes. `web/` gained a "Time tracking" section in the
+issue drawer: a list of logged entries (duration formatted as e.g. "1h 30m", author, date, optional
+comment) each with a Delete button shown unconditionally (no client-side author check, since the server
+itself allows any project member to delete any entry), and a log-time form accepting a free-text duration
+like "1h 30m" or "45m" (parsed client-side, with an HTML5 `pattern` attribute as a first line of defense
+and a JS-level parse-and-toast fallback). Browser-verified: logging time shows the correct formatted
+duration and comment in the list; deleting an entry removes it; an unparseable duration is rejected before
+it reaches the server. Verified against live PostgreSQL directly (`addWorklog`/`listWorklogs`/
+`findWorklogById`/`editWorklog`, including the stale-version-conflict rejection, and `deleteWorklog`).
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -506,7 +530,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, simple cloning,
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
   renumbering, moving an issue between projects, and (Phase 4) comment editing/tombstone delete, fixed
-  emoji reactions, and @mention handles/the fixed in-app notification set, in both database adapters),
+  emoji reactions, @mention handles/the fixed in-app notification set, and simplified worklogs, in both
+  database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the

@@ -30,4 +30,7 @@ std::vector<std::string> validateCreateUser(const CreateUserRequest& request);
 
 std::vector<std::string> validateCreateProject(const CreateProjectRequest& request);
 
+std::vector<std::string> validateAddWorklog(const AddWorklogRequest& request);
+std::vector<std::string> validateEditWorklog(const EditWorklogRequest& request);
+
 } // namespace TicketHub::Domain

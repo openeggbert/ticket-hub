@@ -327,6 +327,62 @@ std::vector<Domain::CommentReaction> TicketService::listCommentReactions(
     return database_->listCommentReactions(commentId);
 }
 
+std::vector<Domain::Worklog> TicketService::listWorklogs(const std::string& issueKey,
+                                                          const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listWorklogs(Domain::normalizeIssueKey(issueKey));
+}
+
+Domain::Worklog TicketService::addWorklog(const std::string& issueKey,
+                                          const std::string& workDate,
+                                          const std::int64_t timeSpentSeconds,
+                                          std::optional<std::string> comment,
+                                          const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    Domain::AddWorklogRequest request{normalizedKey, workDate, timeSpentSeconds, std::move(comment)};
+    const auto errors = Domain::validateAddWorklog(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->addWorklog(request, actor.userId);
+}
+
+std::optional<Domain::Worklog> TicketService::editWorklog(const std::string& issueKey,
+                                                           const std::string& worklogId,
+                                                           const std::string& workDate,
+                                                           const std::int64_t timeSpentSeconds,
+                                                           std::optional<std::string> comment,
+                                                           const Domain::Principal& actor,
+                                                           const std::optional<std::int64_t> expectedVersion) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    Domain::EditWorklogRequest request{workDate, timeSpentSeconds, std::move(comment)};
+    const auto errors = Domain::validateEditWorklog(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->editWorklog(worklogId, request, expectedVersion);
+}
+
+bool TicketService::deleteWorklog(const std::string& issueKey, const std::string& worklogId, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    return database_->deleteWorklog(worklogId, actor.userId);
+}
+
 Domain::Issue TicketService::cloneIssue(const std::string& issueKey, const Domain::Principal& actor) {
     const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
     const auto source = database_->findIssueByKey(normalizedKey);

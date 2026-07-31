@@ -78,7 +78,13 @@ remain as the long-term aspirational baseline only — do not build against them
   code/rules) via a deliberately small, safe-by-construction subset -- input is HTML-escaped first, then
   wrapped in a fixed set of hardcoded tags, so there is no separate sanitization pass to get wrong.
   Bold/Italic/Code/Link/list/Quote toolbar buttons plus a live-preview toggle on every Markdown-capable
-  textarea. See "Not yet built" below for the rest of Phase 4.
+  textarea.
+- **Simplified worklogs (Phase 4, D12/D13):** time spent + an optional comment only, no remaining-estimate
+  linkage (D12 dropped time estimates from V1 entirely); no own-vs-others edit/delete permission split
+  (D13) -- any project member with issue access may edit or delete any worklog on that issue, not just
+  the one they logged themselves, unlike comments' author-or-admin rule (D83). Tombstone delete and the
+  same optimistic-locking contract as comment/issue edits. See "Not yet built" below for the rest of
+  Phase 4.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -86,8 +92,7 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Rest of Phase 4: simplified worklogs (D13) and the append-only admin/security audit log (D23) are not
-  implemented yet.
+- Rest of Phase 4: the append-only admin/security audit log (D23) is not implemented yet.
 - Attachments and the Kanban board are not implemented (Phase 5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).
