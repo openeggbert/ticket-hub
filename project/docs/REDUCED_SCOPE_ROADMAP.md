@@ -11,15 +11,31 @@ from the current 0.2.0 prototype state.
 
 ## Phase 1 — Identity and sessions (Milestone 1)
 
-- Introduce `Principal` and remove the fixed `demo` user from write use cases.
-- Users table migrates to UUID + unique email + optional handle (D56); `local_credentials` with
-  Argon2id (D53).
-- Administrator-created accounts only — an admin CLI/UI action creates a user with a temporary password
-  (D2). No invitation flow, no OIDC, no public registration.
-- Server-side cookie sessions with CSRF, HttpOnly/Secure/SameSite, active-session list, logout (D54).
-- Admin-performed password reset (sets a new temporary password) (D53).
+**2026-07-31 further reduction** (agreed with the product owner before implementation started, applies
+only to *sequencing* within V1 — nothing here removes a V1 feature outright except the last bullet):
 
-**Exit gate:** no fixed demo identity in any write use case; login/logout/session endpoints tested on
+- No `handle` column yet — added in Phase 4 when @mentions first need it (D56 is still V1 scope, just
+  resequenced).
+- Login attempt counter only; no configurable lockout window/policy — the full version rides along with
+  REST rate limiting in Phase 6 (D124).
+- No active-session list / "sign out everywhere" endpoint yet — added in Phase 6 alongside PAT/account
+  management work (D54 is still V1 scope, just resequenced).
+- Admin sets a user's password directly; **no `must_change_password` flag or forced-change-on-first-login
+  flow** — this is a permanent V1 simplification, not a resequencing.
+
+Phase 1 scope, reduced accordingly:
+
+- Introduce `Principal` and remove the fixed `demo` user entirely (no dual demo-mode toggle) from write
+  use cases.
+- Users table migrates to UUID + unique email (no `handle` yet); `local_credentials` with Argon2id
+  (D53).
+- Administrator-created accounts only — an admin action creates a user with a password set directly by
+  the admin (D2). No invitation flow, no OIDC, no public registration.
+- Server-side cookie sessions with CSRF, HttpOnly/Secure/SameSite, single-session logout (D54, session
+  list deferred to Phase 6 as noted above).
+- Admin-performed password reset (sets a new password directly, no forced-change flow) (D53).
+
+**Exit gate:** no fixed demo identity anywhere in the codebase; login/logout/session endpoints tested on
 both databases.
 
 ## Phase 2 — Authorization and projects (Milestone 1)
@@ -87,8 +103,10 @@ on both databases.
 
 - `/api/v1` REST surface, PAT-authenticated only (hashed token, expiry, revocation, last-used — no
   scopes/rotation/service accounts) (D39, D40).
-- Fixed rate limits (login + write endpoints, per IP/user) (D124); fixed request/body/batch-size
-  constants (D125); numbered/offset pagination (D126).
+- Fixed rate limits (login + write endpoints, per IP/user) (D124), including the full account-lockout
+  policy resequenced from Phase 1; fixed request/body/batch-size constants (D125); numbered/offset
+  pagination (D126).
+- Active-session list and "sign out everywhere" endpoint, resequenced from Phase 1 (D54).
 - Read-only CSV export of issues (D48).
 - Security hardening pass: dependency review, header review, session/CSRF review against
   `handoff/KNOWN_CONSTRAINTS_AND_RISKS.md`.
