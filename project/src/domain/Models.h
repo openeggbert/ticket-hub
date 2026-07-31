@@ -9,9 +9,60 @@ namespace TicketHub::Domain {
 
 struct UserSummary {
     std::string id;
-    std::string username;
     std::string displayName;
     std::string email;
+};
+
+// Full identity record for a local account. There is no `handle` field yet --
+// it is introduced in a later phase together with @mentions, which is the
+// first feature that actually needs one.
+struct User {
+    std::string id;
+    std::string email;
+    std::string displayName;
+    std::string timeZone{"UTC"};
+    std::string clockFormat{"24h"};
+    bool active{true};
+    bool isAdmin{false};
+    std::string createdAt;
+};
+
+// The actor context threaded through every application write use case,
+// replacing the prototype's hardcoded demo-user assumption. Built from a
+// validated session (web) or, in a later phase, a validated PAT (API).
+struct Principal {
+    std::string userId;
+    std::string email;
+    std::string displayName;
+    bool isAdmin{false};
+};
+
+// Administrator-only account creation. There is no public registration and
+// no invitation flow in V1: the admin sets the password directly, and there
+// is no forced-change-on-first-login flag -- the user may change it later
+// through the ordinary "change my password" action if one exists.
+struct CreateUserRequest {
+    std::string email;
+    std::string displayName;
+    std::string password;
+    bool isAdmin{false};
+};
+
+struct LoginRequest {
+    std::string email;
+    std::string password;
+};
+
+struct Session {
+    std::string id;
+    std::string userId;
+    std::string createdAt;
+    std::string expiresAt;
+};
+
+struct AuthenticatedSession {
+    Session session;
+    std::string sessionToken; // returned to the caller exactly once, at creation
 };
 
 struct Project {
@@ -88,7 +139,7 @@ struct CreateIssueRequest {
     std::string description;
     std::string issueTypeKey{"task"};
     std::string priorityKey{"medium"};
-    std::optional<std::string> assigneeUsername;
+    std::optional<std::string> assigneeEmail;
     std::vector<std::string> labels;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;

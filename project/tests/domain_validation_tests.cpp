@@ -42,6 +42,32 @@ int main() {
     const auto errors = validateCreateIssue(invalid);
     require(errors.size() == 3, "invalid request reports all expected errors");
 
+    require(normalizeEmail(" Demo@Ticket-Hub.Local ") == "demo@ticket-hub.local", "email normalization lowercases and trims");
+    require(isValidEmail("demo@ticket-hub.local"), "simple email is valid");
+    require(isValidEmail("first.last+tag@sub.example.com"), "email with dots/plus/subdomain is valid");
+    require(!isValidEmail("not-an-email"), "email without @ is rejected");
+    require(!isValidEmail("missing-domain@"), "email without domain is rejected");
+    require(!isValidEmail("@missing-local.com"), "email without local part is rejected");
+
+    require(validatePassword("correct horse battery", "someone@example.com", "Someone").empty(),
+           "sufficiently long unrelated password is valid");
+    require(!validatePassword("short", "someone@example.com", "Someone").empty(),
+           "short password is rejected");
+    require(!validatePassword("someone@example.com", "someone@example.com", "Someone").empty(),
+           "password identical to email is rejected");
+
+    CreateUserRequest validUser;
+    validUser.email = "new.user@ticket-hub.local";
+    validUser.displayName = "New User";
+    validUser.password = "correct horse battery staple";
+    require(validateCreateUser(validUser).empty(), "valid create-user request");
+
+    CreateUserRequest invalidUser;
+    invalidUser.email = "not-an-email";
+    invalidUser.displayName = "";
+    invalidUser.password = "short";
+    require(validateCreateUser(invalidUser).size() == 3, "invalid create-user request reports all expected errors");
+
     std::cout << "All domain validation tests passed\n";
     return 0;
 }

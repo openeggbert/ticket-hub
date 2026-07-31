@@ -1,8 +1,10 @@
+#include "application/AuthService.h"
 #include "config/Config.h"
 #include "infrastructure/database/DatabaseFactory.h"
 
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <string>
 
 #ifndef TICKETHUB_VERSION
@@ -14,12 +16,16 @@ namespace {
 void printUsage(const char* executable) {
     std::cout
         << "Ticket Hub CLI " << TICKETHUB_VERSION << "\n\n"
-        << "Usage: " << executable << " <command>\n\n"
+        << "Usage: " << executable << " <command> [arguments]\n\n"
         << "Commands:\n"
-        << "  migrate       Apply all pending schema migrations.\n"
-        << "  seed-demo     Apply migrations and insert idempotent demo data.\n"
-        << "  diagnostics   Print resolved non-secret configuration.\n"
-        << "  version       Print the Ticket Hub version.\n";
+        << "  migrate                                     Apply all pending schema migrations.\n"
+        << "  seed-demo                                    Apply migrations and insert idempotent demo data.\n"
+        << "  create-user <email> <displayName> <password> [--admin]\n"
+        << "                                                Create a local account directly (no invitation\n"
+        << "                                                flow, no forced password change). This is the\n"
+        << "                                                entire registration story for V1.\n"
+        << "  diagnostics                                  Print resolved non-secret configuration.\n"
+        << "  version                                      Print the Ticket Hub version.\n";
 }
 
 void printDiagnostics(const TicketHub::Config::AppConfig& config) {
@@ -40,12 +46,33 @@ void printDiagnostics(const TicketHub::Config::AppConfig& config) {
     }
 }
 
+int runCreateUser(const TicketHub::Config::AppConfig& config, int argc, char** argv) {
+    if (argc < 5 || argc > 6) {
+        std::cerr << "Usage: create-user <email> <displayName> <password> [--admin]\n";
+        return 2;
+    }
+    TicketHub::Domain::CreateUserRequest request;
+    request.email = argv[2];
+    request.displayName = argv[3];
+    request.password = argv[4];
+    request.isAdmin = argc == 6 && std::string(argv[5]) == "--admin";
+
+    auto database = TicketHub::Infrastructure::Database::createDatabase(config);
+    TicketHub::Application::AuthService authService(database);
+    const auto user = authService.createUser(std::move(request));
+    // Never log the password. The id/email/isAdmin confirmation below is
+    // deliberately the only feedback given.
+    std::cout << "Created user " << user.email << " (id=" << user.id << ", admin=" << (user.isAdmin ? "true" : "false")
+              << ")\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
+    if (argc < 2) {
         printUsage(argv[0]);
-        return argc == 1 ? 0 : 2;
+        return 0;
     }
 
     const std::string command(argv[1]);
@@ -61,8 +88,21 @@ int main(int argc, char** argv) {
     try {
         const auto config = TicketHub::Config::AppConfig::fromEnvironment();
         if (command == "diagnostics") {
+            if (argc != 2) {
+                printUsage(argv[0]);
+                return 2;
+            }
             printDiagnostics(config);
             return 0;
+        }
+
+        if (command == "create-user") {
+            return runCreateUser(config, argc, argv);
+        }
+
+        if (argc != 2) {
+            printUsage(argv[0]);
+            return 2;
         }
 
         auto database = TicketHub::Infrastructure::Database::createDatabase(config);

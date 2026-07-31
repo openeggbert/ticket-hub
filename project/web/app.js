@@ -414,7 +414,7 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
     summary: values.summary.trim(),
     description: values.description.trim(),
     priorityKey: values.priorityKey,
-    assigneeUsername: values.assigneeUsername || null,
+    assigneeEmail: values.assigneeEmail || null,
     storyPoints: values.storyPoints ? Number(values.storyPoints) : null,
     dueDate: values.dueDate || null,
     labels: values.labels.split(',').map(value => value.trim()).filter(Boolean)

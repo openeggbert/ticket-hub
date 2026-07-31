@@ -1,3 +1,4 @@
+#include "application/AuthService.h"
 #include "application/TicketService.h"
 #include "config/Config.h"
 #include "infrastructure/database/DatabaseFactory.h"
@@ -17,8 +18,10 @@ int main() {
         if (config.seedDemo) {
             database->seedDemoData();
         }
+        database->deleteExpiredSessions();
         auto service = std::make_shared<TicketHub::Application::TicketService>(database);
-        TicketHub::Web::runHttpServer(config, service);
+        auto authService = std::make_shared<TicketHub::Application::AuthService>(database);
+        TicketHub::Web::runHttpServer(config, service, authService);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Ticket Hub failed: " << error.what() << '\n';

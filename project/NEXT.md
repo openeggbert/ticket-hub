@@ -1,6 +1,6 @@
 # Ticket Hub next work
 
-Current version: 0.2.0
+Current version: 0.2.0 (Phase 1 in progress)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -11,58 +11,65 @@ anything from the removed/deferred list without an explicit new product conversa
 
 ## Completed so far
 
-- Approved reduced-scope V1 specification, architecture, data model, roadmap, and effort estimate
-  (this scope-reduction pass).
+- Approved reduced-scope V1 specification, architecture, data model, roadmap, and effort estimate.
 - Prior batch: ordered checksummed migrations with PostgreSQL advisory locking, separate demo seed,
   issue optimistic-lock version and HTTP conflict foundation, project/issue key alias and recycle-bin
   schema foundations, key/label normalization, administration CLI (version/diagnostics/migrate/
   seed-demo), domain/migration/SQLite integration tests, SQLite-only and PostgreSQL-only build
   verification.
+- **Phase 1, core layer (this batch):** `Principal`, `AuthService` (login/logout/session validation,
+  administrator-only `createUser`, minimal login-attempt lockout), Argon2id password hashing
+  (`common/PasswordHash`), SHA-256 session-token hashing (`common/Sha256`), migration
+  `004_identity.sql` on both backends (`local_credentials`, `sessions`, drops `users.username`, adds
+  `time_zone`/`clock_format`/`is_admin`), `ticket-hub-cli create-user`. The fixed `demo` user is gone
+  from every write path; `TicketService::createIssue`/`changeStatus`/`addComment` now require a real
+  `Domain::Principal`. All further-reduced per `docs/REDUCED_SCOPE_ROADMAP.md` Phase 1 (no `handle`
+  column yet, no active-session list yet, no forced-password-change flow ever).
+- Tested: `ctest --output-on-failure` is 5/5 green (including two new suites, `crypto_tests` and
+  `identity_integration_tests`) on both SQLite (automated) and PostgreSQL (manually verified against a
+  live local server — migrate/seed/create-user/login/validate-session/logout all confirmed working).
+  Full detail in `docs/VERIFICATION.md`.
+- Web layer source (`src/web/Api.cpp`, `HttpServer.cpp`, `main.cpp`) updated to match: new
+  `/api/auth/login|logout|me` routes, session-cookie + double-submit-CSRF protection on existing write
+  routes, `assigneeUsername` renamed to `assigneeEmail` (also updated in `web/index.html`/`app.js`).
+  **This has not been compiled** — Crow is unavailable in this sandbox (network to `github.com`
+  blocked). See "Known verification limitation" below; this is the actual next thing to close out.
 
-## Immediate next implementation slice — Phase 1 of `docs/REDUCED_SCOPE_ROADMAP.md`
+## Immediate next step: verify the server target
 
-**Identity and sessions** (Milestone 1 — Minimal usable tracker), **further reduced by the product
-owner on 2026-07-31 before implementation started** (see `docs/REDUCED_SCOPE_ROADMAP.md` Phase 1 for
-the full rationale). This is the smallest phase that still produces forward progress: nothing else in
-the reduced roadmap can start until real principals exist.
+Phase 1 is not done until this is closed:
 
-1. Introduce a `Principal` model and pass it into application write use cases, **removing the fixed
-   `demo` user entirely** (no dual demo-mode toggle — simpler than the original plan).
-2. Add identity migrations for the **further-reduced** scope only:
-   - `users`: UUID identity, unique email, `time_zone`, `clock_format` (migrate the prototype's
-     `username` column) — **no `handle` column yet** (added in Phase 4 with @mentions) and **no**
-     generic i18n `locale` field,
-   - `local_credentials` (Argon2id),
-   - `sessions`.
-   - Do **not** add `invitations`, `groups`/`group_members`, `oidc_providers`, or
-     `external_identities` — all removed for V1 (`docs/REDUCED_SCOPE_DATA_MODEL.md` §B).
-3. Add local-password hashing behind an authentication port: Argon2id, basic password length/strength
-   check, and a simple **login attempt counter** — the full configurable lockout policy is deferred to
-   Phase 6 alongside REST rate limiting (D124).
-4. Add login/logout/session endpoints and CSRF protection. **No active-session list or "sign out
-   everywhere" endpoint yet** — deferred to Phase 6.
-5. Add an administrator-only "create user" action that **sets the password directly** — no
-   `must_change_password` flag, no forced-change-on-first-login flow (permanent V1 simplification, not
-   a resequencing). This is the entire registration/reset story for V1; there is no invitation flow and
-   no self-service email reset (see `REDUCED_SCOPE_SPECIFICATION.md` §3).
-6. Add authentication and session integration tests for SQLite; add PostgreSQL test wiring through an
-   environment-provided connection string.
+1. In an environment with network access to `github.com` (or a preinstalled/vendored Crow 1.3.3), build
+   the `ticket-hub` server target (`-DTICKETHUB_BUILD_SERVER=ON`) and fix any compile errors in
+   `src/web/Api.cpp` / `HttpServer.cpp` / `main.cpp` — they were written carefully against the existing
+   patterns but never compiled.
+2. Smoke-test end-to-end by hand: `create-user` → `POST /api/auth/login` → confirm `Set-Cookie` headers
+   for `th_session` (HttpOnly) and `th_csrf` (readable) → `GET /api/auth/me` → `POST /api/issues` with
+   and without the `X-CSRF-Token` header (expect 201 vs. 403) → `POST /api/auth/logout` → confirm the
+   session cookie no longer authenticates.
+3. Add a minimal login page to `web/` (there isn't one yet) so the demo UI can actually authenticate
+   instead of hitting 401s on every write once the session check is live.
+4. Only then close Phase 1's exit gate for real: "no fixed demo identity remains anywhere in the
+   codebase; login/logout/session endpoints are tested on both databases."
 
-Exit gate (per `docs/REDUCED_SCOPE_ROADMAP.md` Phase 1): no fixed demo identity remains anywhere in the
-codebase; login/logout/session endpoints are tested on both databases; `ctest --output-on-failure`
-green on all supported build configurations.
+## After the server target is verified: Phase 2
 
-## After Phase 1
-
-Continue in order through `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 2 (authorization and projects),
-Phase 3 (issue core and the fixed workflow), then Milestone 2 (collaboration, attachments, Kanban
-board), Milestone 3 (API, backup/restore), Milestone 4 (packaging and hardening). Do not jump ahead to
-later-phase features early, and do not implement anything from
+Continue in order through `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 2 (authorization and projects — fixed
+project roles enforced via `project_members.role_key`, project archive/recycle-bin UI, anonymous
+read-access toggle), Phase 3 (issue core and the fixed workflow), then Milestone 2 (collaboration,
+attachments, Kanban board), Milestone 3 (API, backup/restore), Milestone 4 (packaging and hardening).
+Do not jump ahead to later-phase features early, and do not implement anything from
 `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+
+Note: Phase 2's authorization *logic* (fixed-role checks in `TicketService`/a new
+`AuthorizationService`) does not strictly require Crow either and could be started in parallel with the
+server-target verification above if useful — but the exit gate for "every route is explicitly public,
+authenticated, or role-checked" still needs the real HTTP layer compiling to actually verify.
 
 ## Known verification limitation
 
-The Crow server target could not be configured in the sandbox because the environment could not
-resolve GitHub and no installed Crow package was available. Core, CLI, SQLite-only, and
-PostgreSQL-only targets compile successfully. Re-verify this at the start of Phase 1 in the actual
-implementation environment before assuming it still applies.
+The `ticket-hub` server target (Crow) could not be compiled in this sandbox because outbound access to
+`github.com` — needed for CMake `FetchContent` to fetch Crow — was blocked by the session's network
+egress policy. This is the same limitation recorded in every prior session. Core, CLI, and all five test
+binaries compile and pass on both SQLite and PostgreSQL. Full detail, including exactly what was and
+was not verified, is in `docs/VERIFICATION.md`.

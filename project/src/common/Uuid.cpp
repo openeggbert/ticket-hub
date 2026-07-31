@@ -32,7 +32,11 @@ std::string uuidV4() {
 }
 
 std::string utcNowIso8601() {
-    const auto now = std::chrono::system_clock::now();
+    return utcNowPlusSecondsIso8601(0);
+}
+
+std::string utcNowPlusSecondsIso8601(const long long seconds) {
+    const auto now = std::chrono::system_clock::now() + std::chrono::seconds(seconds);
     const std::time_t time = std::chrono::system_clock::to_time_t(now);
     std::tm utc{};
 #ifdef _WIN32

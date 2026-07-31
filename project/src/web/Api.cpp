@@ -4,10 +4,24 @@
 
 #include <exception>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
+// NOTE ON VERIFICATION STATUS: this file could not be compiled in the
+// authoring sandbox because outbound access to github.com (needed to fetch
+// Crow via CMake FetchContent) was blocked by the sandbox's egress policy --
+// the same limitation recorded in handoff/IMPLEMENTATION_STATE.md and
+// docs/VERIFICATION.md for the original prototype. Everything in this file
+// follows the exact patterns already used elsewhere in this file (unchanged
+// helper functions, unchanged route registration style) and the session/CSRF
+// design is unit-testable independently of Crow (see
+// tests/identity_integration_tests.cpp for the AuthService coverage that
+// backs the /api/auth/* routes below). Compile and smoke-test this file
+// against a real Crow checkout before trusting it in production, per
+// CLAUDE.md's build-and-test discipline.
 
 namespace TicketHub::Web {
 namespace {
@@ -28,9 +42,17 @@ crow::response errorResponse(int status, const std::string& message) {
 crow::json::wvalue userJson(const Domain::UserSummary& user) {
     crow::json::wvalue json;
     json["id"] = user.id;
-    json["username"] = user.username;
     json["displayName"] = user.displayName;
     json["email"] = user.email;
+    return json;
+}
+
+crow::json::wvalue principalJson(const Domain::Principal& principal) {
+    crow::json::wvalue json;
+    json["userId"] = principal.userId;
+    json["email"] = principal.email;
+    json["displayName"] = principal.displayName;
+    json["isAdmin"] = principal.isAdmin;
     return json;
 }
 
@@ -124,10 +146,83 @@ std::optional<std::string> optionalString(const crow::json::rvalue& body, const 
     return value.empty() ? std::nullopt : std::optional<std::string>(value);
 }
 
+// --- Session/CSRF cookies ---
+//
+// Double-submit-cookie CSRF pattern: the CSRF token is set as a readable
+// (non-HttpOnly) cookie at login; state-changing requests must echo it back
+// in the X-CSRF-Token header. A cross-origin attacker page can neither read
+// the cookie nor set a custom header on a simple form submission, so a
+// mismatch reliably indicates a forged request. The session token itself is
+// always HttpOnly.
+constexpr const char* SessionCookieName = "th_session";
+constexpr const char* CsrfCookieName = "th_csrf";
+constexpr long long SessionCookieMaxAgeSeconds = 30LL * 24 * 60 * 60;
+
+std::optional<std::string> cookieValue(const crow::request& request, const std::string& name) {
+    const std::string header = request.get_header_value("Cookie");
+    std::size_t position = 0;
+    while (position < header.size()) {
+        std::size_t separator = header.find(';', position);
+        const std::string pair = header.substr(position, separator == std::string::npos ? std::string::npos : separator - position);
+        const std::size_t equals = pair.find('=');
+        if (equals != std::string::npos) {
+            std::string key = pair.substr(0, equals);
+            const auto firstNonSpace = key.find_first_not_of(' ');
+            if (firstNonSpace != std::string::npos) {
+                key = key.substr(firstNonSpace);
+            }
+            if (key == name) {
+                return pair.substr(equals + 1);
+            }
+        }
+        if (separator == std::string::npos) {
+            break;
+        }
+        position = separator + 1;
+    }
+    return std::nullopt;
+}
+
+void addSessionCookies(crow::response& response, const std::string& sessionToken, const std::string& csrfToken) {
+    std::ostringstream sessionCookie;
+    sessionCookie << SessionCookieName << '=' << sessionToken
+                  << "; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=" << SessionCookieMaxAgeSeconds;
+    response.add_header("Set-Cookie", sessionCookie.str());
+
+    std::ostringstream csrfCookie;
+    csrfCookie << CsrfCookieName << '=' << csrfToken << "; Path=/; Secure; SameSite=Strict; Max-Age="
+               << SessionCookieMaxAgeSeconds;
+    response.add_header("Set-Cookie", csrfCookie.str());
+}
+
+void clearSessionCookies(crow::response& response) {
+    response.add_header("Set-Cookie", std::string(SessionCookieName) + "=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
+    response.add_header("Set-Cookie", std::string(CsrfCookieName) + "=; Path=/; Secure; SameSite=Strict; Max-Age=0");
+}
+
+// Resolves the caller's Principal from the session cookie. Returns nullopt
+// (never throws) so route handlers can turn a missing/invalid session into a
+// clean 401 response.
+std::optional<Domain::Principal> resolvePrincipal(const crow::request& request,
+                                                   const std::shared_ptr<Application::AuthService>& authService) {
+    const auto token = cookieValue(request, SessionCookieName);
+    if (!token) {
+        return std::nullopt;
+    }
+    return authService->validateSession(*token);
+}
+
+bool csrfTokenValid(const crow::request& request) {
+    const auto cookie = cookieValue(request, CsrfCookieName);
+    const std::string header = request.get_header_value("X-CSRF-Token");
+    return cookie.has_value() && !cookie->empty() && *cookie == header;
+}
+
 } // namespace
 
 void registerApiRoutes(crow::SimpleApp& app,
-                       const std::shared_ptr<Application::TicketService>& service) {
+                       const std::shared_ptr<Application::TicketService>& service,
+                       const std::shared_ptr<Application::AuthService>& authService) {
     CROW_ROUTE(app, "/api/health")([service] {
         crow::json::wvalue body;
         body["status"] = "ok";
@@ -135,6 +230,58 @@ void registerApiRoutes(crow::SimpleApp& app,
         body["version"] = TICKETHUB_VERSION;
         body["database"] = service->backendName();
         return jsonResponse(200, std::move(body));
+    });
+
+    CROW_ROUTE(app, "/api/auth/login")
+    .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::LoginRequest login;
+            login.email = requiredString(body, "email");
+            login.password = requiredString(body, "password");
+            const auto authenticated = authService->login(std::move(login));
+
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            auto response = jsonResponse(200, std::move(responseBody));
+            // The CSRF half of the cookie pair does not need to be
+            // cryptographically tied to the session -- it only needs to be
+            // unguessable and readable solely by same-origin JS.
+            addSessionCookies(response, authenticated.sessionToken, authenticated.sessionToken.substr(0, 32));
+            return response;
+        } catch (const Domain::AccountLocked& error) {
+            return errorResponse(423, error.what());
+        } catch (const Domain::AuthenticationFailed& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/auth/logout")
+    .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
+        const auto token = cookieValue(request, SessionCookieName);
+        if (token) {
+            authService->logout(*token);
+        }
+        crow::json::wvalue body;
+        body["ok"] = true;
+        auto response = jsonResponse(200, std::move(body));
+        clearSessionCookies(response);
+        return response;
+    });
+
+    CROW_ROUTE(app, "/api/auth/me")([authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        return jsonResponse(200, principalJson(*principal));
     });
 
     CROW_ROUTE(app, "/api/projects")([service] {
@@ -171,7 +318,14 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     CROW_ROUTE(app, "/api/issues")
-    .methods(crow::HTTPMethod::Post)([service](const crow::request& request) {
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
         try {
             const auto body = crow::json::load(request.body);
             if (!body) {
@@ -183,7 +337,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             create.description = optionalString(body, "description").value_or("");
             create.issueTypeKey = optionalString(body, "issueTypeKey").value_or("task");
             create.priorityKey = optionalString(body, "priorityKey").value_or("medium");
-            create.assigneeUsername = optionalString(body, "assigneeUsername");
+            create.assigneeEmail = optionalString(body, "assigneeEmail");
             create.dueDate = optionalString(body, "dueDate");
             if (body.has("storyPoints") && body["storyPoints"].t() != crow::json::type::Null) {
                 create.storyPoints = body["storyPoints"].d();
@@ -195,7 +349,7 @@ void registerApiRoutes(crow::SimpleApp& app,
                     }
                 }
             }
-            return jsonResponse(201, issueJson(service->createIssue(std::move(create))));
+            return jsonResponse(201, issueJson(service->createIssue(std::move(create), *principal)));
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
@@ -213,7 +367,14 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     CROW_ROUTE(app, "/api/issues/<string>/status")
-    .methods(crow::HTTPMethod::Patch)([service](const crow::request& request, const std::string& issueKey) {
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
         try {
             const auto body = crow::json::load(request.body);
             if (!body) {
@@ -224,7 +385,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
                 expectedVersion = body["expectedVersion"].i();
             }
-            if (!service->changeStatus(issueKey, statusKey, expectedVersion)) {
+            if (!service->changeStatus(issueKey, statusKey, *principal, expectedVersion)) {
                 return errorResponse(404, "Issue not found");
             }
             auto issue = service->findIssue(issueKey);
@@ -254,13 +415,20 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     CROW_ROUTE(app, "/api/issues/<string>/comments")
-    .methods(crow::HTTPMethod::Post)([service](const crow::request& request, const std::string& issueKey) {
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
         try {
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            return jsonResponse(201, commentJson(service->addComment(issueKey, requiredString(body, "body"))));
+            return jsonResponse(201, commentJson(service->addComment(issueKey, requiredString(body, "body"), *principal)));
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {

@@ -107,6 +107,10 @@ int intValue(PGresult* result, int row, int column) {
     return text.empty() ? 0 : std::stoi(text);
 }
 
+bool boolValue(PGresult* result, int row, int column) {
+    return value(result, row, column) == "t";
+}
+
 std::vector<std::string> splitLabels(const std::string& labels) {
     std::vector<std::string> result;
     std::istringstream stream(labels);
@@ -119,13 +123,25 @@ std::vector<std::string> splitLabels(const std::string& labels) {
     return result;
 }
 
-Domain::UserSummary readUser(PGresult* result, int row, int offset) {
-    return Domain::UserSummary{
-        value(result, row, offset),
-        value(result, row, offset + 1),
-        value(result, row, offset + 2),
-        value(result, row, offset + 3)};
+Domain::UserSummary readUserSummary(PGresult* result, int row, int offset) {
+    return Domain::UserSummary{value(result, row, offset), value(result, row, offset + 1), value(result, row, offset + 2)};
 }
+
+Domain::User readUser(PGresult* result, int row) {
+    Domain::User user;
+    user.id = value(result, row, 0);
+    user.email = value(result, row, 1);
+    user.displayName = value(result, row, 2);
+    user.timeZone = value(result, row, 3);
+    user.clockFormat = value(result, row, 4);
+    user.active = boolValue(result, row, 5);
+    user.isAdmin = boolValue(result, row, 6);
+    user.createdAt = value(result, row, 7);
+    return user;
+}
+
+constexpr const char* UserSelect =
+    "SELECT id, email, display_name, time_zone, clock_format, active, is_admin, created_at::text FROM users";
 
 Domain::Issue readIssue(PGresult* result, int row) {
     Domain::Issue issue;
@@ -139,19 +155,19 @@ Domain::Issue readIssue(PGresult* result, int row) {
     issue.type = {value(result, row, 7), value(result, row, 8), value(result, row, 9), value(result, row, 10)};
     issue.status = {value(result, row, 11), value(result, row, 12), value(result, row, 13), intValue(result, row, 14)};
     issue.priority = {value(result, row, 15), value(result, row, 16), intValue(result, row, 17), value(result, row, 18)};
-    issue.reporter = readUser(result, row, 19);
-    if (PQgetisnull(result, row, 23) == 0) {
-        issue.assignee = readUser(result, row, 23);
+    issue.reporter = readUserSummary(result, row, 19);
+    if (PQgetisnull(result, row, 22) == 0) {
+        issue.assignee = readUserSummary(result, row, 22);
     }
-    issue.parentIssueKey = optionalValue(result, row, 27);
-    if (PQgetisnull(result, row, 28) == 0) {
-        issue.storyPoints = std::stod(value(result, row, 28));
+    issue.parentIssueKey = optionalValue(result, row, 25);
+    if (PQgetisnull(result, row, 26) == 0) {
+        issue.storyPoints = std::stod(value(result, row, 26));
     }
-    issue.dueDate = optionalValue(result, row, 29);
-    issue.labels = splitLabels(value(result, row, 30));
-    issue.createdAt = value(result, row, 31);
-    issue.updatedAt = value(result, row, 32);
-    issue.version = int64Value(result, row, 33);
+    issue.dueDate = optionalValue(result, row, 27);
+    issue.labels = splitLabels(value(result, row, 28));
+    issue.createdAt = value(result, row, 29);
+    issue.updatedAt = value(result, row, 30);
+    issue.version = int64Value(result, row, 31);
     return issue;
 }
 
@@ -163,8 +179,8 @@ SELECT
     it.type_key, it.name, it.icon, it.color,
     s.status_key, s.name, s.category, s.sort_order,
     pr.priority_key, pr.name, pr.rank, pr.color,
-    reporter.id, reporter.username, reporter.display_name, reporter.email,
-    assignee.id, assignee.username, assignee.display_name, assignee.email,
+    reporter.id, reporter.display_name, reporter.email,
+    assignee.id, assignee.display_name, assignee.email,
     parent.issue_key,
     i.story_points, i.due_date::text,
     labels.names,
@@ -196,6 +212,10 @@ std::string lookupId(PGconn* connection,
         throw std::invalid_argument("Unknown " + table + " key: " + key);
     }
     return value(result.get(), 0, 0);
+}
+
+std::string requireUserId(PGconn* connection, const std::string& userId) {
+    return lookupId(connection, "users", "id", userId);
 }
 
 std::string lookupIssueId(PGconn* connection, const std::string& issueKey) {
@@ -289,11 +309,174 @@ void PostgresDatabase::seedDemoData() {
     exec(connection.get(), Common::readTextFile(seedPath_), "PostgreSQL demo seed");
 }
 
+// --- Identity ---
+
+Domain::User PostgresDatabase::createUser(const Domain::CreateUserRequest& request,
+                                          const std::string& passwordHash) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin create user transaction");
+    try {
+        const std::string userId = Common::uuidV4();
+        auto existing = execParams(connection.get(), "SELECT 1 FROM users WHERE email = $1", {request.email},
+                                   "Check existing email");
+        if (PQntuples(existing.get()) != 0) {
+            throw std::invalid_argument("Email is already in use: " + request.email);
+        }
+
+        execParams(connection.get(), R"SQL(
+INSERT INTO users(id, email, display_name, is_admin, created_at, updated_at)
+VALUES ($1, $2, $3, $4::boolean, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL",
+                   {userId, request.email, request.displayName, request.isAdmin ? std::string("true") : std::string("false")},
+                   "Insert user");
+
+        execParams(connection.get(), R"SQL(
+INSERT INTO local_credentials(user_id, password_hash, created_at, updated_at)
+VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL",
+                   {userId, passwordHash},
+                   "Insert local credentials");
+
+        exec(connection.get(), "COMMIT", "Commit create user transaction");
+
+        auto result = execParams(connection.get(), std::string(UserSelect) + " WHERE id = $1", {userId}, "Read created user");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Created user could not be read back");
+        }
+        return readUser(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback create user transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+std::optional<Domain::User> PostgresDatabase::findUserByEmail(const std::string& email) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(UserSelect) + " WHERE email = $1", {email}, "Find user by email");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return readUser(result.get(), 0);
+}
+
+std::optional<Domain::User> PostgresDatabase::findUserById(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(UserSelect) + " WHERE id = $1", {userId}, "Find user by id");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return readUser(result.get(), 0);
+}
+
+std::vector<Domain::User> PostgresDatabase::listUsers() {
+    auto connection = connect(connectionString_);
+    auto result = exec(connection.get(), std::string(UserSelect) + " ORDER BY display_name", "List users");
+    std::vector<Domain::User> users;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        users.push_back(readUser(result.get(), row));
+    }
+    return users;
+}
+
+std::optional<std::string> PostgresDatabase::findPasswordHash(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "SELECT password_hash FROM local_credentials WHERE user_id = $1",
+                             {userId}, "Find password hash");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return value(result.get(), 0, 0);
+}
+
+void PostgresDatabase::recordFailedLogin(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), R"SQL(
+UPDATE local_credentials
+SET failed_login_count = failed_login_count + 1,
+    locked_until = CASE
+        WHEN failed_login_count + 1 >= $1::integer THEN CURRENT_TIMESTAMP + INTERVAL '15 minutes'
+        ELSE locked_until
+    END,
+    updated_at = CURRENT_TIMESTAMP
+WHERE user_id = $2
+)SQL",
+               {std::to_string(IDatabase::MaxFailedLoginAttempts), userId},
+               "Record failed login");
+}
+
+void PostgresDatabase::resetFailedLogin(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), R"SQL(
+UPDATE local_credentials
+SET failed_login_count = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE user_id = $1
+)SQL",
+               {userId}, "Reset failed login");
+}
+
+bool PostgresDatabase::isLoginLocked(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT 1 FROM local_credentials WHERE user_id = $1 AND locked_until IS NOT NULL AND locked_until > CURRENT_TIMESTAMP
+)SQL",
+                             {userId}, "Check login lock");
+    return PQntuples(result.get()) > 0;
+}
+
+Domain::Session PostgresDatabase::createSession(const std::string& userId,
+                                                const std::string& tokenHash,
+                                                const std::string& expiresAtIso8601) {
+    auto connection = connect(connectionString_);
+    const std::string sessionId = Common::uuidV4();
+    auto result = execParams(connection.get(), R"SQL(
+INSERT INTO sessions(id, user_id, token_hash, created_at, expires_at)
+VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4::timestamptz)
+RETURNING id, user_id, created_at::text, expires_at::text
+)SQL",
+                             {sessionId, userId, tokenHash, expiresAtIso8601},
+                             "Create session");
+    if (PQntuples(result.get()) != 1) {
+        throw std::runtime_error("Created session could not be read back");
+    }
+    return Domain::Session{
+        value(result.get(), 0, 0), value(result.get(), 0, 1), value(result.get(), 0, 2), value(result.get(), 0, 3)};
+}
+
+std::optional<Domain::Session> PostgresDatabase::findSessionByTokenHash(const std::string& tokenHash) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT id, user_id, created_at::text, expires_at::text
+FROM sessions
+WHERE token_hash = $1 AND expires_at > CURRENT_TIMESTAMP
+)SQL",
+                             {tokenHash}, "Find session");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return Domain::Session{
+        value(result.get(), 0, 0), value(result.get(), 0, 1), value(result.get(), 0, 2), value(result.get(), 0, 3)};
+}
+
+void PostgresDatabase::deleteSession(const std::string& sessionId) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), "DELETE FROM sessions WHERE id = $1", {sessionId}, "Delete session");
+}
+
+void PostgresDatabase::deleteExpiredSessions() {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP", "Delete expired sessions");
+}
+
+// --- Issue tracker ---
+
 std::vector<Domain::Project> PostgresDatabase::listProjects() {
     auto connection = connect(connectionString_);
     auto result = exec(connection.get(), R"SQL(
 SELECT p.id, p.project_key, p.name, p.description,
-       lead.id, lead.username, lead.display_name, lead.email,
+       lead.id, lead.display_name, lead.email,
        counts.issue_count, counts.open_issue_count
 FROM projects p
 LEFT JOIN users lead ON lead.id = p.lead_user_id
@@ -315,10 +498,10 @@ ORDER BY p.name
         project.name = value(result.get(), row, 2);
         project.description = value(result.get(), row, 3);
         if (PQgetisnull(result.get(), row, 4) == 0) {
-            project.lead = readUser(result.get(), row, 4);
+            project.lead = readUserSummary(result.get(), row, 4);
         }
-        project.issueCount = int64Value(result.get(), row, 8);
-        project.openIssueCount = int64Value(result.get(), row, 9);
+        project.issueCount = int64Value(result.get(), row, 7);
+        project.openIssueCount = int64Value(result.get(), row, 8);
         projects.push_back(std::move(project));
     }
     return projects;
@@ -358,7 +541,7 @@ std::optional<Domain::Issue> PostgresDatabase::findIssueByKey(const std::string&
 }
 
 Domain::Issue PostgresDatabase::createIssue(const Domain::CreateIssueRequest& request,
-                                            const std::string& reporterUsername) {
+                                            const std::string& reporterUserId) {
     auto connection = connect(connectionString_);
     exec(connection.get(), "BEGIN", "Begin create issue transaction");
     try {
@@ -382,10 +565,10 @@ Domain::Issue PostgresDatabase::createIssue(const Domain::CreateIssueRequest& re
         const std::string issueTypeId = lookupId(connection.get(), "issue_types", "type_key", request.issueTypeKey);
         const std::string statusId = lookupId(connection.get(), "issue_statuses", "status_key", "backlog");
         const std::string priorityId = lookupId(connection.get(), "priorities", "priority_key", request.priorityKey);
-        const std::string reporterId = lookupId(connection.get(), "users", "username", reporterUsername);
+        const std::string reporterId = requireUserId(connection.get(), reporterUserId);
         std::optional<std::string> assigneeId;
-        if (request.assigneeUsername && !request.assigneeUsername->empty()) {
-            assigneeId = lookupId(connection.get(), "users", "username", *request.assigneeUsername);
+        if (request.assigneeEmail && !request.assigneeEmail->empty()) {
+            assigneeId = lookupId(connection.get(), "users", "email", *request.assigneeEmail);
         }
 
         execParams(connection.get(), R"SQL(
@@ -441,7 +624,7 @@ ON CONFLICT DO NOTHING
 
 bool PostgresDatabase::changeIssueStatus(const std::string& issueKey,
                                          const std::string& statusKey,
-                                         const std::string& actorUsername,
+                                         const std::string& actorUserId,
                                          const std::optional<std::int64_t> expectedVersion) {
     auto connection = connect(connectionString_);
     exec(connection.get(), "BEGIN", "Begin status transaction");
@@ -470,7 +653,7 @@ FOR UPDATE OF i
             return true;
         }
         const std::string statusId = lookupId(connection.get(), "issue_statuses", "status_key", statusKey);
-        const std::string actorId = lookupId(connection.get(), "users", "username", actorUsername);
+        const std::string actorId = requireUserId(connection.get(), actorUserId);
 
         execParams(connection.get(),
                    "UPDATE issues SET status_id = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
@@ -496,7 +679,7 @@ VALUES ($1, $2, $3, 'status', $4, $5)
 std::vector<Domain::Comment> PostgresDatabase::listComments(const std::string& issueKey) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), R"SQL(
-SELECT c.id, c.issue_id, u.id, u.username, u.display_name, u.email,
+SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
        c.body, c.created_at::text, c.updated_at::text
 FROM comments c
 JOIN issues i ON i.id = c.issue_id
@@ -513,19 +696,19 @@ ORDER BY c.created_at
         comments.push_back(Domain::Comment{
             value(result.get(), row, 0),
             value(result.get(), row, 1),
-            readUser(result.get(), row, 2),
+            readUserSummary(result.get(), row, 2),
+            value(result.get(), row, 5),
             value(result.get(), row, 6),
-            value(result.get(), row, 7),
-            value(result.get(), row, 8)});
+            value(result.get(), row, 7)});
     }
     return comments;
 }
 
 Domain::Comment PostgresDatabase::addComment(const Domain::AddCommentRequest& request,
-                                             const std::string& authorUsername) {
+                                             const std::string& authorUserId) {
     auto connection = connect(connectionString_);
     const std::string issueId = lookupIssueId(connection.get(), request.issueKey);
-    const std::string authorId = lookupId(connection.get(), "users", "username", authorUsername);
+    const std::string authorId = requireUserId(connection.get(), authorUserId);
     const std::string commentId = Common::uuidV4();
     auto result = execParams(connection.get(), R"SQL(
 INSERT INTO comments(id, issue_id, author_user_id, body, created_at, updated_at)
@@ -535,13 +718,13 @@ RETURNING created_at::text, updated_at::text
                              {commentId, issueId, authorId, request.body},
                              "Insert comment");
     auto author = execParams(connection.get(),
-                             "SELECT id, username, display_name, email FROM users WHERE id = $1",
+                             "SELECT id, display_name, email FROM users WHERE id = $1",
                              {authorId},
                              "Read comment author");
     return Domain::Comment{
         commentId,
         issueId,
-        readUser(author.get(), 0, 0),
+        readUserSummary(author.get(), 0, 0),
         request.body,
         value(result.get(), 0, 0),
         value(result.get(), 0, 1)};

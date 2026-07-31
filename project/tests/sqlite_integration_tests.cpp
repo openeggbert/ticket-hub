@@ -45,6 +45,9 @@ int main() {
     using TicketHub::Domain::IssueFilter;
     using TicketHub::Infrastructure::Database::SqliteDatabase;
 
+    // Fixed seed identity from migrations/sqlite/002_seed_demo.sql.
+    const std::string demoUserId = "00000000-0000-4000-8000-000000000001";
+
     const fs::path sourceRoot(TICKETHUB_SOURCE_DIR);
     const fs::path databasePath = fs::temp_directory_path() / "ticket-hub-integration.db";
     std::error_code removeError;
@@ -74,11 +77,11 @@ int main() {
         request.description = "Created by the SQLite integration test.";
         request.issueTypeKey = "task";
         request.priorityKey = "high";
-        request.assigneeUsername = "alex";
+        request.assigneeEmail = "alex@ticket-hub.local";
         request.labels = {"database", "integration"};
         request.storyPoints = 3.0;
 
-        const auto created = database.createIssue(request, "demo");
+        const auto created = database.createIssue(request, demoUserId);
         require(created.key == "TH-7", "project-local issue counter creates TH-7");
         require(created.labels.size() == 2, "created issue has both labels");
 
@@ -90,19 +93,19 @@ int main() {
         const auto viaAlias = database.findIssueByKey("LEGACY-7");
         require(viaAlias.has_value() && viaAlias->key == created.key, "permanent issue-key alias resolves to current key");
 
-        require(database.changeIssueStatus(created.key, "done", "demo", created.version), "issue status can be changed");
+        require(database.changeIssueStatus(created.key, "done", demoUserId, created.version), "issue status can be changed");
         const auto done = database.findIssueByKey(created.key);
         require(done.has_value() && done->status.key == "done", "changed status is persisted");
         require(done->version == created.version + 1, "status change increments optimistic-lock version");
         bool conflictDetected = false;
         try {
-            database.changeIssueStatus(created.key, "review", "demo", created.version);
+            database.changeIssueStatus(created.key, "review", demoUserId, created.version);
         } catch (const TicketHub::Domain::ConcurrencyConflict&) {
             conflictDetected = true;
         }
         require(conflictDetected, "stale status update is rejected");
 
-        const auto comment = database.addComment({created.key, "Database adapter smoke test passed."}, "demo");
+        const auto comment = database.addComment({created.key, "Database adapter smoke test passed."}, demoUserId);
         require(!comment.id.empty(), "comment receives an id");
         require(database.listComments(created.key).size() == 1, "comment can be listed");
 
