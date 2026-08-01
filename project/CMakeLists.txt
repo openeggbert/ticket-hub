@@ -32,6 +32,7 @@ set(TICKETHUB_CORE_SOURCES
     src/domain/Validation.cpp
     src/infrastructure/database/DatabaseFactory.cpp
     src/infrastructure/database/Migration.cpp
+    src/infrastructure/storage/LocalAttachmentStorage.cpp
 )
 
 if(TICKETHUB_WITH_SQLITE)

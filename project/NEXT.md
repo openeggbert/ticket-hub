@@ -3,10 +3,10 @@
 Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, and UI; Phase 4
 (Collaboration) is now **complete** -- comment editing/tombstone delete, fixed emoji reactions, @mention
 handles/the fixed in-app notification set, the Markdown editor toolbar/preview, simplified worklogs, and
-the admin/security audit log (D23) are all done — see below. Phase 5 (Attachments and Kanban board) is
-now **underway**: the ad-hoc issue filter/search widening slice (D10/D43), the personal dashboard widgets
-(D24), and Kanban board WIP limits (D32/D33) are done; only the attachments vertical (D15/D98-D105)
-remains.)
+the admin/security audit log (D23) are all done — see below. Phase 5 (Attachments and Kanban board) is now
+**complete** -- the ad-hoc issue filter/search widening slice (D10/D43), the personal dashboard widgets
+(D24), Kanban board WIP limits (D32/D33), and the full attachments vertical (D15/D98-D105) are all done.
+This closes out Milestone 2; Phase 6 (Milestone 3: REST API v1/export, backup/restore/upgrade) is next.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -328,8 +328,46 @@ anything from the removed/deferred list without an explicit new product conversa
   column highlights and clears, and the setting is confirmed genuinely installation-wide by checking a
   second project), plus a full regression re-run of prior batches' browser tests. Full detail in
   `docs/VERIFICATION.md`.
+- **Phase 5 complete (attachments, D15/D98-D105), this batch:** the full attachments vertical, closing
+  out Phase 5 and Milestone 2. `attachments.sha256`/`deleted_at`/`deleted_by_user_id` already existed
+  (pre-provisioned in `003_product_foundation.sql`); migration `014_attachments.sql` adds only the
+  `issue_id` index that table never got. New `Domain::Attachment`; `IDatabase::createAttachment` is the
+  one create* method that takes a caller-supplied id, since the local filesystem storage key (D15,
+  hardwired, no abstraction) must be known and the file already written before the row is inserted --
+  `listAttachments`/`findAttachmentById`/`softDeleteAttachment`/`restoreAttachment`/
+  `listDeletedAttachments`/`permanentlyDeleteAttachment` in both adapters mirror the existing tombstone
+  pattern; `listAttachmentStorageKeysForIssue`/`...ForProject` return every attachment's storage key
+  regardless of soft-delete state, used to delete files on disk before a permanent issue/project delete
+  cascades through the database (D105 has no periodic orphan-file audit at all). New
+  `src/infrastructure/storage/LocalAttachmentStorage` (plain, non-virtual -- D15's "no abstract storage
+  port"), keyed by the attachment's own UUID, rooted at `TICKETHUB_ATTACHMENTS_DIR`.
+  `Domain::validateAttachmentUpload` enforces D98's fixed 25MB/file, 20-attachments/issue, and a blocked-
+  extension denylist. `TicketService::uploadAttachment` computes the SHA-256 at upload time (D105);
+  `deleteAttachment` is uploader-or-project-Admin-or-above (mirroring D83's comment rule, the closest
+  precedent -- no decision addresses this directly); `listDeletedAttachments` implements D102's fixed
+  90-day on-demand retention itself, one layer above the SQL adapter, since purging an attachment also
+  means deleting its file. New `GET`/`POST /api/issues/{key}/attachments`,
+  `DELETE /api/issues/{key}/attachments/{id}`, `GET /api/attachments/{id}/download` (not nested under
+  `/issues/{key}`, since a download/preview URL only ever needs the id), and the recycle-bin routes
+  (`GET /api/attachments/deleted`, `POST .../restore`, `DELETE .../permanent`, all global-admin-only).
+  `web/`'s issue drawer gained a sortable Attachments section (D101: name/size/date/uploader/type),
+  drag-and-drop upload, and native-element previews for all four D99 kinds (image/PDF/text/audio-video).
+  The Markdown toolbar gained full upload + drag/drop + paste (D100), inserting
+  `![name](attachment://id)`/`[name](attachment://id)`; `renderMarkdownInline` gained real image-syntax
+  support (previously absent) and resolves `attachment://<id>` to a real download URL, validating the id
+  shape first and leaving anything malformed as inert text. A new admin-only "Attachment recycle bin" nav
+  item mirrors the audit log's visibility pattern. New SQLite-integration and authorization-integration
+  test coverage (full CRUD, both permission rules, the fixed limits, the recycle-bin split). Live-
+  PostgreSQL and extensively browser-verified (upload/preview/sort/delete, all four preview kinds, real
+  native drag-and-drop and clipboard paste -- not just `setInputFiles` -- into both the dropzone and the
+  Markdown editor, an inserted `attachment://` reference actually resolving when a comment is rendered,
+  and the full recycle-bin flow), plus a full regression re-run of every prior batch's browser tests. Two
+  real bugs were caught and fixed before this could be considered complete: a Postgres-only "inconsistent
+  types deduced for $1" error from reusing one placeholder for two differently-typed columns, and a
+  redundant migration that tried to re-add three columns the schema already had (caught immediately by
+  `ctest`, never shipped). Full detail in `docs/VERIFICATION.md`.
 
-## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) is complete. Phase 5 is underway
+## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
 Across six batches, `web/` grew from a read-only demo (no auth, no writes reachable except create-issue
 and status-change) into full coverage of every route the API exposes: login; an Epic/parent picker on
@@ -351,15 +389,15 @@ There is no remaining gap between what the API exposes (for Phases 1-3) and what
 Phase 4 (Collaboration) is now fully implemented and fully covered in the UI: comment editing/tombstone
 delete (D81/D82/D83), fixed emoji reactions (D84), @mention handles/the fixed in-app notification set
 (D56/D80/D14), the Markdown editor toolbar/live preview (D16), simplified worklogs (D12/D13), and the
-admin/security audit log (D23). Phase 5 (Attachments and Kanban board) is now underway; the ad-hoc
-filter/search widening slice (D10/D43), the personal dashboard widgets (D24), and Kanban board WIP limits
-(D32/D33) are done. What's left:
+admin/security audit log (D23). Phase 5 (Attachments and Kanban board) is now **complete**: the ad-hoc
+filter/search widening slice (D10/D43), the personal dashboard widgets (D24), Kanban board WIP limits
+(D32/D33), and the full attachments vertical (D15/D98-D105 -- upload, local filesystem storage, four
+native-element previews, sortable list/recycle bin/90-day retention, and full Markdown-editor upload/
+drag-drop/paste integration) are all done and fully covered in the UI. This closes out Milestone 2. What's
+left:
 
-1. The full attachments vertical (D15/D98-D105) is the only remaining Phase 5 item: upload API, hardwired
-   local filesystem storage, upload-time SHA-256 verification, four native-element previews, sortable
-   list/recycle bin/90-day retention, and Markdown-editor upload/drag-drop/paste integration referencing
-   `attachment://UUID`. This is likely the largest remaining item in the whole roadmap so far and may need
-   its own multi-batch sub-effort.
+1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 6 (REST API v1/export, rate limiting, active-
+   session list) and Phase 7 (backup/restore, upgrade command). Not yet started.
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -377,11 +415,9 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
   or any children, so this remains the one open path.
 
-Milestone 2's collaboration half (Phase 4) is now fully closed. What remains of Milestone 2 is the
-attachments vertical, the last Phase 5 item (filter/search widening, dashboard personalization, and
-Kanban WIP limits are all done), then Milestone 3 (API, backup/restore) and Milestone 4 (packaging and
-hardening). Do not jump ahead to later-phase features early, and do not implement anything from
-`docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+Milestone 2 (Phases 4 and 5) is now **fully closed**. Next is Milestone 3 (Phase 6: REST API v1/export;
+Phase 7: backup/restore/upgrade) and Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to
+later-phase features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 
@@ -416,8 +452,13 @@ edit/delete any comment); `addCommentReaction`/`removeCommentReaction`/`listComm
 same three-layer coverage (SQLite-integration idempotency/listing, authorization-integration no-project-
 role/unknown-key/unknown-comment rejection, and a live-PostgreSQL smoke test); `findUserByHandle` and the
 five `notifications` methods gained the same three-layer coverage plus identity-integration coverage for
-handle normalization/uniqueness/format validation on `create-user`. Each Phase 5 slice so far
-(filter/search widening, personal dashboard, Kanban WIP limits) added its own SQLite-integration,
-authorization-integration, live-PostgreSQL, and browser-verification coverage on top of that. Full detail,
-including exactly what was exercised (and the several real bugs this browser testing and test-writing
-caught and fixed along the way), is in `docs/VERIFICATION.md`.
+handle normalization/uniqueness/format validation on `create-user`. Each Phase 5 slice (filter/search
+widening, personal dashboard, Kanban WIP limits, and now the full attachments vertical) added its own
+SQLite-integration, authorization-integration, live-PostgreSQL, and browser-verification coverage on top
+of that. **Phase 5 is now fully implemented and fully verified, closing out Milestone 2** -- attachment
+upload/download/delete/recycle-bin, all four native-element previews, and full Markdown-editor drag-drop/
+paste integration were all exercised through a real browser, including real native `drop`/`paste` DOM
+events (not just `setInputFiles`) both on the dedicated dropzone and directly on the Markdown editor.
+Full detail, including exactly what was exercised (and the several real bugs this browser testing and
+test-writing caught and fixed along the way, across every batch this session), is in
+`docs/VERIFICATION.md`.

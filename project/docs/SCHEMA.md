@@ -45,6 +45,10 @@ Current schema migrations:
 - `013_board_columns.sql` — Kanban board WIP limits (Phase 5 of `REDUCED_SCOPE_ROADMAP.md`, D32/D33).
   Adds `board_columns`, a single flat, installation-wide table with no `board_id`/`project_id` column at
   all -- one row per fixed workflow status, not one per project per status.
+- `014_attachments.sql` — attachments (Phase 5 of `REDUCED_SCOPE_ROADMAP.md`, D15/D98-D105, the last item
+  in Phase 5). Adds only an `issue_id` index on `attachments` -- `sha256`/`deleted_at`/
+  `deleted_by_user_id` already existed from `003_product_foundation.sql`, pre-provisioned ahead of this
+  phase.
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, an explicit `rank_order` (equal to `issue_number`) for each seeded issue, (since `010_mentions_and_notifications.sql`, which `seed-demo` always applies first) a `handle` for each of the three demo users, and (since `013_board_columns.sql`) one `board_columns` row per fixed workflow status, with "In Progress" given a demo WIP limit of 3.
 
@@ -368,9 +372,25 @@ since there is no per-project board-admin concept to delegate the setting to ins
 
 ### `attachments`
 
-`id`, issue, uploader, filename, content type, byte size, storage key, created time, SHA-256 nullable, deletion fields.
-
-Only metadata exists. Filesystem/S3 providers and attachment APIs remain future phases.
+`id`, `issue_id`, `uploader_user_id`, `file_name`, `content_type`, `byte_size`, `storage_key`,
+`created_at`, `sha256`, `deleted_at`, `deleted_by_user_id` -- fully implemented (Phase 5, D15/D98-D105,
+migration `014_attachments.sql`). Attached to an issue directly, not to an individual comment, so the
+same attachment can be referenced via `attachment://<id>` from the issue description or from any comment
+on that issue (D100). `storage_key` always equals `id`: `IDatabase::createAttachment` is the one create*
+method that takes a caller-supplied id (rather than generating one internally) because
+`Infrastructure::Storage::LocalAttachmentStorage` needs the key -- and the file needs to already be
+written -- before the row is inserted, so a database row never describes a file that doesn't exist on
+disk (D15: local filesystem storage only, hardwired, no abstract storage port and no S3 extension
+point). `deleted_at`/`deleted_by_user_id` mirror the issue/project/comment tombstone pattern exactly
+(D101); the fixed 90-day on-demand retention (D102) is implemented in `TicketService::
+listDeletedAttachments`, not inside the database adapter like `listDeletedIssues`/`listDeletedProjects`
+-- purging an attachment also means deleting its file on disk, which the SQL-only `IDatabase` layer
+cannot do. `sha256` is computed once, at upload (D105); there is no periodic re-verification.
+`Domain::validateAttachmentUpload` enforces D98's fixed limits (25MB/file, 20/issue, a blocked-extension
+denylist) -- no admin configuration, no MIME allow-list, no quotas. `TicketService::permanentlyDeleteIssue`/
+`permanentlyDeleteProject` both collect every affected attachment's storage key and delete its file
+*before* the database's `ON DELETE CASCADE` removes the rows, since there is no periodic orphan-file
+audit at all to catch files left behind afterward.
 
 ## Current indexes
 
@@ -387,10 +407,12 @@ label does not truncate a matching issue's own label list to just that label.
 ## Deliberate implementation gap
 
 The current schema is a migration-safe foundation for the **reduced-scope V1**, not the full original
-target model. Fixed project roles and project lifecycle (Phase 2), and the fixed workflow/hierarchy rules
-plus resolution handling (Phase 3, partial -- see `NEXT.md` for exactly what of Phase 3 remains: cloning,
-issue links, watchers, voting, bulk actions, and the rank/renumber migration are not yet built) are now
-enforced. Boards and attachments remain future phases defined in `REDUCED_SCOPE_DATA_MODEL.md`
-(`REDUCED_SCOPE_ROADMAP.md`). Permission schemes, workflow versions/drafts, custom fields, saved filters,
-sprints, notifications schemes, jobs, event log, and webhooks are not part of the V1 plan at all -- see
-`docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+target model. Phases 1-5 of `docs/REDUCED_SCOPE_ROADMAP.md` are all complete at the core/CLI/test/server/UI
+layer (identity and sessions; authorization and project lifecycle; the fixed workflow/hierarchy, full
+issue edit, links, cloning, watching/voting, the issue recycle bin, bulk actions, and manual
+ordering/moving; comment editing, reactions, mentions/notifications, Markdown rendering, worklogs, and the
+admin/security audit log; ad-hoc issue filtering, the personal dashboard, Kanban board WIP limits, and
+attachments), with one deliberate exception: re-typing (`issueTypeKey`) or re-parenting
+(`parentIssueKey`) an issue after creation is not implemented (see `NEXT.md`). Permission schemes,
+workflow versions/drafts, custom fields, saved filters, sprints, notifications schemes, jobs, event log,
+and webhooks are not part of the V1 plan at all -- see `docs/REMOVED_AND_DEFERRED_FEATURES.md`.

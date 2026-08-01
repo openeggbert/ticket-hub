@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — Attachments (D15/D98-D105) — Phase 5 complete
+
+- **Attachments**: issues can now have files attached, closing out Phase 5 (and Milestone 2).
+  - Local filesystem storage only, hardwired (D15) -- no S3/pluggable backend, no storage abstraction.
+  - Fixed limits (D98): 25MB/file, 20 attachments/issue, a blocked-extension denylist. No admin
+    configuration, no quotas, no antivirus/DLP.
+  - All four native-element previews (D99): image (`<img>`), PDF and text (`<iframe>`), audio/video
+    (`<audio>`/`<video>`). No PDF.js or other heavy libraries.
+  - Full upload + drag/drop + paste support in the Markdown editor (D100), referencing
+    `attachment://<id>`.
+  - Sortable list (name/size/date/uploader/type) + recycle bin (D101), fixed 90-day on-demand retention
+    (D102).
+  - Upload-time SHA-256/size verification only (D105) -- no periodic integrity audit.
+- New `GET`/`POST /api/issues/{key}/attachments`, `DELETE /api/issues/{key}/attachments/{id}`,
+  `GET /api/attachments/{id}/download`, and the recycle-bin routes
+  (`GET /api/attachments/deleted`, `POST /api/attachments/{id}/restore`,
+  `DELETE /api/attachments/{id}/permanent`).
+- `web/`: the issue drawer gained an Attachments section (sort, upload, drag-and-drop, inline previews,
+  delete); the Markdown toolbar gained an attach button plus real drag-and-drop/paste; a new admin-only
+  "Attachment recycle bin" nav item.
+
 ## Unreleased — Kanban board WIP limits (D32/D33) — Phase 5 continued
 
 - **Kanban board WIP limits (D32/D33)**: `GET /api/board-columns` returns one entry per fixed workflow

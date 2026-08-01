@@ -49,6 +49,7 @@ AppConfig AppConfig::fromEnvironment() {
     config.seedDemo = envBool("TICKETHUB_SEED_DEMO", config.seedDemo);
     config.webRoot = envOr("TICKETHUB_WEB_ROOT", std::string(TICKETHUB_SOURCE_DIR) + "/web");
     config.migrationsRoot = envOr("TICKETHUB_MIGRATIONS_ROOT", std::string(TICKETHUB_SOURCE_DIR) + "/migrations");
+    config.attachmentsRoot = envOr("TICKETHUB_ATTACHMENTS_DIR", std::string(TICKETHUB_SOURCE_DIR) + "/data/attachments");
 
     const auto portText = envOr("TICKETHUB_PORT", std::to_string(config.port));
     const int parsedPort = std::stoi(portText);

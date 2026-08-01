@@ -2,6 +2,7 @@
 
 #include "domain/Errors.h"
 
+#include <algorithm>
 #include <exception>
 #include <optional>
 #include <sstream>
@@ -136,6 +137,30 @@ crow::json::wvalue worklogJson(const Domain::Worklog& worklog) {
     json["updatedAt"] = worklog.updatedAt;
     json["version"] = worklog.version;
     return json;
+}
+
+crow::json::wvalue attachmentJson(const Domain::Attachment& attachment) {
+    crow::json::wvalue json;
+    json["id"] = attachment.id;
+    json["issueId"] = attachment.issueId;
+    json["issueKey"] = attachment.issueKey;
+    json["uploader"] = userJson(attachment.uploader);
+    json["fileName"] = attachment.fileName;
+    json["contentType"] = attachment.contentType;
+    json["byteSize"] = attachment.byteSize;
+    json["sha256"] = attachment.sha256;
+    json["createdAt"] = attachment.createdAt;
+    return json;
+}
+
+// Defends against HTTP response-splitting via a CR/LF in a user-supplied
+// file name embedded into a response header (Content-Disposition).
+std::string sanitizeHeaderValue(const std::string& value) {
+    std::string sanitized = value;
+    sanitized.erase(std::remove_if(sanitized.begin(), sanitized.end(),
+                                   [](const unsigned char ch) { return ch == '\r' || ch == '\n' || ch == '"'; }),
+                    sanitized.end());
+    return sanitized;
 }
 
 crow::json::wvalue commentReactionJson(const Domain::CommentReaction& reaction) {
@@ -1176,6 +1201,180 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Attachments (Phase 5, D15/D98-D105). Local filesystem storage only,
+    // hardwired -- there is no storage-backend abstraction to route around.
+    CROW_ROUTE(app, "/api/issues/<string>/attachments")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& attachment : service->listAttachments(issueKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(attachmentJson(attachment));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // multipart/form-data with a single "file" part. Fixed limits (D98, no
+    // admin configuration): 25MB/file, 20 attachments/issue, a blocked-
+    // extension denylist -- all enforced in
+    // Domain::validateAttachmentUpload, not here. The whole body is read
+    // into memory before that check runs (no streaming/early-abort), so an
+    // oversized upload is rejected only after being fully received -- an
+    // accepted V1 simplification, not a decision-driven choice.
+    CROW_ROUTE(app, "/api/issues/<string>/attachments")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            crow::multipart::message multipart(request);
+            const auto filePart = multipart.get_part_by_name("file");
+            if (filePart.body.empty()) {
+                return errorResponse(400, "A \"file\" part is required");
+            }
+            const auto& disposition = filePart.get_header_object("Content-Disposition");
+            const auto filenameParam = disposition.params.find("filename");
+            const std::string fileName = filenameParam != disposition.params.end() ? filenameParam->second : "upload";
+            const auto& contentTypeHeader = filePart.get_header_object("Content-Type");
+            const std::string contentType = contentTypeHeader.value.empty() ? "application/octet-stream" : contentTypeHeader.value;
+            const auto attachment = service->uploadAttachment(issueKey, fileName, contentType, filePart.body, *principal);
+            return jsonResponse(201, attachmentJson(attachment));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const crow::bad_request& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Uploader-or-project-Admin-or-above (see TicketService::deleteAttachment
+    // for why this mirrors the comment edit/delete rule).
+    CROW_ROUTE(app, "/api/issues/<string>/attachments/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& attachmentId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!service->deleteAttachment(issueKey, attachmentId, *principal)) {
+                return errorResponse(404, "Attachment not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Not nested under /api/issues/{key} like the routes above: a download
+    // link (and an inline <img>/<audio>/<video>/<embed> preview src) only
+    // ever needs the attachment id, e.g. when rendered from an
+    // `attachment://<id>` reference inside Markdown (D100) that could be
+    // read from any comment on the issue, not just its description.
+    CROW_ROUTE(app, "/api/attachments/<string>/download")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& attachmentId) {
+        try {
+            const auto [attachment, bytes] = service->downloadAttachment(attachmentId, resolvePrincipal(request, authService));
+            crow::response response(200, bytes);
+            response.set_header("Content-Type", sanitizeHeaderValue(attachment.contentType));
+            response.set_header("Content-Disposition", "inline; filename=\"" + sanitizeHeaderValue(attachment.fileName) + "\"");
+            response.set_header("Cache-Control", "private, max-age=31536000, immutable");
+            return response;
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(404, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Recycle bin (D101/D102): global-administrator-only, the same split as
+    // the issue and project recycle bins. Fixed 90-day on-demand retention
+    // (checked inside TicketService::listDeletedAttachments, not here, not
+    // a background job).
+    CROW_ROUTE(app, "/api/attachments/deleted")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& attachment : service->listDeletedAttachments(*principal)) {
+                items.emplace_back(attachmentJson(attachment));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/attachments/<string>/restore")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& attachmentId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            crow::json::wvalue body;
+            body["ok"] = service->restoreAttachment(attachmentId, *principal);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/attachments/<string>/permanent")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& attachmentId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            crow::json::wvalue body;
+            body["ok"] = service->permanentlyDeleteAttachment(attachmentId, *principal);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

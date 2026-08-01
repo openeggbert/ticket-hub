@@ -133,6 +133,22 @@ public:
     std::vector<Domain::Issue> listDeletedIssues() override;
     bool permanentlyDeleteIssue(const std::string& issueKey) override;
 
+    Domain::Attachment createAttachment(const std::string& id,
+                                        const std::string& issueKey,
+                                        const std::string& uploaderUserId,
+                                        const std::string& fileName,
+                                        const std::string& contentType,
+                                        std::int64_t byteSize,
+                                        const std::string& sha256) override;
+    std::vector<Domain::Attachment> listAttachments(const std::string& issueKey) override;
+    std::optional<Domain::Attachment> findAttachmentById(const std::string& attachmentId) override;
+    bool softDeleteAttachment(const std::string& attachmentId, const std::string& actorUserId) override;
+    bool restoreAttachment(const std::string& attachmentId) override;
+    std::vector<Domain::Attachment> listDeletedAttachments() override;
+    bool permanentlyDeleteAttachment(const std::string& attachmentId) override;
+    std::vector<std::string> listAttachmentStorageKeysForIssue(const std::string& issueKey) override;
+    std::vector<std::string> listAttachmentStorageKeysForProject(const std::string& projectKey) override;
+
 private:
     sqlite3* database_{};
     std::string migrationsDirectory_;

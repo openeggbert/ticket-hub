@@ -246,6 +246,37 @@ struct Comment {
     std::optional<std::string> editedAt;
 };
 
+// Attachments (D15/D98-D105): local filesystem storage only, hardwired --
+// `storageKey` is an opaque handle into that local store, not a
+// discriminated union over multiple backends, since no other backend
+// exists or is planned for V1. `sha256` is computed once, at upload
+// (D105); there is no periodic re-verification. Attached to an issue
+// directly (not to an individual comment) so it can be referenced via
+// `attachment://<id>` from the issue description or from any comment on
+// that issue (D100).
+struct Attachment {
+    std::string id;
+    std::string issueId;
+    // Resolved via a join purely for display convenience (e.g. the
+    // attachment recycle bin, which spans every issue and would otherwise
+    // have nothing human-readable to show); routes are always nested under
+    // `/api/issues/{key}/attachments`, so ordinary reads never need this.
+    std::string issueKey;
+    UserSummary uploader;
+    std::string fileName;
+    std::string contentType;
+    std::int64_t byteSize{};
+    std::string sha256;
+    std::string createdAt;
+    // Set only when returned from the recycle bin (`listDeletedAttachments`);
+    // nullopt for an active attachment. Unlike issues/projects, whose fixed
+    // 90-day on-demand purge (D102) is a single DELETE entirely inside the
+    // database adapter, an attachment's purge must also delete its file on
+    // disk -- something only the application layer (TicketService) can do
+    // -- so it needs this timestamp to decide what has aged out.
+    std::optional<std::string> deletedAt;
+};
+
 // Fixed emoji reaction catalog (D84): the decision register calls for "a
 // fixed reaction set" on comments without enumerating one, so this uses
 // GitHub's well-known eight-reaction set as a conservative, familiar

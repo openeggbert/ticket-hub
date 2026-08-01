@@ -15,6 +15,11 @@ struct AppConfig {
     bool seedDemo{true};
     std::string webRoot;
     std::string migrationsRoot;
+    // Local filesystem attachment storage (D15, hardwired -- no S3/pluggable
+    // backend). Defaults under the source tree for development; a real
+    // deployment should point this at a persistent, backed-up volume via
+    // TICKETHUB_ATTACHMENTS_DIR.
+    std::string attachmentsRoot;
 
     static AppConfig fromEnvironment();
 };

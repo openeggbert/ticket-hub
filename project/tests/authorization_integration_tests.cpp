@@ -1,5 +1,6 @@
 #include "application/TicketService.h"
 #include "domain/Errors.h"
+#include "domain/Validation.h"
 #include "infrastructure/database/SqliteDatabase.h"
 
 #include <algorithm>
@@ -81,7 +82,10 @@ int main() {
     database->migrate();
     database->seedDemoData();
 
-    TicketService tickets(database);
+    const fs::path attachmentsRoot = fs::temp_directory_path() / "ticket-hub-authorization-attachments";
+    fs::remove_all(attachmentsRoot, removeError);
+
+    TicketService tickets(database, attachmentsRoot.string());
 
     // --- Fixed project roles gate issue writes (D3) ---
     {
@@ -378,6 +382,93 @@ int main() {
                "editing an unknown worklog returns nullopt rather than throwing");
         require(!tickets.deleteWorklog("TH-1", "00000000-0000-4000-8000-00000000dead", demo),
                "deleting an unknown worklog returns false rather than throwing");
+    }
+
+    // --- Attachments (Phase 5, D15/D98-D105) ---
+    {
+        require(throwsForbidden([&] { tickets.uploadAttachment("WEB-1", "notes.txt", "text/plain", "hello world", sam); }),
+               "a non-member cannot upload an attachment to another project's issue");
+
+        const auto uploaded = tickets.uploadAttachment("TH-1", "notes.txt", "text/plain", "hello world", sam);
+        require(uploaded.fileName == "notes.txt" && uploaded.byteSize == 11, "a TH member can upload to a TH issue");
+        require(!uploaded.sha256.empty(), "the uploaded file's SHA-256 is computed and stored (D105)");
+
+        const auto listed = tickets.listAttachments("TH-1", demo);
+        require(std::any_of(listed.begin(), listed.end(), [&](const auto& a) { return a.id == uploaded.id; }),
+               "the uploaded attachment appears in the issue's list");
+
+        const auto [downloadedMeta, downloadedBytes] = tickets.downloadAttachment(uploaded.id, demo);
+        require(downloadedMeta.id == uploaded.id && downloadedBytes == "hello world",
+               "downloadAttachment returns the exact bytes that were uploaded");
+
+        bool unknownAttachmentRejected = false;
+        try {
+            tickets.downloadAttachment("00000000-0000-4000-8000-00000000dead", demo);
+        } catch (const std::invalid_argument&) {
+            unknownAttachmentRejected = true;
+        }
+        require(unknownAttachmentRejected, "downloading an unknown attachment is rejected");
+
+        // Uploader-or-project-Admin-or-above (mirrors D83's comment rule --
+        // no decision text addresses attachment deletion directly).
+        require(throwsForbidden([&] { tickets.deleteAttachment("TH-1", uploaded.id, alex); }),
+               "a non-uploader, non-admin project member cannot delete someone else's attachment");
+        require(tickets.deleteAttachment("TH-1", uploaded.id, sam), "the uploader can always delete their own attachment");
+        const auto attachmentsAfterDelete = tickets.listAttachments("TH-1", demo);
+        require(std::none_of(attachmentsAfterDelete.begin(), attachmentsAfterDelete.end(),
+                             [&](const auto& a) { return a.id == uploaded.id; }),
+               "a soft-deleted attachment no longer appears in the issue's list");
+
+        const auto secondUpload = tickets.uploadAttachment("TH-1", "diagram.png", "image/png", "not-really-a-png", alex);
+        require(throwsForbidden([&] { tickets.deleteAttachment("TH-1", secondUpload.id, sam); }),
+               "a non-uploader TH member (not project-admin) cannot delete another member's attachment");
+        require(tickets.deleteAttachment("TH-1", secondUpload.id, demo),
+               "the global administrator can delete any attachment");
+
+        // --- Fixed limits (D98): oversized file and blocked extension ---
+        bool oversizedRejected = false;
+        try {
+            tickets.uploadAttachment("TH-1", "huge.bin", "application/octet-stream",
+                                     std::string(TicketHub::Domain::AttachmentMaxBytes + 1, 'x'), alex);
+        } catch (const std::invalid_argument&) {
+            oversizedRejected = true;
+        }
+        require(oversizedRejected, "a file exceeding the fixed 25MB limit is rejected");
+
+        bool blockedExtensionRejected = false;
+        try {
+            tickets.uploadAttachment("TH-1", "malware.exe", "application/octet-stream", "MZ", alex);
+        } catch (const std::invalid_argument&) {
+            blockedExtensionRejected = true;
+        }
+        require(blockedExtensionRejected, "a blocked/dangerous file extension is rejected");
+
+        // --- Recycle bin: global-administrator-only (D101/D102) ---
+        const auto thirdUpload = tickets.uploadAttachment("TH-1", "keep.txt", "text/plain", "keep me", alex);
+        require(tickets.deleteAttachment("TH-1", thirdUpload.id, alex), "soft-delete for the recycle bin test");
+
+        require(throwsForbidden([&] { tickets.listDeletedAttachments(sam); }),
+               "listing the attachment recycle bin is global-administrator-only");
+        require(throwsForbidden([&] { tickets.restoreAttachment(thirdUpload.id, alex); }),
+               "restoring an attachment is global-administrator-only");
+        require(throwsForbidden([&] { tickets.permanentlyDeleteAttachment(thirdUpload.id, alex); }),
+               "permanently deleting an attachment is global-administrator-only");
+
+        const auto deletedList = tickets.listDeletedAttachments(demo);
+        require(std::any_of(deletedList.begin(), deletedList.end(), [&](const auto& a) { return a.id == thirdUpload.id; }),
+               "the global administrator sees the soft-deleted attachment in the recycle bin");
+
+        require(tickets.restoreAttachment(thirdUpload.id, demo), "the global administrator can restore an attachment");
+        const auto attachmentsAfterRestore = tickets.listAttachments("TH-1", demo);
+        require(std::any_of(attachmentsAfterRestore.begin(), attachmentsAfterRestore.end(),
+                            [&](const auto& a) { return a.id == thirdUpload.id; }),
+               "a restored attachment reappears in the issue's list");
+
+        require(tickets.deleteAttachment("TH-1", thirdUpload.id, alex), "re-deleted for the permanent-delete test");
+        require(tickets.permanentlyDeleteAttachment(thirdUpload.id, demo),
+               "the global administrator can permanently delete an attachment");
+        require(!tickets.permanentlyDeleteAttachment(thirdUpload.id, demo),
+               "permanently deleting an already-gone attachment returns false");
     }
 
     // --- User directory for @mention autocomplete (D80) ---

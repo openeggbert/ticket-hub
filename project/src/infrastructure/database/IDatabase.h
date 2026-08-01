@@ -2,6 +2,7 @@
 
 #include "domain/Models.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -271,6 +272,48 @@ public:
     virtual bool restoreIssue(const std::string& issueKey) = 0;
     virtual std::vector<Domain::Issue> listDeletedIssues() = 0;
     virtual bool permanentlyDeleteIssue(const std::string& issueKey) = 0;
+
+    // --- Attachments (Phase 5, D15/D98-D105) ---
+    // IDatabase only ever stores/returns metadata -- it never touches a
+    // file. Unlike every other create* method, `createAttachment` takes a
+    // caller-supplied `id` rather than generating one internally: the local
+    // filesystem storage key must be known (and the file already written)
+    // before the row is inserted, so a database row never describes a file
+    // that doesn't exist on disk. `id` is also stored as `storage_key`.
+    // Attached to an issue, not to an individual comment, so the same
+    // attachment can be referenced via `attachment://<id>` from the issue
+    // description or from any comment on that issue (D100).
+    virtual Domain::Attachment createAttachment(const std::string& id,
+                                                const std::string& issueKey,
+                                                const std::string& uploaderUserId,
+                                                const std::string& fileName,
+                                                const std::string& contentType,
+                                                std::int64_t byteSize,
+                                                const std::string& sha256) = 0;
+    // Active (non-deleted) attachments only, oldest first -- D101's
+    // "sortable list" is a client-side concern (name/size/date/author/type),
+    // not a server-side ordering option.
+    virtual std::vector<Domain::Attachment> listAttachments(const std::string& issueKey) = 0;
+    virtual std::optional<Domain::Attachment> findAttachmentById(const std::string& attachmentId) = 0;
+    // Mirrors the issue/project/comment tombstone pattern exactly (D101).
+    virtual bool softDeleteAttachment(const std::string& attachmentId, const std::string& actorUserId) = 0;
+    virtual bool restoreAttachment(const std::string& attachmentId) = 0;
+    // Unlike `listDeletedIssues`/`listDeletedProjects`, this does NOT purge
+    // anything past 90 days itself -- purging an attachment also means
+    // deleting its file on disk, which this SQL-only layer cannot do. The
+    // fixed 90-day on-demand purge (D102) is implemented one layer up, in
+    // TicketService, which has access to both this method and the storage
+    // class.
+    virtual std::vector<Domain::Attachment> listDeletedAttachments() = 0;
+    virtual bool permanentlyDeleteAttachment(const std::string& attachmentId) = 0;
+    // Every attachment's storage key under the given issue/project,
+    // regardless of the attachment's own soft-delete state -- used to
+    // delete files on disk before a permanent issue/project delete cascades
+    // through the database (there is no periodic orphan-file audit at all,
+    // D105, so this is the only cleanup path for files whose row is about
+    // to disappear via ON DELETE CASCADE).
+    virtual std::vector<std::string> listAttachmentStorageKeysForIssue(const std::string& issueKey) = 0;
+    virtual std::vector<std::string> listAttachmentStorageKeysForProject(const std::string& projectKey) = 0;
 };
 
 } // namespace TicketHub::Infrastructure::Database

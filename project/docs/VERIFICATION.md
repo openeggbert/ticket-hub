@@ -1,5 +1,153 @@
 # Verification record
 
+## 2026-08-01 — Attachments (D15/D98-D105): Phase 5 complete
+
+Fourth and final Phase 5 slice. With this batch, every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5
+list is implemented, closing out Milestone 2.
+
+### What changed
+
+- Migration `014_attachments.sql` (both backends) adds only an `idx_attachments_issue` index --
+  `attachments.sha256`/`deleted_at`/`deleted_by_user_id` already existed from
+  `003_product_foundation.sql`, pre-provisioned well ahead of this phase. An early draft of this
+  migration re-added those three columns and failed on a live run with "duplicate column name: sha256";
+  caught immediately by `ctest`, not shipped.
+- `Domain::Attachment` (`id`, `issueId`, `issueKey` -- resolved via a join purely for the recycle bin's
+  display convenience, `uploader`, `fileName`, `contentType`, `byteSize`, `sha256`, `createdAt`,
+  `deletedAt` -- set only when returned from the recycle bin). `IDatabase::createAttachment` is the one
+  create* method that takes a caller-supplied `id` rather than generating one internally: the local
+  filesystem storage key (D15, hardwired, no storage-backend abstraction) must be known -- and the file
+  already written -- before the row is inserted, so a database row never describes a file that doesn't
+  exist on disk. `listAttachments`/`findAttachmentById`/`softDeleteAttachment`/`restoreAttachment`/
+  `listDeletedAttachments`/`permanentlyDeleteAttachment` in both adapters, mirroring the
+  issue/project/comment tombstone pattern. `listAttachmentStorageKeysForIssue`/`...ForProject` return
+  every attachment's storage key regardless of soft-delete state -- used to delete files on disk before a
+  permanent issue/project delete cascades through the database (there is no periodic orphan-file audit at
+  all, D105, so this is the only cleanup path for files whose row is about to disappear via
+  `ON DELETE CASCADE`).
+- New `src/infrastructure/storage/LocalAttachmentStorage`: a plain, non-virtual class (D15 -- no abstract
+  storage port/interface, so no S3-shaped extension point either), with `save`/`read`/`remove`/`sizeOf`
+  against a flat directory, keyed by the attachment's own UUID. Defends against path traversal even
+  though the key is always self-generated, never user input. Root directory is
+  `TICKETHUB_ATTACHMENTS_DIR` (default `./data/attachments`, added to `.gitignore`).
+- `Domain::validateAttachmentUpload` (D98): fixed 25MB/file, 20 attachments/issue, and a denylist of
+  common executable/script extensions -- no admin configuration, no MIME allow-list, no quotas, no
+  antivirus/DLP (all explicitly out of scope per D98's own "no admin configuration" answer).
+- `TicketService`: `uploadAttachment` (project-Member-or-above, matching every other issue write) computes
+  the SHA-256 at upload time (D105, never re-verified) and calls the storage class before the database
+  insert. `downloadAttachment`/`listAttachments` mirror comments' read-access rule (any authenticated
+  user, or anonymous if the installation toggle is on) -- no project-role check. `deleteAttachment` is
+  uploader-or-project-Admin-or-above -- no decision text addresses attachment deletion directly, so this
+  mirrors D83's comment edit/delete rule as the closest precedent. `listDeletedAttachments` implements
+  D102's fixed 90-day on-demand retention itself (unlike `listDeletedIssues`/`listDeletedProjects`, which
+  purge with a single `DELETE` entirely at the SQL layer): purging an attachment also means deleting its
+  file on disk, which the SQL-only `IDatabase` layer cannot do, so the age check and the file removal both
+  happen here, one layer up. `permanentlyDeleteIssue`/`permanentlyDeleteProject` were both extended to
+  collect every affected attachment's storage key and delete its file *before* the database cascade runs.
+- New routes: `GET`/`POST /api/issues/{key}/attachments` (list, and a `multipart/form-data` upload with a
+  single `file` part), `DELETE /api/issues/{key}/attachments/{id}`,
+  `GET /api/attachments/{id}/download` (not nested under `/issues/{key}` -- a download link, or an inline
+  `<img>`/`<audio>`/`<video>`/`<iframe>` preview `src`, only ever needs the attachment id, since it can be
+  referenced via `attachment://<id>` from any comment on the issue, not just its description),
+  `GET /api/attachments/deleted`, `POST /api/attachments/{id}/restore`,
+  `DELETE /api/attachments/{id}/permanent` (all three admin-only, matching the issue/project recycle
+  bins). The whole upload body is read into memory before `Domain::validateAttachmentUpload` runs (no
+  streaming/early-abort on an oversized request) -- an accepted V1 simplification, not something any
+  decision calls for.
+- `web/`: the issue drawer gained an "Attachments" section -- a sortable list (D101: name/size/date/
+  uploader/type, client-side, matching the "ad-hoc" philosophy used for issue filters), an "Attach files"
+  button plus a real drag-and-drop dropzone, and per-row delete (shown when the uploader matches the
+  current user or they're a global admin, the same "client-side approximation, server enforces the real
+  rule" pattern already used for comment edit/delete buttons). Clicking a file name toggles an inline
+  native-element preview for the four D99 kinds (`<img>` for images, `<iframe>` for PDF and text,
+  `<audio>`/`<video>` for the rest) or opens a new tab for anything else. The Markdown toolbar
+  (`attachMarkdownToolbar`) gained an optional third capability, wired up everywhere an issue key is
+  already known (both comment textareas, the issue-edit description) but deliberately left off the
+  create-issue form's description field, since no issue exists yet to attach a file to: a 📎 toolbar
+  button, real native drag-and-drop onto the textarea, and clipboard paste, all uploading and inserting
+  `![name](attachment://id)` (images) or `[name](attachment://id)` (everything else) at the cursor.
+  `renderMarkdownInline` gained real `![alt](url)` image-syntax support (it previously had none -- an
+  unescaped literal `!` followed by a plain link) and resolves `attachment://<id>` in both image and link
+  syntax to `/api/attachments/<id>/download`, validating the id shape first and leaving anything
+  malformed as inert literal text, the same "safe by construction" posture as the existing
+  `javascript:`-scheme guard. A new admin-only "Attachment recycle bin" nav item mirrors the audit log's
+  visibility pattern (hidden by default, shown only for global admins, re-hidden on logout) and lists
+  every deleted attachment across every issue (using the new `issueKey` field, since a raw internal UUID
+  would be meaningless here) with restore/permanent-delete actions.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green. New `sqlite_integration_tests` coverage: full CRUD (create with
+   a caller-supplied id, list, find, soft-delete/restore/permanent-delete, the tombstone semantics),
+   `listAttachmentStorageKeysForIssue`/`...ForProject` returning keys regardless of soft-delete state, and
+   rejection of an attachment on an unknown issue. New `authorization_integration_tests` coverage: upload
+   permission (project-Member-or-above), delete permission (uploader-or-project-Admin-or-above, with both
+   the "different member, not admin" rejection and the "global admin can delete anyone's" success case
+   explicitly asserted), the fixed 25MB and blocked-extension limits, and the full recycle-bin
+   authorization split (list/restore/permanent-delete all global-administrator-only). A first draft of two
+   of these authorization assertions used `locator...begin()`/`.end()`-style double-evaluation (calling
+   the same async listing method twice inside one `std::any_of`/`std::none_of` call, comparing iterators
+   from two different temporary vectors) -- caught immediately by a nonsensical failure and fixed by
+   binding the result to a local variable first.
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised
+   `PostgresDatabase`'s attachment methods directly against a throwaway `tickethub_attach_test_*`
+   database -- create/list/find/soft-delete/restore/permanent-delete, and both storage-key listing
+   methods. The first run failed with "inconsistent types deduced for parameter $1" because the INSERT
+   reused the same `$1` placeholder for both the `id` and `storage_key` columns (SQLite tolerates this;
+   PostgreSQL's prepared-statement type inference does not when the two columns have different declared
+   types) -- fixed by passing the id as two separate parameters. All cases passed after the fix; database
+   dropped afterward.
+5. Standalone Playwright/Chromium scripts, against a locally running server, SQLite, demo-seeded,
+   `TICKETHUB_ATTACHMENTS_DIR` pointed at a scratch directory:
+   - Uploaded a text file and an image via the "Attach files" button; confirmed both appear in the list
+     with correct name/size/uploader/date; toggled the image's inline preview open and closed and
+     confirmed a real `<img>` element appears/disappears; confirmed a `.exe` upload is rejected (a 400 from
+     the server, a toast shown, never added to the list); confirmed the sort control actually reorders the
+     visible rows; deleted an attachment and confirmed it's gone.
+   - Confirmed all four D99 preview kinds render the correct native element: PDF and plain text both as
+     `<iframe>`, audio as `<audio>`, video as `<video>` (each with a distinct fake file uploaded and its
+     preview toggled open).
+   - Confirmed real browser drag-and-drop (a synthetic `DataTransfer` dispatched as an actual `drop`
+     event, not just `setInputFiles`) works both on the attachment dropzone and directly onto a comment's
+     Markdown textarea, and that a real `paste` event with `clipboardData` also uploads and inserts a
+     reference. A first attempt at the paste case used Playwright's `dispatchEvent(selector, 'paste',
+     {clipboardData})` helper, which silently produced an event with `clipboardData` still `undefined`
+     inside the page (apparently Playwright only special-cases `dataTransfer` for drag events, not
+     `clipboardData` for clipboard events) -- fixed by constructing and dispatching a real
+     `new ClipboardEvent('paste', {clipboardData})` from inside `page.evaluate` instead, entirely within
+     the browser context.
+   - Attached a file through the comment editor's 📎 toolbar button, posted the comment, and confirmed the
+     rendered comment shows a real download link (with a 📎 marker) pointing at
+     `/api/attachments/<id>/download` -- i.e. that `attachment://<id>` references actually resolve when
+     rendered, not just when inserted.
+   - Confirmed the attachment recycle bin: hidden from a non-admin, visible and populated for a global
+     admin (showing the correct issue key via the new join), restore makes the attachment reappear in its
+     issue, and permanent delete empties the bin.
+   - A full regression re-run of the markdown/mentions/reactions/worklog/audit-log/comment-editing/
+     filter-widening/dashboard-personalization/board-WIP-limits browser tests against the same build
+     confirmed no regression. One dashboard-personalization assertion appeared to fail on a run late in a
+     long back-to-back sequence of a dozen browser scripts against the same long-lived dev server; a
+     targeted re-investigation with request/cookie logging showed the session switch and the underlying
+     data were both correct the whole time -- the script's `waitForSelector` was satisfied by a *stale*
+     element left over from the previous user's render (which persists until the next render actually
+     starts), and the next render was simply delayed under accumulated load from a dozen prior scripts'
+     SQLite traffic sharing one mutex-guarded connection. A longer explicit wait confirmed the dashboard
+     was correct throughout; this was test-harness latency, not an application defect, and is recorded
+     here precisely rather than glossed over.
+
+All checks passed. No committed test scripts, fixtures, or screenshots (scratchpad only).
+
+### What is still not built
+
+Phase 5 (Attachments and Kanban board) is now fully implemented -- every item in
+`docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5 list is done, closing out Milestone 2. Drag-and-drop *board*
+reordering (distinct from the drag-and-drop *attachment* upload built in this batch) remains optional UX
+polish, not required by D32 or D33. The next roadmap phase is Milestone 3 (REST API v1/export,
+backup/restore/upgrade).
+
 ## 2026-08-01 — Kanban board WIP limits (D32/D33): Phase 5 slice 3
 
 Third Phase 5 slice. Only the full attachments vertical (D15/D98-D105) remains. Drag-and-drop board

@@ -274,6 +274,27 @@ SELECT w.id, w.issue_id, u.id, u.display_name, u.email,
 FROM worklogs w JOIN users u ON u.id = w.author_user_id
 )SQL";
 
+Domain::Attachment readAttachment(PGresult* result, int row) {
+    Domain::Attachment attachment;
+    attachment.id = value(result, row, 0);
+    attachment.issueId = value(result, row, 1);
+    attachment.uploader = readUserSummary(result, row, 2);
+    attachment.fileName = value(result, row, 5);
+    attachment.contentType = value(result, row, 6);
+    attachment.byteSize = int64Value(result, row, 7);
+    attachment.sha256 = value(result, row, 8);
+    attachment.createdAt = value(result, row, 9);
+    attachment.deletedAt = optionalValue(result, row, 10);
+    attachment.issueKey = value(result, row, 11);
+    return attachment;
+}
+
+constexpr const char* AttachmentSelect = R"SQL(
+SELECT a.id, a.issue_id, u.id, u.display_name, u.email,
+       a.file_name, a.content_type, a.byte_size, a.sha256, a.created_at::text, a.deleted_at::text, i.issue_key
+FROM attachments a JOIN users u ON u.id = a.uploader_user_id JOIN issues i ON i.id = a.issue_id
+)SQL";
+
 Domain::AuditEvent readAuditEvent(PGresult* result, int row) {
     Domain::AuditEvent event;
     event.id = value(result, row, 0);
@@ -1951,6 +1972,124 @@ bool PostgresDatabase::permanentlyDeleteIssue(const std::string& issueKey) {
     auto result = execParams(connection.get(), "DELETE FROM issues WHERE issue_key = $1 AND deleted_at IS NOT NULL",
                              {issueKey}, "Permanently delete issue");
     return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+Domain::Attachment PostgresDatabase::createAttachment(const std::string& id,
+                                                      const std::string& issueKey,
+                                                      const std::string& uploaderUserId,
+                                                      const std::string& fileName,
+                                                      const std::string& contentType,
+                                                      const std::int64_t byteSize,
+                                                      const std::string& sha256) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    const std::string uploaderId = requireUserId(connection.get(), uploaderUserId);
+    execParams(connection.get(), R"SQL(
+INSERT INTO attachments(id, issue_id, uploader_user_id, file_name, content_type, byte_size, storage_key, sha256)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+)SQL",
+              {id, issueId, uploaderId, fileName, contentType, std::to_string(byteSize), id, sha256},
+              "Create attachment");
+
+    auto result = execParams(connection.get(), std::string(AttachmentSelect) + "WHERE a.id = $1", {id}, "Read created attachment");
+    if (PQntuples(result.get()) == 0) {
+        throw std::runtime_error("Failed to read back created attachment");
+    }
+    return readAttachment(result.get(), 0);
+}
+
+std::vector<Domain::Attachment> PostgresDatabase::listAttachments(const std::string& issueKey) {
+    auto connection = connect(connectionString_);
+    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    auto result = execParams(connection.get(),
+                             std::string(AttachmentSelect) + "WHERE a.issue_id = $1 AND a.deleted_at IS NULL ORDER BY a.created_at",
+                             {issueId}, "List attachments");
+    std::vector<Domain::Attachment> attachments;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        attachments.push_back(readAttachment(result.get(), row));
+    }
+    return attachments;
+}
+
+std::optional<Domain::Attachment> PostgresDatabase::findAttachmentById(const std::string& attachmentId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(AttachmentSelect) + "WHERE a.id = $1", {attachmentId}, "Find attachment");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return readAttachment(result.get(), 0);
+}
+
+bool PostgresDatabase::softDeleteAttachment(const std::string& attachmentId, const std::string& actorUserId) {
+    auto connection = connect(connectionString_);
+    const std::string actorId = requireUserId(connection.get(), actorUserId);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE attachments SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = $1
+WHERE id = $2 AND deleted_at IS NULL
+)SQL",
+                             {actorId, attachmentId}, "Soft delete attachment");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool PostgresDatabase::restoreAttachment(const std::string& attachmentId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE attachments SET deleted_at = NULL, deleted_by_user_id = NULL
+WHERE id = $1 AND deleted_at IS NOT NULL
+)SQL",
+                             {attachmentId}, "Restore attachment");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::vector<Domain::Attachment> PostgresDatabase::listDeletedAttachments() {
+    auto connection = connect(connectionString_);
+    auto result = exec(connection.get(), std::string(AttachmentSelect) + "WHERE a.deleted_at IS NOT NULL ORDER BY a.deleted_at DESC",
+                       "List deleted attachments");
+    std::vector<Domain::Attachment> attachments;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        attachments.push_back(readAttachment(result.get(), row));
+    }
+    return attachments;
+}
+
+bool PostgresDatabase::permanentlyDeleteAttachment(const std::string& attachmentId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "DELETE FROM attachments WHERE id = $1 AND deleted_at IS NOT NULL",
+                             {attachmentId}, "Permanently delete attachment");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::vector<std::string> PostgresDatabase::listAttachmentStorageKeysForIssue(const std::string& issueKey) {
+    auto connection = connect(connectionString_);
+    // Deliberately does not use lookupIssueId (which excludes soft-deleted
+    // issues): this is called right before a permanent delete, at which
+    // point the issue is expected to already be soft-deleted.
+    auto result = execParams(connection.get(), R"SQL(
+SELECT a.storage_key FROM attachments a JOIN issues i ON i.id = a.issue_id
+WHERE i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1)
+)SQL",
+                             {issueKey}, "List attachment storage keys for issue");
+    std::vector<std::string> keys;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        keys.push_back(value(result.get(), row, 0));
+    }
+    return keys;
+}
+
+std::vector<std::string> PostgresDatabase::listAttachmentStorageKeysForProject(const std::string& projectKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT a.storage_key FROM attachments a
+JOIN issues i ON i.id = a.issue_id
+JOIN projects p ON p.id = i.project_id
+WHERE p.project_key = $1
+)SQL",
+                             {projectKey}, "List attachment storage keys for project");
+    std::vector<std::string> keys;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        keys.push_back(value(result.get(), row, 0));
+    }
+    return keys;
 }
 
 } // namespace TicketHub::Infrastructure::Database

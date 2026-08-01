@@ -410,6 +410,63 @@ int main() {
         require(scalarInt(databasePath, "SELECT COUNT(*) FROM worklogs WHERE id = '" + worklog.id + "'") == 1,
                "the soft-deleted worklog's row still physically exists");
 
+        // --- Attachments (Phase 5, D15/D98-D105) ---
+        {
+            const auto attachment = database.createAttachment("60000000-0000-4000-8000-0000000000a1", created.key,
+                demoUserId, "notes.txt", "text/plain", 11, "deadbeef");
+            require(attachment.id == "60000000-0000-4000-8000-0000000000a1", "createAttachment uses the caller-supplied id");
+            require(attachment.fileName == "notes.txt" && attachment.contentType == "text/plain",
+                   "file name and content type round-trip");
+            require(attachment.byteSize == 11, "byte size round-trips");
+            require(attachment.sha256 == "deadbeef", "sha256 round-trips");
+            require(!attachment.deletedAt.has_value(), "a freshly created attachment has no deletedAt");
+
+            require(database.listAttachments(created.key).size() == 1, "the attachment appears in the issue's list");
+
+            const auto found = database.findAttachmentById(attachment.id);
+            require(found.has_value() && found->fileName == "notes.txt", "findAttachmentById resolves the attachment");
+            require(!database.findAttachmentById("00000000-0000-4000-8000-00000000dead").has_value(),
+                   "findAttachmentById returns nullopt for an unknown id");
+
+            require(database.softDeleteAttachment(attachment.id, demoUserId), "an attachment can be soft-deleted");
+            require(database.listAttachments(created.key).empty(),
+                   "a soft-deleted attachment no longer appears in the issue's list");
+            require(!database.softDeleteAttachment(attachment.id, demoUserId), "soft-deleting again is a no-op");
+
+            const auto deleted = database.listDeletedAttachments();
+            require(deleted.size() == 1 && deleted[0].id == attachment.id, "the soft-deleted attachment appears in the recycle bin");
+            require(deleted[0].deletedAt.has_value(), "a recycle-bin attachment reports its deletedAt");
+
+            require(database.restoreAttachment(attachment.id), "the attachment can be restored");
+            require(database.listAttachments(created.key).size() == 1, "a restored attachment reappears in the issue's list");
+            require(!database.restoreAttachment(attachment.id), "restoring an already-active attachment is a no-op");
+
+            require(database.softDeleteAttachment(attachment.id, demoUserId), "re-deleted for the permanent-delete test");
+            require(database.permanentlyDeleteAttachment(attachment.id), "a soft-deleted attachment can be permanently deleted");
+            require(!database.permanentlyDeleteAttachment(attachment.id),
+                   "permanently deleting an already-gone attachment returns false");
+            require(!database.findAttachmentById(attachment.id).has_value(),
+                   "a permanently deleted attachment is truly gone, unlike soft delete");
+
+            const auto secondAttachment = database.createAttachment("60000000-0000-4000-8000-0000000000a2", created.key,
+                demoUserId, "diagram.png", "image/png", 2048, "cafef00d");
+            const auto keysForIssue = database.listAttachmentStorageKeysForIssue(created.key);
+            require(keysForIssue.size() == 1 && keysForIssue[0] == secondAttachment.id,
+                   "listAttachmentStorageKeysForIssue returns every attachment's storage key regardless of soft-delete state");
+
+            const auto keysForProject = database.listAttachmentStorageKeysForProject("TH");
+            require(std::find(keysForProject.begin(), keysForProject.end(), secondAttachment.id) != keysForProject.end(),
+                   "listAttachmentStorageKeysForProject includes attachments from every issue in the project");
+
+            bool unknownIssueRejected = false;
+            try {
+                database.createAttachment("60000000-0000-4000-8000-0000000000a3", "TH-9999", demoUserId, "x.txt", "text/plain", 1, "aa");
+            } catch (const std::invalid_argument&) {
+                unknownIssueRejected = true;
+            }
+            require(unknownIssueRejected, "creating an attachment on an unknown issue is rejected");
+        }
+
         // --- Simple append-only admin/security audit log (D23) ---
         database.recordAuditEvent("admin", "project.permanently_deleted", demoUserId, "project", "TH", std::nullopt);
         database.recordAuditEvent("auth", "login.failed", std::nullopt, "user", alexUserId, std::nullopt);

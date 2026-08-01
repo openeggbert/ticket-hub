@@ -101,6 +101,15 @@ function escapeHtml(value) {
 // wrong (unlike rendering a full Markdown engine's output, which would need
 // one). Link URLs are restricted to http(s)/mailto; anything else is left
 // as literal `[text](url)` text instead of becoming a clickable link.
+// `attachment://<id>` (D100) resolves to a real download/preview URL only
+// when the id looks like the UUID this app always generates -- anything
+// else is left as literal text, the same "safe by construction" posture
+// applied to javascript:-scheme links below.
+function attachmentDownloadUrl(url) {
+  const match = /^attachment:\/\/([a-zA-Z0-9-]+)$/.exec(url);
+  return match ? `/api/attachments/${match[1]}/download` : null;
+}
+
 function renderMarkdownInline(text) {
   // Bold/italic use only `**`/`*` (not `__`/`_`) -- underscore delimiters
   // are ambiguous with snake_case/dunder identifiers (e.g. `__init__`),
@@ -110,8 +119,16 @@ function renderMarkdownInline(text) {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label, url) =>
-      /^(https?:|mailto:)/i.test(url) ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>` : match);
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (match, alt, url) => {
+      const attachmentUrl = attachmentDownloadUrl(url);
+      if (attachmentUrl) return `<img src="${attachmentUrl}" alt="${alt}" class="markdown-attachment-image">`;
+      return /^https?:/i.test(url) ? `<img src="${url}" alt="${alt}" class="markdown-attachment-image">` : match;
+    })
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label, url) => {
+      const attachmentUrl = attachmentDownloadUrl(url);
+      if (attachmentUrl) return `<a href="${attachmentUrl}" target="_blank" rel="noopener noreferrer">📎 ${label}</a>`;
+      return /^(https?:|mailto:)/i.test(url) ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>` : match;
+    });
 }
 
 function renderMarkdown(raw) {
@@ -213,7 +230,21 @@ function prefixLines(textarea, prefix) {
   textarea.focus();
 }
 
-function attachMarkdownToolbar(textarea) {
+function insertAtCursor(textarea, text) {
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+  const cursor = start + text.length;
+  textarea.setSelectionRange(cursor, cursor);
+  textarea.focus();
+}
+
+// Full upload + drag/drop + paste support in the Markdown editor (D100),
+// referencing `attachment://<id>` (resolved at render time by
+// renderMarkdown/renderMarkdownInline). Only wired up when `issueKey` is
+// known -- the create-issue form has no issue yet to attach files to, so
+// its description textarea gets the toolbar without this capability.
+function attachMarkdownToolbar(textarea, issueKey = null) {
   const toolbar = document.createElement('div');
   toolbar.className = 'markdown-toolbar';
   toolbar.innerHTML = `
@@ -224,8 +255,44 @@ function attachMarkdownToolbar(textarea) {
     <button type="button" data-md="ul" title="Bulleted list">•</button>
     <button type="button" data-md="ol" title="Numbered list">1.</button>
     <button type="button" data-md="quote" title="Quote">❝</button>
+    ${issueKey ? '<button type="button" data-md="attach" title="Attach a file">📎</button>' : ''}
     <button type="button" class="markdown-preview-toggle" data-md="preview" title="Toggle preview">👁 Preview</button>`;
   textarea.insertAdjacentElement('beforebegin', toolbar);
+
+  const insertAttachmentReference = async file => {
+    try {
+      const attachment = await uploadAttachmentFile(issueKey, file);
+      const isImage = attachment.contentType.startsWith('image/');
+      insertAtCursor(textarea, `${isImage ? '!' : ''}[${attachment.fileName}](attachment://${attachment.id})`);
+    } catch (error) {
+      showToast(`${file.name}: ${error.message}`);
+    }
+  };
+
+  if (issueKey) {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.hidden = true;
+    textarea.insertAdjacentElement('afterend', fileInput);
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length) insertAttachmentReference(fileInput.files[0]);
+      fileInput.value = '';
+    });
+    toolbar.querySelector('[data-md="attach"]').addEventListener('click', () => fileInput.click());
+
+    textarea.addEventListener('dragover', event => event.preventDefault());
+    textarea.addEventListener('drop', event => {
+      event.preventDefault();
+      if (event.dataTransfer.files.length) insertAttachmentReference(event.dataTransfer.files[0]);
+    });
+    textarea.addEventListener('paste', event => {
+      const file = [...(event.clipboardData?.files || [])][0];
+      if (file) {
+        event.preventDefault();
+        insertAttachmentReference(file);
+      }
+    });
+  }
 
   const previewPane = document.createElement('div');
   previewPane.className = 'markdown-preview hidden';
@@ -296,6 +363,62 @@ function parseDurationToSeconds(text) {
   return (Number(match[1] || 0) * 3600) + (Number(match[2] || 0) * 60);
 }
 
+// Attachment previews (D99): only these four kinds get a native-element
+// preview (img / iframe for pdf+text / audio / video); everything else is
+// download-only.
+function attachmentPreviewKind(contentType) {
+  if (contentType.startsWith('image/')) return 'image';
+  if (contentType === 'application/pdf') return 'pdf';
+  if (contentType.startsWith('audio/')) return 'audio';
+  if (contentType.startsWith('video/')) return 'video';
+  if (contentType.startsWith('text/')) return 'text';
+  return null;
+}
+
+function attachmentIcon(contentType) {
+  const kind = attachmentPreviewKind(contentType);
+  return { image: '🖼', pdf: '📄', audio: '🎵', video: '🎬', text: '📝' }[kind] || '📎';
+}
+
+function formatByteSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// D101: "sortable list (name/size/date/author/type)" -- a client-side
+// concern, not a server-side ordering option (the server always returns
+// oldest-first).
+function sortAttachments(attachments, sortBy) {
+  const sorted = [...attachments];
+  const comparators = {
+    name: (a, b) => a.fileName.localeCompare(b.fileName),
+    size: (a, b) => a.byteSize - b.byteSize,
+    date: (a, b) => a.createdAt.localeCompare(b.createdAt),
+    author: (a, b) => a.uploader.displayName.localeCompare(b.uploader.displayName),
+    type: (a, b) => a.contentType.localeCompare(b.contentType)
+  };
+  sorted.sort(comparators[sortBy] || comparators.date);
+  return sorted;
+}
+
+// Uploads via a real multipart/form-data POST, bypassing the shared api()
+// helper (which always forces a JSON Content-Type) so the browser can set
+// its own multipart boundary.
+async function uploadAttachmentFile(issueKey, file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const csrfToken = getCookie('th_csrf');
+  const response = await fetch(`/api/issues/${encodeURIComponent(issueKey)}/attachments`, {
+    method: 'POST',
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+    body: formData
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Upload failed (${response.status})`);
+  return payload;
+}
+
 function getCookie(name) {
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
   return match ? decodeURIComponent(match[1]) : null;
@@ -333,6 +456,7 @@ function showLoginScreen() {
   Object.assign(state, initialState());
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === 'dashboard'));
   document.querySelector('#nav-audit').classList.add('hidden');
+  document.querySelector('#nav-attachment-bin').classList.add('hidden');
   appShell.classList.add('hidden');
   loginScreen.classList.remove('hidden');
   loginForm.querySelector('input[name="email"]').focus();
@@ -349,8 +473,10 @@ function renderCurrentUser() {
   document.querySelector('#current-user-avatar').textContent = initials(principal.displayName);
   document.querySelector('#current-user-name').textContent = principal.displayName;
   document.querySelector('#current-user-email').textContent = principal.email;
-  // The audit log (D23) is global-administrator-only, like the recycle bins.
+  // The audit log (D23) and the attachment recycle bin (D101/D102) are both
+  // global-administrator-only, like the issue/project recycle bins.
   document.querySelector('#nav-audit').classList.toggle('hidden', !principal.isAdmin);
+  document.querySelector('#nav-attachment-bin').classList.toggle('hidden', !principal.isAdmin);
 }
 
 // Checks the existing session cookie (if any) without ever showing the
@@ -654,6 +780,50 @@ async function renderAuditLog() {
         </table>
       </div>
     </div>`;
+}
+
+// Attachment recycle bin (D101/D102): global-administrator-only, fixed
+// 90-day on-demand retention (checked server-side on every fetch, not a
+// background job). Spans every issue, so each row shows the issue key
+// (resolved server-side via a join) rather than requiring the admin to
+// already be looking at a specific issue.
+async function renderAttachmentRecycleBin() {
+  content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  const { items } = await api('/api/attachments/deleted');
+  content.innerHTML = `
+    ${pageHeader('Attachment recycle bin', 'Deleted attachments, retained for 90 days.', 'Administration')}
+    <div class="panel">
+      <div class="panel-header"><h2>Deleted attachments</h2><span class="eyebrow">${items.length} shown</span></div>
+      <div style="overflow-x:auto">
+        <table class="issue-table">
+          <thead><tr><th>File</th><th>Issue</th><th>Uploader</th><th>Deleted</th><th>Actions</th></tr></thead>
+          <tbody>${items.length ? items.map(attachment => `
+            <tr>
+              <td>${attachmentIcon(attachment.contentType)} ${escapeHtml(attachment.fileName)}</td>
+              <td><span class="issue-key" data-issue-key="${escapeHtml(attachment.issueKey)}">${escapeHtml(attachment.issueKey)}</span></td>
+              <td>${escapeHtml(attachment.uploader.displayName)}</td>
+              <td>${escapeHtml(relativeDate(attachment.createdAt))}</td>
+              <td><div class="project-card-actions"><button type="button" class="secondary-button" data-restore-attachment="${escapeHtml(attachment.id)}">Restore</button><button type="button" class="secondary-button" data-permanent-attachment="${escapeHtml(attachment.id)}">Delete permanently</button></div></td>
+            </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state">The attachment recycle bin is empty.</div></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+  bindIssueLinks();
+  document.querySelectorAll('[data-restore-attachment]').forEach(button => button.addEventListener('click', async () => {
+    try {
+      await api(`/api/attachments/${encodeURIComponent(button.dataset.restoreAttachment)}/restore`, { method: 'POST' });
+      showToast('Attachment restored');
+      await renderAttachmentRecycleBin();
+    } catch (error) { showToast(error.message); }
+  }));
+  document.querySelectorAll('[data-permanent-attachment]').forEach(button => button.addEventListener('click', async () => {
+    try {
+      await api(`/api/attachments/${encodeURIComponent(button.dataset.permanentAttachment)}/permanent`, { method: 'DELETE' });
+      showToast('Attachment permanently deleted');
+      await renderAttachmentRecycleBin();
+    } catch (error) { showToast(error.message); }
+  }));
 }
 
 async function fetchIssues() {
@@ -1083,6 +1253,7 @@ async function renderCurrentView() {
     else if (state.view === 'board') await renderBoard();
     else if (state.view === 'issues') await renderIssues();
     else if (state.view === 'audit') await renderAuditLog();
+    else if (state.view === 'attachment-bin') await renderAttachmentRecycleBin();
     else await renderProjects();
   } catch (error) {
     showError(error);
@@ -1139,15 +1310,17 @@ async function openIssue(issueKey) {
   drawerBackdrop.classList.remove('hidden');
   issueDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   try {
-    const [issue, comments, links, watchers, voters, worklogs] = await Promise.all([
+    const [issue, comments, links, watchers, voters, worklogs, attachments] = await Promise.all([
       api(`/api/issues/${encodeURIComponent(issueKey)}`),
       api(`/api/issues/${encodeURIComponent(issueKey)}/comments`),
       api(`/api/issues/${encodeURIComponent(issueKey)}/links`),
       api(`/api/issues/${encodeURIComponent(issueKey)}/watchers`),
       api(`/api/issues/${encodeURIComponent(issueKey)}/voters`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/worklogs`)
+      api(`/api/issues/${encodeURIComponent(issueKey)}/worklogs`),
+      api(`/api/issues/${encodeURIComponent(issueKey)}/attachments`)
     ]);
     state.currentIssue = issue;
+    let attachmentSort = 'date';
 
     // Fixed emoji reactions (D84): one reactions list per comment, fetched
     // alongside everything else -- fine at demo scale, mirrors the
@@ -1215,6 +1388,37 @@ async function openIssue(issueKey) {
                   <input name="comment" placeholder="What did you work on? (optional)">
                   <button class="secondary-button" type="submit">Log time</button>
                 </form>
+              </section>
+              <section class="drawer-section">
+                <h3>Attachments</h3>
+                <div class="attachment-toolbar">
+                  <span class="eyebrow">${attachments.items.length} file${attachments.items.length === 1 ? '' : 's'}</span>
+                  <label>Sort by <select id="attachment-sort">
+                    <option value="date" ${attachmentSort === 'date' ? 'selected' : ''}>Date</option>
+                    <option value="name" ${attachmentSort === 'name' ? 'selected' : ''}>Name</option>
+                    <option value="size" ${attachmentSort === 'size' ? 'selected' : ''}>Size</option>
+                    <option value="author" ${attachmentSort === 'author' ? 'selected' : ''}>Uploader</option>
+                    <option value="type" ${attachmentSort === 'type' ? 'selected' : ''}>Type</option>
+                  </select></label>
+                </div>
+                <div class="attachment-list" id="attachment-list">${sortAttachments(attachments.items, attachmentSort).map(attachment => {
+                  const canDelete = attachment.uploader.id === state.principal?.userId || state.principal?.isAdmin;
+                  const previewKind = attachmentPreviewKind(attachment.contentType);
+                  return `
+                  <div>
+                    <div class="attachment-row" data-attachment-id="${escapeHtml(attachment.id)}">
+                      <span>${attachmentIcon(attachment.contentType)}</span>
+                      <button type="button" class="attachment-name" data-preview-attachment="${escapeHtml(attachment.id)}" data-preview-kind="${previewKind || ''}" title="${previewKind ? 'Click to preview' : 'Click to download'}">${escapeHtml(attachment.fileName)}</button>
+                      <span class="attachment-meta">${formatByteSize(attachment.byteSize)}</span>
+                      <span class="attachment-meta">${escapeHtml(attachment.uploader.displayName)} · ${escapeHtml(relativeDate(attachment.createdAt))}</span>
+                      ${canDelete ? `<button type="button" class="icon-button" data-delete-attachment="${escapeHtml(attachment.id)}" aria-label="Delete attachment">×</button>` : '<span></span>'}
+                    </div>
+                    <div class="attachment-preview hidden" id="attachment-preview-${escapeHtml(attachment.id)}"></div>
+                  </div>`;
+                }).join('') || '<div class="empty-state">No attachments yet.</div>'}</div>
+                <input type="file" id="attachment-file-input" multiple hidden>
+                <button type="button" class="secondary-button" id="attachment-upload-button">📎 Attach files</button>
+                <div class="attachment-dropzone" id="attachment-dropzone">Drag and drop files here, or use "Attach files" above (max 25MB each, 20 per issue)</div>
               </section>
               <section class="drawer-section">
                 <h3>Comments</h3>
@@ -1396,7 +1600,68 @@ async function openIssue(issueKey) {
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
       }));
-      attachMarkdownToolbar(document.querySelector('#comment-form textarea[name=body]'));
+
+      document.querySelector('#attachment-sort').addEventListener('change', event => {
+        attachmentSort = event.target.value;
+        render(editing);
+      });
+      document.querySelectorAll('[data-preview-attachment]').forEach(button => button.addEventListener('click', () => {
+        const id = button.dataset.previewAttachment;
+        const kind = button.dataset.previewKind;
+        const container = document.querySelector(`#attachment-preview-${CSS.escape(id)}`);
+        if (!kind) {
+          window.open(`/api/attachments/${encodeURIComponent(id)}/download`, '_blank');
+          return;
+        }
+        if (!container.classList.contains('hidden')) {
+          container.classList.add('hidden');
+          container.innerHTML = '';
+          return;
+        }
+        const url = `/api/attachments/${encodeURIComponent(id)}/download`;
+        const markup = {
+          image: `<img src="${url}" alt="">`,
+          pdf: `<iframe src="${url}" title="PDF preview"></iframe>`,
+          text: `<iframe src="${url}" title="Text preview"></iframe>`,
+          audio: `<audio controls src="${url}"></audio>`,
+          video: `<video controls src="${url}"></video>`
+        }[kind];
+        container.innerHTML = markup || '';
+        container.classList.remove('hidden');
+      }));
+      document.querySelectorAll('[data-delete-attachment]').forEach(button => button.addEventListener('click', async () => {
+        try {
+          await api(`/api/issues/${encodeURIComponent(issue.key)}/attachments/${encodeURIComponent(button.dataset.deleteAttachment)}`, { method: 'DELETE' });
+          showToast('Attachment deleted');
+          await openIssue(issue.key);
+        } catch (error) { showToast(error.message); }
+      }));
+      const uploadFiles = async files => {
+        for (const file of files) {
+          try {
+            await uploadAttachmentFile(issue.key, file);
+          } catch (error) {
+            showToast(`${file.name}: ${error.message}`);
+          }
+        }
+        await openIssue(issue.key);
+      };
+      document.querySelector('#attachment-upload-button').addEventListener('click', () => {
+        document.querySelector('#attachment-file-input').click();
+      });
+      document.querySelector('#attachment-file-input').addEventListener('change', event => {
+        if (event.target.files.length) uploadFiles([...event.target.files]);
+      });
+      const dropzone = document.querySelector('#attachment-dropzone');
+      dropzone.addEventListener('dragover', event => { event.preventDefault(); dropzone.classList.add('drag-over'); });
+      dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+      dropzone.addEventListener('drop', event => {
+        event.preventDefault();
+        dropzone.classList.remove('drag-over');
+        if (event.dataTransfer.files.length) uploadFiles([...event.dataTransfer.files]);
+      });
+
+      attachMarkdownToolbar(document.querySelector('#comment-form textarea[name=body]'), issue.key);
       attachMentionAutocomplete(document.querySelector('#comment-form textarea[name=body]'));
       document.querySelector('#comment-form').addEventListener('submit', async event => {
         event.preventDefault();
@@ -1435,7 +1700,7 @@ async function openIssue(issueKey) {
             <button type="button" class="secondary-button" id="comment-edit-cancel">Cancel</button>
             <button type="button" class="primary-button" id="comment-edit-save">Save</button>
           </div>`;
-        attachMarkdownToolbar(article.querySelector('.comment-edit-textarea'));
+        attachMarkdownToolbar(article.querySelector('.comment-edit-textarea'), issue.key);
         attachMentionAutocomplete(article.querySelector('.comment-edit-textarea'));
         article.querySelector('#comment-edit-cancel').addEventListener('click', () => openIssue(issue.key));
         article.querySelector('#comment-edit-save').addEventListener('click', async () => {
@@ -1453,7 +1718,7 @@ async function openIssue(issueKey) {
       }));
 
       if (editing) {
-        attachMarkdownToolbar(document.querySelector('#edit-description'));
+        attachMarkdownToolbar(document.querySelector('#edit-description'), issue.key);
         document.querySelector('#edit-cancel').addEventListener('click', () => render(false));
         document.querySelector('#edit-save').addEventListener('click', async () => {
           const errorElement = document.querySelector('#edit-error');
