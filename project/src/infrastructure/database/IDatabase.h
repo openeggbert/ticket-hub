@@ -178,6 +178,21 @@ public:
                                                         std::optional<std::int64_t> expectedVersion = std::nullopt) = 0;
     virtual bool deleteWorklog(const std::string& worklogId, const std::string& actorUserId) = 0;
 
+    // --- Simple append-only admin/security audit log (Phase 4, D23) ---
+    // Fire-and-forget: the caller does not need the created row back, so
+    // this returns void rather than reading it back (unlike
+    // createNotification, whose result the notification list feature reads
+    // immediately). `listAuditEvents` is newest-first, capped by `limit`
+    // (there is no pagination, filtering, export, or configurable
+    // retention -- rows are simply never purged).
+    virtual void recordAuditEvent(const std::string& category,
+                                  const std::string& action,
+                                  std::optional<std::string> actorUserId,
+                                  std::optional<std::string> targetType,
+                                  std::optional<std::string> targetId,
+                                  std::optional<std::string> details) = 0;
+    virtual std::vector<Domain::AuditEvent> listAuditEvents(int limit) = 0;
+
     virtual Domain::DashboardStats dashboardStats() = 0;
 
     // --- Manual ordering (Phase 3, D31) ---

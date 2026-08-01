@@ -325,6 +325,7 @@ function showToast(message) {
 function showLoginScreen() {
   Object.assign(state, initialState());
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === 'dashboard'));
+  document.querySelector('#nav-audit').classList.add('hidden');
   appShell.classList.add('hidden');
   loginScreen.classList.remove('hidden');
   loginForm.querySelector('input[name="email"]').focus();
@@ -341,6 +342,8 @@ function renderCurrentUser() {
   document.querySelector('#current-user-avatar').textContent = initials(principal.displayName);
   document.querySelector('#current-user-name').textContent = principal.displayName;
   document.querySelector('#current-user-email').textContent = principal.email;
+  // The audit log (D23) is global-administrator-only, like the recycle bins.
+  document.querySelector('#nav-audit').classList.toggle('hidden', !principal.isAdmin);
 }
 
 // Checks the existing session cookie (if any) without ever showing the
@@ -589,6 +592,34 @@ async function renderDashboard() {
     </div>
     ${tablePanel(stats.recentIssues, 'Recently active issues')}`;
   bindIssueLinks();
+}
+
+// Simple append-only admin/security audit log (D23): global-administrator-
+// only, read-only, no filtering/export/pagination -- just the newest 200
+// events the server already caps the response to.
+async function renderAuditLog() {
+  content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  const { items } = await api('/api/admin/audit-events');
+  content.innerHTML = `
+    ${pageHeader('Audit log', 'Append-only record of admin and security events. Never purged or exported.', 'Administration')}
+    <div class="panel">
+      <div class="panel-header"><h2>Events</h2><span class="eyebrow">${items.length} shown</span></div>
+      <div style="overflow-x:auto">
+        <table class="issue-table">
+          <thead><tr><th>When</th><th>Category</th><th>Action</th><th>Actor</th><th>Target</th><th>Details</th></tr></thead>
+          <tbody>${items.length ? items.map(event => `
+            <tr>
+              <td>${escapeHtml(relativeDate(event.createdAt))}</td>
+              <td><span class="label-chip">${escapeHtml(event.category)}</span></td>
+              <td>${escapeHtml(event.action)}</td>
+              <td>${event.actor ? escapeHtml(event.actor.displayName) : '<span class="assignee-cell">System</span>'}</td>
+              <td>${event.targetType ? `${escapeHtml(event.targetType)}${event.targetId ? `: ${escapeHtml(event.targetId)}` : ''}` : ''}</td>
+              <td>${event.details ? escapeHtml(event.details) : ''}</td>
+            </tr>`).join('') : '<tr><td colspan="6"><div class="empty-state">No audit events recorded yet.</div></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
 async function fetchIssues() {
@@ -927,6 +958,7 @@ async function renderCurrentView() {
     if (state.view === 'dashboard') await renderDashboard();
     else if (state.view === 'board') await renderBoard();
     else if (state.view === 'issues') await renderIssues();
+    else if (state.view === 'audit') await renderAuditLog();
     else await renderProjects();
   } catch (error) {
     showError(error);

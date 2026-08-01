@@ -2,6 +2,7 @@
 #include "domain/Errors.h"
 #include "infrastructure/database/SqliteDatabase.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -207,6 +208,25 @@ int main() {
         noHandle.password = "correct horse battery staple";
         const auto userWithoutHandle = auth.createUser(noHandle);
         require(!userWithoutHandle.handle.has_value(), "the handle remains optional -- omitting it is not an error");
+    }
+
+    // --- Simple append-only admin/security audit log (D23) ---
+    // Every login-failed/login-blocked/user-created event from the blocks
+    // above should already have been recorded by this point.
+    {
+        const auto events = database->listAuditEvents(500);
+        require(std::any_of(events.begin(), events.end(),
+                            [](const auto& e) { return e.category == "auth" && e.action == "login.failed"; }),
+               "a failed login records an auth/login.failed audit event");
+        require(std::any_of(events.begin(), events.end(),
+                            [](const auto& e) { return e.category == "auth" && e.action == "login.blocked"; }),
+               "a blocked (locked-out) login records an auth/login.blocked audit event");
+        require(std::any_of(events.begin(), events.end(),
+                            [](const auto& e) {
+                                return e.category == "identity" && e.action == "user.created" && !e.actor.has_value();
+                            }),
+               "a CLI-driven user creation records an identity/user.created event with no actor "
+               "(create-user runs outside any web session)");
     }
 
     fs::remove(databasePath, removeError);

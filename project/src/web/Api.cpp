@@ -111,6 +111,19 @@ crow::json::wvalue commentJson(const Domain::Comment& comment) {
     return json;
 }
 
+crow::json::wvalue auditEventJson(const Domain::AuditEvent& event) {
+    crow::json::wvalue json;
+    json["id"] = event.id;
+    json["category"] = event.category;
+    json["action"] = event.action;
+    json["actor"] = event.actor ? userJson(*event.actor) : crow::json::wvalue(nullptr);
+    json["targetType"] = event.targetType ? crow::json::wvalue(*event.targetType) : crow::json::wvalue(nullptr);
+    json["targetId"] = event.targetId ? crow::json::wvalue(*event.targetId) : crow::json::wvalue(nullptr);
+    json["details"] = event.details ? crow::json::wvalue(*event.details) : crow::json::wvalue(nullptr);
+    json["createdAt"] = event.createdAt;
+    return json;
+}
+
 crow::json::wvalue worklogJson(const Domain::Worklog& worklog) {
     crow::json::wvalue json;
     json["id"] = worklog.id;
@@ -1506,6 +1519,29 @@ void registerApiRoutes(crow::SimpleApp& app,
             crow::json::wvalue body;
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Simple append-only admin/security audit log (D23): global-admin-only,
+    // like the recycle bins. No filtering/export/pagination -- just a
+    // capped, newest-first read.
+    CROW_ROUTE(app, "/api/admin/audit-events")([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& event : service->listAuditEvents(*principal)) {
+                items.emplace_back(auditEventJson(event));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

@@ -274,6 +274,29 @@ SELECT w.id, w.issue_id, u.id, u.display_name, u.email,
 FROM worklogs w JOIN users u ON u.id = w.author_user_id
 )SQL";
 
+Domain::AuditEvent readAuditEvent(PGresult* result, int row) {
+    Domain::AuditEvent event;
+    event.id = value(result, row, 0);
+    event.category = value(result, row, 1);
+    event.action = value(result, row, 2);
+    if (PQgetisnull(result, row, 3) == 0) {
+        event.actor = readUserSummary(result, row, 3);
+    }
+    event.targetType = optionalValue(result, row, 6);
+    event.targetId = optionalValue(result, row, 7);
+    event.details = optionalValue(result, row, 8);
+    event.createdAt = value(result, row, 9);
+    return event;
+}
+
+// LEFT JOIN, not JOIN: actor_user_id may be NULL (a failed/blocked login
+// attempt, or CLI-driven account creation, has no authenticated actor).
+constexpr const char* AuditEventSelect = R"SQL(
+SELECT a.id, a.category, a.action, u.id, u.display_name, u.email,
+       a.target_type, a.target_id, a.details, a.created_at::text
+FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id
+)SQL";
+
 } // namespace
 
 PostgresDatabase::PostgresDatabase(std::string connectionString,
@@ -1590,6 +1613,33 @@ WHERE id = $2 AND deleted_at IS NULL
                              {actorId, worklogId},
                              "Delete worklog");
     return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+void PostgresDatabase::recordAuditEvent(const std::string& category,
+                                        const std::string& action,
+                                        const std::optional<std::string> actorUserId,
+                                        const std::optional<std::string> targetType,
+                                        const std::optional<std::string> targetId,
+                                        const std::optional<std::string> details) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), R"SQL(
+INSERT INTO audit_events(id, category, action, actor_user_id, target_type, target_id, details, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+)SQL",
+               {Common::uuidV4(), category, action, actorUserId, targetType, targetId, details},
+               "Insert audit event");
+}
+
+std::vector<Domain::AuditEvent> PostgresDatabase::listAuditEvents(const int limit) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(AuditEventSelect) + "ORDER BY a.created_at DESC LIMIT $1",
+                             {std::to_string(limit)}, "List audit events");
+    std::vector<Domain::AuditEvent> events;
+    const int rowCount = PQntuples(result.get());
+    for (int row = 0; row < rowCount; ++row) {
+        events.push_back(readAuditEvent(result.get(), row));
+    }
+    return events;
 }
 
 Domain::DashboardStats PostgresDatabase::dashboardStats() {

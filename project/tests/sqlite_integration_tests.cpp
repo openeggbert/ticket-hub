@@ -343,6 +343,23 @@ int main() {
         require(scalarInt(databasePath, "SELECT COUNT(*) FROM worklogs WHERE id = '" + worklog.id + "'") == 1,
                "the soft-deleted worklog's row still physically exists");
 
+        // --- Simple append-only admin/security audit log (D23) ---
+        database.recordAuditEvent("admin", "project.permanently_deleted", demoUserId, "project", "TH", std::nullopt);
+        database.recordAuditEvent("auth", "login.failed", std::nullopt, "user", alexUserId, std::nullopt);
+        const auto auditEvents = database.listAuditEvents(10);
+        require(auditEvents.size() == 2, "both recorded events are listed");
+        require(auditEvents.front().category == "auth" && auditEvents.front().action == "login.failed",
+               "listAuditEvents is newest-first");
+        require(!auditEvents.front().actor.has_value(),
+               "an event recorded with no actor (e.g. an unauthenticated login attempt) has no actor in the result");
+        const auto& projectDeletedEvent = auditEvents.back();
+        require(projectDeletedEvent.actor.has_value() && projectDeletedEvent.actor->id == demoUserId,
+               "an event recorded with an actor resolves the actor's UserSummary");
+        require(projectDeletedEvent.targetType.has_value() && *projectDeletedEvent.targetType == "project" &&
+                    projectDeletedEvent.targetId.has_value() && *projectDeletedEvent.targetId == "TH",
+               "target type/id round-trip");
+        require(database.listAuditEvents(1).size() == 1, "the limit parameter caps the result size");
+
         const auto dashboard = database.dashboardStats();
         require(dashboard.totalIssues == 9, "dashboard includes newly created issue");
         require(!dashboard.recentIssues.empty() && dashboard.recentIssues.front().key == created.key,

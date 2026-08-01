@@ -1,5 +1,73 @@
 # Verification record
 
+## 2026-07-31 — Simple append-only admin/security audit log (D23): Phase 4 complete
+
+Sixth and final Phase 4 (Collaboration) slice. With this batch, every item in
+`docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 4 list is implemented.
+
+### What changed
+
+- Migration `012_audit_log.sql` (both backends) adds `audit_events` (`id`, `category`, `action`,
+  `actor_user_id` nullable `ON DELETE SET NULL`, `target_type`/`target_id` nullable, `details` nullable,
+  `created_at`) -- a simplified version of the original baseline schema (`docs/DATA_MODEL.md`): no
+  `actor_type`/`project_id`/`ip_address`/`correlation_id`/`before_json`/`after_json`/`metadata_json`
+  columns, and no separate `audit_retention_policies` table. Rows are appended and never updated or
+  purged, matching D23's "no categories[-as-a-retention-feature], export, or configurable retention"
+  simplification.
+- `Domain::AuditEvent`; `IDatabase::recordAuditEvent` (fire-and-forget, returns `void` -- unlike
+  `createNotification`, whose result the notification list feature reads back immediately) and
+  `listAuditEvents(limit)` (newest-first, no pagination/filtering) in both adapters.
+- Wired into a small, deliberately focused set of existing call sites rather than a general-purpose
+  audit hook on every write: `AuthService::login` on a wrong password (`auth`/`login.failed`) or an
+  attempt against an already-locked account (`auth`/`login.blocked`); `AuthService::createUser`
+  (`identity`/`user.created`, with no actor since `ticket-hub-cli create-user` runs outside any web
+  session); `TicketService::setAnonymousReadEnabled`/`permanentlyDeleteProject`/`permanentlyDeleteIssue`
+  (all `admin`-category, attributed to the acting global administrator).
+- `TicketService::listAuditEvents` (global-administrator-only, same level as the recycle bins) and a new
+  `GET /api/admin/audit-events` route.
+- `web/`: a new "Audit log" nav item, hidden by default and shown only for global admins
+  (`renderCurrentUser`), and re-hidden on logout (`showLoginScreen`) so it can't leak to whoever logs in
+  next in the same browser tab. Renders a simple read-only table (when, category, action, actor, target,
+  details) via a new `renderAuditLog()` view, reusing the existing `.issue-table`/`.panel` styles rather
+  than introducing new CSS.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green, including new assertions in `sqlite_integration_tests`
+   (`recordAuditEvent`/`listAuditEvents` round-trip with and without an actor, newest-first ordering,
+   the `limit` parameter capping the result size), `identity_integration_tests` (a failed login records
+   `auth`/`login.failed`, a blocked login records `auth`/`login.blocked`, a CLI-driven `createUser`
+   records `identity`/`user.created` with no actor), and `authorization_integration_tests`
+   (`listAuditEvents` is global-administrator-only; `permanentlyDeleteIssue`, `setAnonymousReadEnabled`,
+   and `permanentlyDeleteProject` each produce their expected event, all correctly attributed to the
+   actor who performed the action).
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised
+   `recordAuditEvent`/`listAuditEvents` directly against `PostgresDatabase`, then separately confirmed
+   (via the same live database) that a `ticket-hub-cli create-user` invocation against that same database
+   -- run through the actual CLI binary, not a direct database call -- had already produced an
+   `identity`/`user.created` audit row with no actor. All passed.
+5. Standalone Playwright/Chromium script, against a locally running server, SQLite, demo-seeded: logged
+   in as `sam` (non-admin) and confirmed the "Audit log" nav item is not visible; logged out and
+   confirmed the nav item is hidden again (not just for the just-logged-out user, but as a state reset
+   before the next login); logged in as `demo` (global admin) and confirmed the nav item is visible;
+   toggled the anonymous-read-access setting on and off via two direct API calls (to generate two
+   deterministic events without depending on incidental audit activity elsewhere); opened the Audit log
+   view and confirmed at least two rows appeared, with the first row's text containing both
+   `settings.anonymous_read_changed` and the actor's display name ("Demo User").
+6. Re-ran the reaction, comment-editing, mentions/notifications, and worklog browser tests against the
+   same build to confirm no regression -- all still pass unchanged.
+
+All checks passed. No committed test scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+Phase 4 (Collaboration) is now fully implemented. Phase 5 (attachments and the Kanban board) is
+untouched and is the natural next step. The audit log itself has no export, filtering beyond the fixed
+200-row cap, or configurable retention -- not a gap, but D23's explicit V1 scope.
+
 ## 2026-07-31 — Simplified worklogs (D12/D13)
 
 Fifth Phase 4 (Collaboration) slice, and the last one before D23 (audit log) closes out the phase: issues

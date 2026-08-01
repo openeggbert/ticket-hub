@@ -59,7 +59,9 @@ Domain::User AuthService::createUser(Domain::CreateUserRequest request) {
         throw std::invalid_argument("Handle is already in use: " + *request.handle);
     }
     const std::string passwordHash = Common::hashPassword(request.password);
-    return database_->createUser(request, passwordHash);
+    const auto user = database_->createUser(request, passwordHash);
+    database_->recordAuditEvent("identity", "user.created", std::nullopt, std::string("user"), user.id, std::nullopt);
+    return user;
 }
 
 Domain::AuthenticatedSession AuthService::login(Domain::LoginRequest request) {
@@ -73,12 +75,14 @@ Domain::AuthenticatedSession AuthService::login(Domain::LoginRequest request) {
     }
 
     if (database_->isLoginLocked(user->id)) {
+        database_->recordAuditEvent("auth", "login.blocked", std::nullopt, std::string("user"), user->id, std::nullopt);
         throw Domain::AccountLocked("Too many failed login attempts; try again later");
     }
 
     const auto passwordHash = database_->findPasswordHash(user->id);
     if (!passwordHash || !Common::verifyPassword(*passwordHash, request.password)) {
         database_->recordFailedLogin(user->id);
+        database_->recordAuditEvent("auth", "login.failed", std::nullopt, std::string("user"), user->id, std::nullopt);
         throw Domain::AuthenticationFailed("Invalid email or password");
     }
 

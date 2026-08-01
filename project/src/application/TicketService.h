@@ -234,6 +234,12 @@ public:
     bool markNotificationRead(const std::string& notificationId, const Domain::Principal& actor);
     bool markAllNotificationsRead(const Domain::Principal& actor);
 
+    // --- Simple append-only admin/security audit log (Phase 4, D23) ---
+    // Global-administrator-only, like the recycle bins and user directory.
+    // No categories/export/configurable retention -- just a capped,
+    // newest-first read of everything recorded so far.
+    std::vector<Domain::AuditEvent> listAuditEvents(const Domain::Principal& actor, int limit = 200);
+
 private:
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;
 

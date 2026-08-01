@@ -550,6 +550,30 @@ SELECT id, '00000000-0000-4000-8000-000000000002', 'admin' FROM projects WHERE p
                "permanently deleting an already-gone project returns false");
     }
 
+    // --- Simple append-only admin/security audit log (D23) ---
+    // By this point in the file, permanentlyDeleteIssue, setAnonymousReadEnabled
+    // (twice), and permanentlyDeleteProject have all already run above.
+    {
+        require(throwsForbidden([&] { tickets.listAuditEvents(sam); }),
+               "reading the audit log is global-administrator-only");
+
+        const auto events = tickets.listAuditEvents(demo);
+        require(std::any_of(events.begin(), events.end(),
+                            [](const auto& e) { return e.category == "admin" && e.action == "issue.permanently_deleted"; }),
+               "permanentlyDeleteIssue recorded an admin/issue.permanently_deleted audit event");
+        require(std::any_of(events.begin(), events.end(),
+                            [](const auto& e) {
+                                return e.category == "admin" && e.action == "settings.anonymous_read_changed";
+                            }),
+               "setAnonymousReadEnabled recorded an admin/settings.anonymous_read_changed audit event");
+        require(std::any_of(events.begin(), events.end(),
+                            [](const auto& e) { return e.category == "admin" && e.action == "project.permanently_deleted"; }),
+               "permanentlyDeleteProject recorded an admin/project.permanently_deleted audit event");
+        require(std::all_of(events.begin(), events.end(),
+                            [](const auto& e) { return e.actor.has_value() && e.actor->id == "00000000-0000-4000-8000-000000000001"; }),
+               "every admin-triggered event in this run was attributed to demo, the actor who performed each action");
+    }
+
     fs::remove(databasePath, removeError);
     fs::remove(databasePath.string() + "-wal", removeError);
     fs::remove(databasePath.string() + "-shm", removeError);

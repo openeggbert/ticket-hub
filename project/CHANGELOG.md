@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — Simple append-only admin/security audit log (D23) — Phase 4 complete
+
+- **Audit log (D23)**: a simple, append-only `audit_events` table -- no categories-as-a-feature, export, or
+  configurable retention; rows are never purged. Recorded automatically as a side effect of a small,
+  focused set of admin/security-relevant actions: `auth`/`login.failed`, `auth`/`login.blocked` (a login
+  attempt against an already-locked account), `identity`/`user.created` (via `ticket-hub-cli create-user`,
+  which has no actor since it runs outside any web session), `admin`/`settings.anonymous_read_changed`,
+  `admin`/`project.permanently_deleted`, and `admin`/`issue.permanently_deleted`.
+- New `GET /api/admin/audit-events` route, global-administrator-only, returning the newest 200 events.
+- `web/`: a new "Audit log" nav item, visible only to global admins, showing a simple read-only table
+  (when, category, action, actor, target, details).
+- This closes out Phase 4 (Collaboration) -- every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 4 list
+  is now implemented. Phase 5 (Attachments and Kanban board) is next.
+
 ## Unreleased — Simplified worklogs (D12/D13)
 
 - **Simplified worklogs (D12/D13)**: log time spent on an issue via `POST /api/issues/{key}/worklogs`
