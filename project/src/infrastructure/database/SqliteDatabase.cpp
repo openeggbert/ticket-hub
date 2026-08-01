@@ -242,6 +242,29 @@ SELECT w.id, w.issue_id, u.id, u.display_name, u.email,
 FROM worklogs w JOIN users u ON u.id = w.author_user_id
 )SQL";
 
+Domain::AuditEvent readAuditEvent(sqlite3_stmt* statement) {
+    Domain::AuditEvent event;
+    event.id = text(statement, 0);
+    event.category = text(statement, 1);
+    event.action = text(statement, 2);
+    if (sqlite3_column_type(statement, 3) != SQLITE_NULL) {
+        event.actor = readUserSummary(statement, 3);
+    }
+    event.targetType = optionalText(statement, 6);
+    event.targetId = optionalText(statement, 7);
+    event.details = optionalText(statement, 8);
+    event.createdAt = text(statement, 9);
+    return event;
+}
+
+// LEFT JOIN, not JOIN: actor_user_id may be NULL (a failed/blocked login
+// attempt, or CLI-driven account creation, has no authenticated actor).
+constexpr const char* AuditEventSelect = R"SQL(
+SELECT a.id, a.category, a.action, u.id, u.display_name, u.email,
+       a.target_type, a.target_id, a.details, a.created_at
+FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id
+)SQL";
+
 } // namespace
 
 SqliteDatabase::SqliteDatabase(std::string databasePath, std::string migrationsDirectory, std::string seedPath)
@@ -1660,6 +1683,39 @@ WHERE id = ? AND deleted_at IS NULL
     statement.bind(2, worklogId);
     statement.step();
     return sqlite3_changes(database_) > 0;
+}
+
+void SqliteDatabase::recordAuditEvent(const std::string& category,
+                                      const std::string& action,
+                                      const std::optional<std::string> actorUserId,
+                                      const std::optional<std::string> targetType,
+                                      const std::optional<std::string> targetId,
+                                      const std::optional<std::string> details) {
+    std::scoped_lock lock(mutex_);
+    const std::string eventId = Common::uuidV4();
+    Statement insert(database_, R"SQL(
+INSERT INTO audit_events(id, category, action, actor_user_id, target_type, target_id, details, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+)SQL");
+    insert.bind(1, eventId);
+    insert.bind(2, category);
+    insert.bind(3, action);
+    actorUserId ? insert.bind(4, *actorUserId) : insert.bindNull(4);
+    targetType ? insert.bind(5, *targetType) : insert.bindNull(5);
+    targetId ? insert.bind(6, *targetId) : insert.bindNull(6);
+    details ? insert.bind(7, *details) : insert.bindNull(7);
+    expectDone(database_, insert, "Audit event insert");
+}
+
+std::vector<Domain::AuditEvent> SqliteDatabase::listAuditEvents(const int limit) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(AuditEventSelect) + "ORDER BY a.created_at DESC LIMIT ?");
+    statement.bind(1, static_cast<std::int64_t>(limit));
+    std::vector<Domain::AuditEvent> events;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        events.push_back(readAuditEvent(statement.get()));
+    }
+    return events;
 }
 
 Domain::DashboardStats SqliteDatabase::dashboardStats() {

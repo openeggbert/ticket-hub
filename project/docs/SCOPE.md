@@ -83,8 +83,14 @@ remain as the long-term aspirational baseline only — do not build against them
   linkage (D12 dropped time estimates from V1 entirely); no own-vs-others edit/delete permission split
   (D13) -- any project member with issue access may edit or delete any worklog on that issue, not just
   the one they logged themselves, unlike comments' author-or-admin rule (D83). Tombstone delete and the
-  same optimistic-locking contract as comment/issue edits. See "Not yet built" below for the rest of
-  Phase 4.
+  same optimistic-locking contract as comment/issue edits.
+- **Simple append-only admin/security audit log (Phase 4, D23):** an `audit_events` table with no
+  categories-as-a-retention-feature, export, or configurable retention -- rows are never purged.
+  Recorded automatically for a small, focused set of admin/security-relevant writes (failed/blocked
+  login, user creation, the anonymous-read toggle, permanently deleting a project or issue), not as a
+  general-purpose hook on every write. Global-administrator-only read access, via a new "Audit log" nav
+  item in `web/`. **This closes out Phase 4 (Collaboration) -- every item in
+  `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 4 list is now implemented.**
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -92,8 +98,7 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Rest of Phase 4: the append-only admin/security audit log (D23) is not implemented yet.
-- Attachments and the Kanban board are not implemented (Phase 5).
+- Phase 4 is complete. Attachments and the Kanban board are not implemented (Phase 5).
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).

@@ -1,9 +1,10 @@
 # Ticket Hub next work
 
 Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, and UI; Phase 4
-(Collaboration) nearly done -- comment editing/tombstone delete, fixed emoji reactions, @mention
-handles/the fixed in-app notification set, the Markdown editor toolbar/preview, and simplified worklogs
-are done; only the audit log (D23) remains — see below)
+(Collaboration) is now **complete** -- comment editing/tombstone delete, fixed emoji reactions, @mention
+handles/the fixed in-app notification set, the Markdown editor toolbar/preview, simplified worklogs, and
+the admin/security audit log (D23) are all done — see below. Phase 5 (Attachments and Kanban board) is
+next.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -249,10 +250,32 @@ anything from the removed/deferred list without an explicit new product conversa
   SQLite-integration (full CRUD, stale-version conflict, tombstone semantics), authorization-integration
   (a non-member rejected, a different project member editing/deleting someone else's worklog succeeds --
   the no-own-vs-others-split behavior explicitly asserted), and live-PostgreSQL test coverage. Full detail
-  in `docs/VERIFICATION.md`. Only D23 (the append-only admin/security audit log) remains open in Phase 4
-  -- see "Not yet built" in `docs/SCOPE.md`.
+  in `docs/VERIFICATION.md`.
+- **Phase 4 complete (simple append-only admin/security audit log, D23), this batch:** migration
+  `012_audit_log.sql` adds `audit_events` (`id`, `category`, `action`, `actor_user_id` nullable,
+  `target_type`/`target_id` nullable, `details` nullable, `created_at`) -- no categories-as-a-retention-
+  feature, export, or configurable retention; rows are simply appended and never updated or purged.
+  `IDatabase::recordAuditEvent` (fire-and-forget, `void`) and `listAuditEvents(limit)` (newest-first, no
+  pagination/filtering) in both adapters. Rather than a general-purpose audit hook on every write, a
+  small, deliberately focused set of existing call sites record an event as a side effect:
+  `AuthService::login` on a wrong password (`auth`/`login.failed`) or an attempt against an
+  already-locked account (`auth`/`login.blocked`), `AuthService::createUser` (`identity`/`user.created`,
+  no actor since the CLI runs outside any web session), and `TicketService::setAnonymousReadEnabled`/
+  `permanentlyDeleteProject`/`permanentlyDeleteIssue` (all `admin`-category). New
+  `GET /api/admin/audit-events` route and `TicketService::listAuditEvents`, both
+  global-administrator-only (same level as the recycle bins). `web/` gained an "Audit log" nav item
+  (hidden for non-admins, and re-hidden on logout to avoid leaking it to the next user in the same
+  browser tab) rendering a simple read-only table. Browser-verified: the nav item's visibility is
+  correctly gated by admin status; toggling a setting produces matching rows in the log with the correct
+  actor. New SQLite-integration, identity-integration (login-failed/login-blocked/user-created events
+  recorded correctly), authorization-integration (global-admin-only read access; all three admin actions
+  produce the expected events attributed to the correct actor), and live-PostgreSQL test coverage
+  (including confirming the CLI's `create-user` produces a real audit row end-to-end through the actual
+  binary, not just a direct database call). Full detail in `docs/VERIFICATION.md`. **This closes out
+  Phase 4 (Collaboration) -- every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 4 list is now
+  implemented.**
 
-## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) has started. Immediate next step: continue Phase 4
+## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) is complete. Immediate next step: Phase 5
 
 Across six batches, `web/` grew from a read-only demo (no auth, no writes reachable except create-issue
 and status-change) into full coverage of every route the API exposes: login; an Epic/parent picker on
@@ -271,14 +294,13 @@ where the new checkboxes/reorder buttons live inside the same table row that alr
 drawer on click.
 
 There is no remaining gap between what the API exposes (for Phases 1-3) and what the demo UI can reach.
-Comment editing/tombstone delete (D81/D82/D83), fixed emoji reactions (D84), @mention handles/the
-fixed in-app notification set (D56/D80/D14), the Markdown editor toolbar/live preview (D16), and
-simplified worklogs (D12/D13) are the first five Phase 4 slices, and all five are also already fully
-covered in the UI. What's left is the rest of Phase 4, Phase 5, or optional UX polish:
+Phase 4 (Collaboration) is now fully implemented and fully covered in the UI: comment editing/tombstone
+delete (D81/D82/D83), fixed emoji reactions (D84), @mention handles/the fixed in-app notification set
+(D56/D80/D14), the Markdown editor toolbar/live preview (D16), simplified worklogs (D12/D13), and the
+admin/security audit log (D23). What's left is Phase 5 or optional UX polish:
 
-1. Continue Phase 4 (Collaboration) per `docs/REDUCED_SCOPE_ROADMAP.md`: D23 (the append-only
-   admin/security audit log), the last open item in Phase 4. Then Phase 5 (Attachments and Kanban
-   board).
+1. Phase 5 (Attachments and Kanban board) per `docs/REDUCED_SCOPE_ROADMAP.md` -- the natural next step
+   now that Phase 4 is fully closed out.
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (today's board is read-only, clicking a card just opens the drawer; the Issues table's
    up/down buttons are the only reorder UI); a friendlier bulk-status picker that also supports
@@ -296,15 +318,16 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
   or any children, so this remains the one open path.
 
-After Phase 3 is fully closed, continue with Milestone 2 (collaboration, attachments, Kanban board),
-Milestone 3 (API, backup/restore), Milestone 4 (packaging and hardening). Do not jump ahead to
-later-phase features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+Milestone 2's collaboration half (Phase 4) is now fully closed. What remains of Milestone 2 is Phase 5
+(attachments, Kanban board), then Milestone 3 (API, backup/restore) and Milestone 4 (packaging and
+hardening). Do not jump ahead to later-phase features early, and do not implement anything from
+`docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 
 Core, CLI, all seven test binaries, and the `ticket-hub` server target itself all compile and pass/run
 cleanly on both SQLite and PostgreSQL, in every supported build configuration, including a live HTTP
-smoke test of essentially every route across all three completed phases and, across eleven batches, a
+smoke test of essentially every route across all three completed phases and, across twelve batches, a
 real-browser (Playwright/Chromium) test of every write route the demo UI now exposes: login/logout,
 hierarchy/resolution pickers, full edit/clone/links/watch-vote/delete in the issue drawer, project
 management, the issue recycle bin, reorder/move/bulk actions, comment editing/tombstone delete
@@ -317,10 +340,13 @@ matching handle and notifies the mentioned user, and the notification panel/badg
 flow), and now the Markdown editor toolbar and live preview (toolbar buttons producing correctly-rendered
 `<strong>`/`<em>`/`<code>`/`<a>`/list/`<blockquote>` output, the preview toggle, and -- security-focused
 -- confirming a `<script>`/`onerror`-`<img>` payload never executes and a `javascript:`-scheme link never
-becomes clickable), and now simplified worklogs (logging time shows the correct formatted duration and
-comment, deleting an entry removes it, an unparseable duration is rejected before it reaches the server).
-The long-standing "server target unverified because `github.com` is unreachable" limitation recorded in
-every prior session no longer applies in this environment, and there is no longer a gap between what the
+becomes clickable), simplified worklogs (logging time shows the correct formatted duration and
+comment, deleting an entry removes it, an unparseable duration is rejected before it reaches the server),
+and now the admin/security audit log (the nav item's visibility correctly gated by admin status, and
+audit rows produced with the correct action/actor after an admin action). **Phase 4 (Collaboration) is
+now fully implemented and fully verified.** The long-standing "server target unverified because
+`github.com` is unreachable" limitation recorded in every prior session no longer applies in this
+environment, and there is no longer a gap between what the
 API exposes for Phases 1-3 (plus the comment-editing, reactions, mentions/notifications, Markdown-
 rendering, and worklog slices of Phase 4) and what the demo UI can reach.
 `findCommentById`/`editComment`/`deleteComment` gained dedicated SQLite-integration coverage (success,

@@ -39,6 +39,9 @@ Current schema migrations:
 - `011_worklogs.sql` — simplified worklogs (Phase 4 of `REDUCED_SCOPE_ROADMAP.md`, D12/D13). Adds
   `worklogs`, with a tombstone delete (`deleted_at`/`deleted_by_user_id`) and the same optimistic-locking
   `version` column comments/issues already use.
+- `012_audit_log.sql` — simple append-only admin/security audit log (Phase 4 of
+  `REDUCED_SCOPE_ROADMAP.md`, D23, the last item in Phase 4). Adds `audit_events`; rows are never
+  updated or purged.
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, an explicit `rank_order` (equal to `issue_number`) for each seeded issue, and (since `010_mentions_and_notifications.sql`, which `seed-demo` always applies first) a `handle` for each of the three demo users.
 
@@ -324,6 +327,25 @@ delete, same mechanism as comments/issues/projects. `TicketService::addWorklog`/
 `deleteWorklog` all require only project-Member-or-above on the issue's project (D13: no separate
 own-vs-others permission split) -- unlike comments (D83's author-or-admin rule), any project member may
 edit or delete *any* worklog on an issue they can access, not just the one they logged themselves.
+
+### `audit_events`
+
+`id`, `category`, `action`, `actor_user_id` (nullable, `ON DELETE SET NULL`), `target_type` (nullable),
+`target_id` (nullable), `details` (nullable), `created_at` -- migration `012_audit_log.sql` (Phase 4,
+D23, the last item in Phase 4). Simplified from the original baseline schema (`docs/DATA_MODEL.md`):
+no `actor_type`/`project_id`/`ip_address`/`correlation_id`/`before_json`/`after_json`/`metadata_json`
+columns, and no separate `audit_retention_policies` table -- rows are simply appended and never updated
+or purged, matching D23's "no categories[-as-a-retention-feature], export, or configurable retention"
+simplification. `actor_user_id` is nullable because the only account-creation path
+(`ticket-hub-cli create-user`) runs outside any web session and has no `Principal` to attribute the
+event to, and a failed/blocked login attempt has no authenticated actor by definition.
+`IDatabase::recordAuditEvent` is fire-and-forget (returns `void`, unlike `createNotification`, whose
+result the notification list feature reads back immediately); `listAuditEvents(limit)` is newest-first,
+capped, with no pagination/filtering. Recorded automatically as a side effect of a small, focused set of
+existing writes -- `AuthService::login` (failed/blocked) and `createUser`, `TicketService::
+setAnonymousReadEnabled`, `permanentlyDeleteProject`, `permanentlyDeleteIssue` -- not a general-purpose
+audit hook on every write. `TicketService::listAuditEvents` is global-administrator-only, like the
+recycle bins.
 
 ### `attachments`
 

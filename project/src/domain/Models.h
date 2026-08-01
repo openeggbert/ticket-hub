@@ -407,6 +407,22 @@ struct EditWorklogRequest {
     std::optional<std::string> comment;
 };
 
+// Simple append-only admin/security audit log (Phase 4, D23): no
+// categories/export/configurable retention beyond what's here -- rows are
+// never auto-purged. `actor` is nullopt for an event with no authenticated
+// actor (a failed/blocked login attempt, or CLI-driven account creation,
+// which runs outside any web session).
+struct AuditEvent {
+    std::string id;
+    std::string category;
+    std::string action;
+    std::optional<UserSummary> actor;
+    std::optional<std::string> targetType;
+    std::optional<std::string> targetId;
+    std::optional<std::string> details;
+    std::string createdAt;
+};
+
 struct DashboardStats {
     std::int64_t totalIssues{};
     std::int64_t todoIssues{};

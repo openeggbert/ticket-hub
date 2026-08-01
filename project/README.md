@@ -221,6 +221,7 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `GET` | `/api/notifications/unread-count` | session | `{count}` |
 | `POST` | `/api/notifications/{id}/read` | session + CSRF | scoped to the caller's own notifications |
 | `POST` | `/api/notifications/read-all` | session + CSRF | scoped to the caller's own notifications |
+| `GET` | `/api/admin/audit-events` | session, global admin | newest 200 admin/security events (D23) |
 | `GET` | `/api/projects` | session, or anon if enabled | active project summaries |
 | `POST` | `/api/projects` | session + CSRF, global admin | create project |
 | `PATCH` | `/api/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |
@@ -522,6 +523,28 @@ duration and comment in the list; deleting an entry removes it; an unparseable d
 it reaches the server. Verified against live PostgreSQL directly (`addWorklog`/`listWorklogs`/
 `findWorklogById`/`editWorklog`, including the stale-version-conflict rejection, and `deleteWorklog`).
 
+A twelfth batch added the simple append-only admin/security audit log (D23) -- the last item in Phase 4
+(Collaboration), which is now fully implemented per `docs/REDUCED_SCOPE_ROADMAP.md`. Migration
+`012_audit_log.sql` adds `audit_events` (`id`, `category`, `action`, `actor_user_id` nullable,
+`target_type`/`target_id` nullable, `details` nullable, `created_at`) -- no categories-as-a-retention-
+feature, export, or configurable retention beyond what's here; rows are simply appended and never updated
+or purged. Rather than hooking every write in the codebase, a small, deliberately focused set of
+admin/security-relevant actions record an event as a side effect: `AuthService::login` on a wrong
+password (`auth`/`login.failed`) or an attempt against an already-locked account (`auth`/`login.blocked`),
+`AuthService::createUser` (`identity`/`user.created`, with no actor since `ticket-hub-cli create-user`
+runs outside any web session), and `TicketService::setAnonymousReadEnabled`/`permanentlyDeleteProject`/
+`permanentlyDeleteIssue` (all `admin`-category). `IDatabase::recordAuditEvent` is fire-and-forget (`void`,
+unlike `createNotification`, whose result the notification list feature reads back immediately);
+`listAuditEvents(limit)` is newest-first with no pagination or filtering. New
+`GET /api/admin/audit-events` route and `TicketService::listAuditEvents`, both global-administrator-only,
+the same access level as the recycle bins. `web/` gained a new "Audit log" nav item (hidden for
+non-admins, shown and hidden again on logout to avoid leaking it to whoever logs in next in the same
+browser tab) rendering a simple read-only table. Browser-verified: the nav item is invisible to a
+non-admin and visible to the global admin; toggling the anonymous-read setting on and off produces two
+rows in the log showing the correct action and actor. Verified against live PostgreSQL directly,
+including confirming that a CLI-driven `create-user` call actually produced an `identity`/`user.created`
+event with no actor, end-to-end through the real CLI binary (not just a direct database call).
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -529,9 +552,9 @@ What **was** compiled and tested in this environment, with all warnings enabled
   fixed project-role authorization, project lifecycle, the anonymous-read-access toggle, the fixed
   hierarchy/workflow rules, full-replacement issue edit, the fixed issue-link catalog, simple cloning,
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
-  renumbering, moving an issue between projects, and (Phase 4) comment editing/tombstone delete, fixed
-  emoji reactions, @mention handles/the fixed in-app notification set, and simplified worklogs, in both
-  database adapters),
+  renumbering, moving an issue between projects, and (Phase 4, now complete) comment editing/tombstone
+  delete, fixed emoji reactions, @mention handles/the fixed in-app notification set, simplified worklogs,
+  and the admin/security audit log, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the

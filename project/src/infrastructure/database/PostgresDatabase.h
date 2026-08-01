@@ -90,6 +90,14 @@ public:
                                                std::optional<std::int64_t> expectedVersion = std::nullopt) override;
     bool deleteWorklog(const std::string& worklogId, const std::string& actorUserId) override;
 
+    void recordAuditEvent(const std::string& category,
+                          const std::string& action,
+                          std::optional<std::string> actorUserId,
+                          std::optional<std::string> targetType,
+                          std::optional<std::string> targetId,
+                          std::optional<std::string> details) override;
+    std::vector<Domain::AuditEvent> listAuditEvents(int limit) override;
+
     Domain::DashboardStats dashboardStats() override;
 
     Domain::Issue reorderIssue(const std::string& issueKey, std::optional<std::string> beforeIssueKey) override;

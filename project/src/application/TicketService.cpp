@@ -148,6 +148,9 @@ bool TicketService::isAnonymousReadEnabled() {
 void TicketService::setAnonymousReadEnabled(const bool enabled, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
     database_->setSetting("anonymous_read_access", enabled ? "true" : "false");
+    database_->recordAuditEvent("admin", "settings.anonymous_read_changed", actor.userId,
+                                std::string("installation_settings"), std::string("anonymous_read_access"),
+                                enabled ? std::string("enabled") : std::string("disabled"));
 }
 
 std::vector<Domain::Project> TicketService::listProjects(const std::optional<Domain::Principal>& actor) {
@@ -529,7 +532,13 @@ std::vector<Domain::Issue> TicketService::listDeletedIssues(const Domain::Princi
 
 bool TicketService::permanentlyDeleteIssue(const std::string& issueKey, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
-    return database_->permanentlyDeleteIssue(Domain::normalizeIssueKey(issueKey));
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const bool deleted = database_->permanentlyDeleteIssue(normalizedKey);
+    if (deleted) {
+        database_->recordAuditEvent("admin", "issue.permanently_deleted", actor.userId, std::string("issue"),
+                                    normalizedKey, std::nullopt);
+    }
+    return deleted;
 }
 
 Domain::BulkActionResult TicketService::bulkChangeStatus(const std::vector<std::string>& issueKeys,
@@ -661,7 +670,13 @@ std::vector<Domain::Project> TicketService::listDeletedProjects(const Domain::Pr
 
 bool TicketService::permanentlyDeleteProject(const std::string& projectKey, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
-    return database_->permanentlyDeleteProject(Domain::normalizeProjectKey(projectKey));
+    const std::string normalizedKey = Domain::normalizeProjectKey(projectKey);
+    const bool deleted = database_->permanentlyDeleteProject(normalizedKey);
+    if (deleted) {
+        database_->recordAuditEvent("admin", "project.permanently_deleted", actor.userId, std::string("project"),
+                                    normalizedKey, std::nullopt);
+    }
+    return deleted;
 }
 
 std::vector<Domain::User> TicketService::listUsers(const Domain::Principal& /*actor*/) {
@@ -682,6 +697,11 @@ bool TicketService::markNotificationRead(const std::string& notificationId, cons
 
 bool TicketService::markAllNotificationsRead(const Domain::Principal& actor) {
     return database_->markAllNotificationsRead(actor.userId);
+}
+
+std::vector<Domain::AuditEvent> TicketService::listAuditEvents(const Domain::Principal& actor, const int limit) {
+    requireGlobalAdmin(actor);
+    return database_->listAuditEvents(limit);
 }
 
 void TicketService::dispatchAssignmentNotification(const Domain::Issue& issueAfter,
