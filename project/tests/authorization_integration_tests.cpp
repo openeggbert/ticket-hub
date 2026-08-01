@@ -574,6 +574,31 @@ SELECT id, '00000000-0000-4000-8000-000000000002', 'admin' FROM projects WHERE p
                "every admin-triggered event in this run was attributed to demo, the actor who performed each action");
     }
 
+    // --- Kanban board WIP limits (D32/D33) ---
+    {
+        require(!tickets.listBoardColumns(sam).empty(), "any authenticated user can read the board columns");
+
+        require(throwsForbidden([&] { tickets.setBoardColumnWipLimit("backlog", 5, alex); }),
+               "setting a WIP limit is global-administrator-only");
+
+        tickets.setBoardColumnWipLimit("backlog", 5, demo);
+        const auto afterSet = tickets.listBoardColumns(sam);
+        const auto backlog = std::find_if(afterSet.begin(), afterSet.end(),
+                                          [](const auto& c) { return c.statusKey == "backlog"; });
+        require(backlog != afterSet.end() && backlog->wipLimit.has_value() && *backlog->wipLimit == 5,
+               "the global administrator's WIP limit change is visible to any reader");
+
+        tickets.setBoardColumnWipLimit("backlog", std::nullopt, demo);
+
+        bool unknownStatusRejected = false;
+        try {
+            tickets.setBoardColumnWipLimit("not-a-real-status", 1, demo);
+        } catch (const std::invalid_argument&) {
+            unknownStatusRejected = true;
+        }
+        require(unknownStatusRejected, "setting a WIP limit on an unknown status key is rejected");
+    }
+
     // --- Fixed personal dashboard (D24) ---
     // By this point TH-1 (Done, assigned to alex), TH-3 (In Review, assigned
     // to alex), and WEB-1 (In Progress, assigned to alex, unchanged by the

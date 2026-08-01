@@ -195,6 +195,13 @@ public:
 
     virtual Domain::DashboardStats dashboardStats() = 0;
 
+    // --- Kanban board WIP limits (Phase 5, D32/D33) ---
+    // A single flat, installation-wide list (D32: one column per fixed
+    // workflow status, no per-project boards), ordered by sort_order.
+    // setBoardColumnWipLimit returns false for an unknown status key.
+    virtual std::vector<Domain::BoardColumn> listBoardColumns() = 0;
+    virtual bool setBoardColumnWipLimit(const std::string& statusKey, std::optional<int> wipLimit) = 0;
+
     // --- Manual ordering (Phase 3, D31) ---
     // Simple integer rank with renumbering, replacing the never-used
     // LexoRank-style string rank. Moves `issueKey` to immediately before

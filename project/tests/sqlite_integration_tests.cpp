@@ -432,6 +432,40 @@ int main() {
         require(!dashboard.recentIssues.empty() && dashboard.recentIssues.front().key == created.key,
                 "dashboard returns the most recently updated issue first");
 
+        // --- Kanban board WIP limits (D32/D33) ---
+        {
+            const auto columns = database.listBoardColumns();
+            require(columns.size() == 5, "one board column per fixed workflow status");
+            require(std::is_sorted(columns.begin(), columns.end(),
+                                   [](const auto& a, const auto& b) { return a.sortOrder < b.sortOrder; }),
+                   "board columns are ordered by sort_order");
+            const auto inProgress = std::find_if(columns.begin(), columns.end(),
+                                                 [](const auto& c) { return c.statusKey == "in-progress"; });
+            require(inProgress != columns.end() && inProgress->wipLimit.has_value() && *inProgress->wipLimit == 3,
+                   "the seeded In Progress column has the demo WIP limit of 3");
+            const auto backlog = std::find_if(columns.begin(), columns.end(),
+                                              [](const auto& c) { return c.statusKey == "backlog"; });
+            require(backlog != columns.end() && !backlog->wipLimit.has_value(),
+                   "an unlimited column reports no WIP limit");
+
+            require(database.setBoardColumnWipLimit("backlog", 5), "setting a WIP limit succeeds for a known status");
+            const auto afterSet = database.listBoardColumns();
+            const auto backlogAfter = std::find_if(afterSet.begin(), afterSet.end(),
+                                                    [](const auto& c) { return c.statusKey == "backlog"; });
+            require(backlogAfter != afterSet.end() && backlogAfter->wipLimit.has_value() && *backlogAfter->wipLimit == 5,
+                   "the new WIP limit is persisted");
+
+            require(database.setBoardColumnWipLimit("backlog", std::nullopt), "a limit can be cleared back to unlimited");
+            const auto afterClear = database.listBoardColumns();
+            const auto backlogCleared = std::find_if(afterClear.begin(), afterClear.end(),
+                                                      [](const auto& c) { return c.statusKey == "backlog"; });
+            require(backlogCleared != afterClear.end() && !backlogCleared->wipLimit.has_value(),
+                   "clearing a WIP limit removes it");
+
+            require(!database.setBoardColumnWipLimit("not-a-real-status", 1),
+                   "setting a WIP limit on an unknown status key returns false");
+        }
+
         // --- Manual ordering (D31) ---
         const auto th1Before = database.findIssueByKey("TH-1");
         const auto th3Before = database.findIssueByKey("TH-3");

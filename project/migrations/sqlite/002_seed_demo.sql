@@ -31,6 +31,18 @@ INSERT INTO issue_statuses(id, status_key, name, category, sort_order) VALUES
 ('20000000-0000-4000-8000-000000000005', 'done', 'Done', 'done', 50)
 ON CONFLICT DO NOTHING;
 
+-- Kanban board WIP limits (Phase 5, D32/D33): one row per fixed workflow
+-- status, wip_limit nullable and soft (visually-highlighted-only). "In
+-- Progress" gets a demo-friendly limit of 3 so the seeded data has a
+-- realistic example to display; the rest are left unlimited.
+INSERT INTO board_columns(id, status_id, wip_limit, sort_order) VALUES
+('21000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001', NULL, 10),
+('21000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000002', NULL, 20),
+('21000000-0000-4000-8000-000000000003', '20000000-0000-4000-8000-000000000003', 3, 30),
+('21000000-0000-4000-8000-000000000004', '20000000-0000-4000-8000-000000000004', NULL, 40),
+('21000000-0000-4000-8000-000000000005', '20000000-0000-4000-8000-000000000005', NULL, 50)
+ON CONFLICT DO NOTHING;
+
 INSERT INTO priorities(id, priority_key, name, rank, color) VALUES
 ('30000000-0000-4000-8000-000000000001', 'highest', 'Highest', 1, '#CD1317'),
 ('30000000-0000-4000-8000-000000000002', 'high', 'High', 2, '#E97F33'),

@@ -216,6 +216,8 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `POST` | `/api/auth/logout` | no | clears session (safe to call unauthenticated) |
 | `GET` | `/api/auth/me` | session | current principal, or 401 |
 | `GET` | `/api/dashboard` | session, or anon if enabled | counts, recent issues, and (authenticated only, D24) assigned-to-me/watched/upcoming-deadline issues |
+| `GET` | `/api/board-columns` | session, or anon if enabled | one entry per fixed workflow status with its optional soft WIP limit (D32/D33) |
+| `PUT` | `/api/board-columns/{statusKey}` | session + CSRF, global admin | `{wipLimit}` (number or null); installation-wide, not per-project |
 | `GET` | `/api/users` | session | user directory (id/displayName/email/handle) for @mention autocomplete (D80) |
 | `GET` | `/api/notifications` | session | `?unread=true` filters; fixed set (D14) |
 | `GET` | `/api/notifications/unread-count` | session | `{count}` |
@@ -589,6 +591,30 @@ an issue from a script that hit a drawer-backdrop click interception); re-runnin
 reseeded server produced clean results, confirming the confusion was test-script state pollution across
 runs against the same long-lived dev server, not an application bug.
 
+A fifteenth batch continued Phase 5 with Kanban board WIP limits (D32/D33). New migration
+`013_board_columns.sql` adds `board_columns` -- a single flat, installation-wide table (`id`, `status_id`
+unique FK to `issue_statuses`, `wip_limit` nullable, `sort_order`) with no `board_id`/`project_id` column
+at all, following `docs/REDUCED_SCOPE_DATA_MODEL.md`'s target schema literally and D32's "one board
+column equals one workflow status": a WIP limit set on a column applies to that status's column on every
+project's board, since there is no per-project board identity in the reduced-scope model.
+`002_seed_demo.sql` seeds the five rows ("In Progress" given a demo limit of 3, the rest unlimited). New
+`Domain::BoardColumn`; `IDatabase::listBoardColumns()` (ordered by `sort_order`) and
+`setBoardColumnWipLimit(statusKey, optional<int>)` (`false` for an unknown status key) in both adapters;
+matching `TicketService` methods (read is the same access rule as projects/issues, set is
+global-administrator-only like the anonymous-read toggle, an unknown status key throws
+`std::invalid_argument`). New `GET /api/board-columns` and `PUT /api/board-columns/{statusKey}` routes.
+`web/`'s Board view shows each column's live count as `N / limit` (or plain `N` when unlimited) with a
+soft, display-time-only highlight when over limit -- never blocking a status change or issue creation into
+that column -- and gives global admins an inline editor to set/clear each column's limit. Drag-and-drop
+board reordering was deliberately left out of this batch: neither D32 nor D33 mentions it, and the
+roadmap's "board usable end-to-end" exit gate was already satisfied by the pre-existing click-to-drawer
+status change. New SQLite-integration and authorization-integration test coverage. Verified against live
+PostgreSQL directly (five seeded columns, the demo WIP limit, set/clear/unknown-key cases). Browser-verified
+with Playwright/Chromium: a non-admin sees counts only, a global admin sees and can use the inline editor,
+pushing a column over its limit shows the highlight and raising the limit clears it, and switching to a
+second project while the setting is unchanged confirms it is genuinely installation-wide rather than
+scoped to whichever project's board happened to be open when it was changed.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -598,8 +624,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
   renumbering, moving an issue between projects, and (Phase 4, now complete) comment editing/tombstone
   delete, fixed emoji reactions, @mention handles/the fixed in-app notification set, simplified worklogs,
-  the admin/security audit log, and (Phase 5, underway) the widened ad-hoc issue filter/search model and
-  personal dashboard widgets, in both database adapters),
+  the admin/security audit log, and (Phase 5, underway) the widened ad-hoc issue filter/search model,
+  personal dashboard widgets, and Kanban board WIP limits, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the

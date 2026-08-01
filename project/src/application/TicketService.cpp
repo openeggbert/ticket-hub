@@ -677,6 +677,19 @@ Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Prin
     return stats;
 }
 
+std::vector<Domain::BoardColumn> TicketService::listBoardColumns(const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listBoardColumns();
+}
+
+void TicketService::setBoardColumnWipLimit(const std::string& statusKey, const std::optional<int> wipLimit,
+                                           const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    if (!database_->setBoardColumnWipLimit(statusKey, wipLimit)) {
+        throw std::invalid_argument("Unknown status key: " + statusKey);
+    }
+}
+
 Domain::Project TicketService::createProject(Domain::CreateProjectRequest request, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
     request.key = Domain::normalizeProjectKey(request.key);

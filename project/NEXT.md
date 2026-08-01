@@ -4,9 +4,9 @@ Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, 
 (Collaboration) is now **complete** -- comment editing/tombstone delete, fixed emoji reactions, @mention
 handles/the fixed in-app notification set, the Markdown editor toolbar/preview, simplified worklogs, and
 the admin/security audit log (D23) are all done — see below. Phase 5 (Attachments and Kanban board) is
-now **underway**: the ad-hoc issue filter/search widening slice (D10/D43) and the personal dashboard
-widgets (D24) are done; Kanban WIP limits/drag-and-drop (D33) and the attachments vertical
-(D15/D98-D105) remain.)
+now **underway**: the ad-hoc issue filter/search widening slice (D10/D43), the personal dashboard widgets
+(D24), and Kanban board WIP limits (D32/D33) are done; only the attachments vertical (D15/D98-D105)
+remains.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -309,6 +309,25 @@ anything from the removed/deferred list without an explicit new product conversa
   real Watch-button click populates the watching widget, a real due-date edit populates the deadlines
   widget, and two different users see their own personalized widgets, not each other's), plus a full
   regression re-run of prior batches' browser tests. Full detail in `docs/VERIFICATION.md`.
+- **Phase 5 continued (Kanban board WIP limits, D32/D33), this batch:** migration `013_board_columns.sql`
+  adds `board_columns` -- a single flat, installation-wide table (one row per fixed workflow status, no
+  `board_id`/`project_id` column at all), matching D32's "one board column equals one workflow status" and
+  the reduced-scope data model's literal target schema. A WIP limit therefore applies to that status's
+  column on every project's board, not per-project. `002_seed_demo.sql` seeds the five rows ("In
+  Progress" given a demo limit of 3, the rest unlimited). New `Domain::BoardColumn`;
+  `IDatabase::listBoardColumns()`/`setBoardColumnWipLimit(statusKey, optional<int>)` in both adapters;
+  matching `TicketService` methods (read same as projects/issues, set is global-administrator-only, an
+  unknown status key throws `std::invalid_argument`). New `GET /api/board-columns` and
+  `PUT /api/board-columns/{statusKey}` routes. `web/`'s Board view shows each column's live count as
+  `N / limit` (or plain `N` when unlimited) with a soft, display-time-only `.over-limit` highlight; global
+  admins additionally get a small inline WIP-limit editor per column. Drag-and-drop board reordering was
+  deliberately left out -- neither D32 nor D33 mentions it, and the roadmap's "board usable end-to-end"
+  exit gate was already satisfied by the pre-existing click-to-drawer status change. New
+  SQLite-integration and authorization-integration test coverage. Live-PostgreSQL and browser-verified
+  (Playwright/Chromium: non-admin sees counts only, admin sees and can use the editor, an over-limit
+  column highlights and clears, and the setting is confirmed genuinely installation-wide by checking a
+  second project), plus a full regression re-run of prior batches' browser tests. Full detail in
+  `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) is complete. Phase 5 is underway
 
@@ -333,19 +352,18 @@ Phase 4 (Collaboration) is now fully implemented and fully covered in the UI: co
 delete (D81/D82/D83), fixed emoji reactions (D84), @mention handles/the fixed in-app notification set
 (D56/D80/D14), the Markdown editor toolbar/live preview (D16), simplified worklogs (D12/D13), and the
 admin/security audit log (D23). Phase 5 (Attachments and Kanban board) is now underway; the ad-hoc
-filter/search widening slice (D10/D43) and the personal dashboard widgets (D24) are done. What's left:
+filter/search widening slice (D10/D43), the personal dashboard widgets (D24), and Kanban board WIP limits
+(D32/D33) are done. What's left:
 
-1. Rest of Phase 5 per `docs/REDUCED_SCOPE_ROADMAP.md`: Kanban board WIP limits (D33, needs new schema,
-   e.g. a per-project-per-status limit table, plus a display-time non-blocking visual highlight) and
-   drag-and-drop reordering on the Board view (today's board is read-only, clicking a card just opens the
-   drawer -- zero drag-and-drop code exists yet); the full attachments vertical (D15/D98-D105 -- upload
-   API, hardwired local filesystem storage, upload-time SHA-256 verification, four native-element
-   previews, sortable list/recycle bin/90-day retention, and Markdown-editor upload/drag-drop/paste
-   integration referencing `attachment://UUID`). This is likely the largest remaining item and may need
+1. The full attachments vertical (D15/D98-D105) is the only remaining Phase 5 item: upload API, hardwired
+   local filesystem storage, upload-time SHA-256 verification, four native-element previews, sortable
+   list/recycle bin/90-day retention, and Markdown-editor upload/drag-drop/paste integration referencing
+   `attachment://UUID`. This is likely the largest remaining item in the whole roadmap so far and may need
    its own multi-batch sub-effort.
-2. Optional UX polish that was never part of the write-route coverage goal: a friendlier bulk-status
-   picker that also supports Done-category statuses by prompting for a shared resolution;
-   keyboard-driven multi-select.
+2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
+   the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
+   status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
+   for a shared resolution; keyboard-driven multi-select.
 3. Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation is still
    deliberately unimplemented at the application/database layer (see "Finish Phase 3" above) -- no UI
    would have anywhere to call into for this even if it existed.
@@ -359,9 +377,9 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
   or any children, so this remains the one open path.
 
-Milestone 2's collaboration half (Phase 4) is now fully closed. What remains of Milestone 2 is the rest of
-Phase 5 (Kanban WIP limits/drag-and-drop, attachments -- filter/search widening and dashboard
-personalization are done), then Milestone 3 (API, backup/restore) and Milestone 4 (packaging and
+Milestone 2's collaboration half (Phase 4) is now fully closed. What remains of Milestone 2 is the
+attachments vertical, the last Phase 5 item (filter/search widening, dashboard personalization, and
+Kanban WIP limits are all done), then Milestone 3 (API, backup/restore) and Milestone 4 (packaging and
 hardening). Do not jump ahead to later-phase features early, and do not implement anything from
 `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
@@ -398,8 +416,8 @@ edit/delete any comment); `addCommentReaction`/`removeCommentReaction`/`listComm
 same three-layer coverage (SQLite-integration idempotency/listing, authorization-integration no-project-
 role/unknown-key/unknown-comment rejection, and a live-PostgreSQL smoke test); `findUserByHandle` and the
 five `notifications` methods gained the same three-layer coverage plus identity-integration coverage for
-handle normalization/uniqueness/format validation on `create-user`. The Phase 5 filter/search-widening and
-personal-dashboard slices each added their own SQLite-integration, authorization-integration,
-live-PostgreSQL, and browser-verification coverage on top of that. Full detail, including exactly what was
-exercised (and the several real bugs this browser testing and test-writing caught and fixed along the
-way), is in `docs/VERIFICATION.md`.
+handle normalization/uniqueness/format validation on `create-user`. Each Phase 5 slice so far
+(filter/search widening, personal dashboard, Kanban WIP limits) added its own SQLite-integration,
+authorization-integration, live-PostgreSQL, and browser-verification coverage on top of that. Full detail,
+including exactly what was exercised (and the several real bugs this browser testing and test-writing
+caught and fixed along the way), is in `docs/VERIFICATION.md`.

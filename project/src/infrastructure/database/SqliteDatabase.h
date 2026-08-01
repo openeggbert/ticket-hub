@@ -105,6 +105,8 @@ public:
     std::vector<Domain::AuditEvent> listAuditEvents(int limit) override;
 
     Domain::DashboardStats dashboardStats() override;
+    std::vector<Domain::BoardColumn> listBoardColumns() override;
+    bool setBoardColumnWipLimit(const std::string& statusKey, std::optional<int> wipLimit) override;
 
     Domain::Issue reorderIssue(const std::string& issueKey, std::optional<std::string> beforeIssueKey) override;
     Domain::Issue moveIssue(const std::string& issueKey,

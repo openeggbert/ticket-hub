@@ -453,4 +453,19 @@ struct DashboardStats {
     std::vector<Issue> upcomingDeadlines;
 };
 
+// Kanban board WIP limits (D32/D33): D32 keeps "one board column equals
+// one workflow status", so this is a single flat, installation-wide list
+// -- one row per fixed workflow status, not one per project per status.
+// `wipLimit` is nullopt for "no limit" and is always soft: a
+// display-time-only comparison against a column's live issue count, never
+// enforced server-side (an over-limit column is highlighted, not
+// blocked).
+struct BoardColumn {
+    std::string id;
+    std::string statusKey;
+    std::string statusName;
+    int sortOrder{};
+    std::optional<int> wipLimit;
+};
+
 } // namespace TicketHub::Domain
