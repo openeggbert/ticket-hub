@@ -73,7 +73,14 @@ Implemented now:
   written to by `moveIssue` (D38): the vacated key stays permanently resolvable to the moved issue,
 - recycle-bin schema foundations and live-query filtering,
 - domain, migration, crypto, SQLite integration, identity, authorization, and workflow tests (see "Known
-  verification limitation" below for what is *not* yet compiled/tested in this environment).
+  verification limitation" below for what is *not* yet compiled/tested in this environment),
+- **Phase 4 (Collaboration) and Phase 5 (Attachments and Kanban board) are both fully complete**, closing
+  out Milestone 2: fixed emoji reactions, @mention handles and in-app notifications, the Markdown editor
+  (toolbar/live preview/full upload+drag-drop+paste attachment support), simplified worklogs, the
+  admin/security audit log, ad-hoc issue filter/search widening, the personal dashboard, Kanban board WIP
+  limits, and the full attachments vertical (local filesystem storage, four native-element previews,
+  sortable list, recycle bin) — see the batch-by-batch history below and `docs/VERIFICATION.md` for exactly
+  what was built and verified in each.
 
 Authoritative documents:
 
@@ -203,6 +210,7 @@ Do not put production secrets in shell history. The target product uses a plugga
 | `TICKETHUB_SEED_DEMO` | `true` | apply idempotent demo data |
 | `TICKETHUB_WEB_ROOT` | source `web/` | static web root |
 | `TICKETHUB_MIGRATIONS_ROOT` | source `migrations/` | backend migration root |
+| `TICKETHUB_ATTACHMENTS_DIR` | source `data/attachments/` | local filesystem attachment storage root (D15) -- point this at a persistent, backed-up volume in a real deployment |
 
 ## Prototype API
 
@@ -248,6 +256,13 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `POST` | `/api/issues/{key}/worklogs` | session + CSRF, project member | `{workDate, timeSpentSeconds, comment?}` (D12/D13) |
 | `PATCH` | `/api/issues/{key}/worklogs/{id}` | session + CSRF, project member | full-replacement edit, no own-vs-others split |
 | `DELETE` | `/api/issues/{key}/worklogs/{id}` | session + CSRF, project member | tombstone delete, no own-vs-others split |
+| `GET` | `/api/issues/{key}/attachments` | session, or anon if enabled | active attachments (D15/D98-D105) |
+| `POST` | `/api/issues/{key}/attachments` | session + CSRF, project member | `multipart/form-data`, one `file` part; fixed 25MB/20-per-issue limits, D98 |
+| `DELETE` | `/api/issues/{key}/attachments/{id}` | session + CSRF, uploader or project admin | tombstone delete (D101) |
+| `GET` | `/api/attachments/{id}/download` | session, or anon if enabled | raw bytes with `Content-Type`/`Content-Disposition`; not nested under `/issues/{key}`, since a download/preview URL only ever needs the id |
+| `GET` | `/api/attachments/deleted` | session, global admin | recycle bin, 90-day on-demand retention (D102) |
+| `POST` | `/api/attachments/{id}/restore` | session + CSRF, global admin | restore from recycle bin |
+| `DELETE` | `/api/attachments/{id}/permanent` | session + CSRF, global admin | permanently delete (and its file) |
 | `POST` | `/api/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
 | `POST` | `/api/issues/{key}/reorder` | session + CSRF, project member | `{beforeIssueKey?}` — manual ordering (D31) |
 | `POST` | `/api/issues/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
@@ -615,6 +630,55 @@ pushing a column over its limit shows the highlight and raising the limit clears
 second project while the setting is unchanged confirms it is genuinely installation-wide rather than
 scoped to whichever project's board happened to be open when it was changed.
 
+A sixteenth batch completed Phase 5 (and closed out Milestone 2) with the full attachments vertical
+(D15/D98-D105). `attachments.sha256`/`deleted_at`/`deleted_by_user_id` already existed from
+`003_product_foundation.sql`, pre-provisioned well ahead of this phase; migration `014_attachments.sql`
+adds only the `issue_id` index that table never got. New `Domain::Attachment` (`id`, `issueId`,
+`issueKey` -- resolved via a join purely for the recycle bin's display, `uploader`, `fileName`,
+`contentType`, `byteSize`, `sha256`, `createdAt`, `deletedAt`). `IDatabase::createAttachment` is the one
+create* method that takes a caller-supplied `id`: the local filesystem storage key (D15, hardwired, no
+storage-backend abstraction) must be known -- and the file already written -- before the row is inserted,
+so a row never describes a file that doesn't exist on disk. `listAttachments`/`findAttachmentById`/
+`softDeleteAttachment`/`restoreAttachment`/`listDeletedAttachments`/`permanentlyDeleteAttachment` in both
+adapters mirror the issue/project/comment tombstone pattern; `listAttachmentStorageKeysForIssue`/
+`...ForProject` return every attachment's storage key regardless of soft-delete state, used to delete
+files on disk before a permanent issue/project delete cascades through the database (D105 has no
+periodic orphan-file audit at all). New `src/infrastructure/storage/LocalAttachmentStorage`: a plain,
+non-virtual class (D15 -- no abstract storage port, so no S3-shaped extension point either), keyed by the
+attachment's own UUID, rooted at `TICKETHUB_ATTACHMENTS_DIR`. New `Domain::validateAttachmentUpload`
+enforces D98's fixed limits (25MB/file, 20/issue, a blocked-extension denylist -- no admin configuration,
+no MIME allow-list, no quotas). `TicketService::uploadAttachment` (project-Member-or-above) computes the
+SHA-256 at upload time (D105, never re-verified); `downloadAttachment`/`listAttachments` mirror comments'
+read-access rule; `deleteAttachment` is uploader-or-project-Admin-or-above (mirroring D83's comment rule,
+the closest precedent); `listDeletedAttachments` implements D102's fixed 90-day on-demand retention
+itself, one layer above the SQL adapter, since purging an attachment also means deleting its file.
+`permanentlyDeleteIssue`/`permanentlyDeleteProject` were both extended to collect and delete affected
+attachment files before the database cascade runs. New `GET`/`POST /api/issues/{key}/attachments`,
+`DELETE /api/issues/{key}/attachments/{id}`, `GET /api/attachments/{id}/download` (not nested under
+`/issues/{key}`, since a download/preview URL only ever needs the id), and the recycle-bin routes (all
+global-admin-only). `web/`'s issue drawer gained a sortable Attachments section (D101: name/size/date/
+uploader/type), drag-and-drop upload, and native-element previews for all four D99 kinds (`<img>` for
+images, `<iframe>` for PDF and text, `<audio>`/`<video>` for the rest). The Markdown toolbar gained full
+upload + drag/drop + paste (D100) wherever an issue key is already known (both comment textareas, the
+issue-edit description -- deliberately not the create-issue form, since no issue exists yet to attach to),
+inserting `![name](attachment://id)`/`[name](attachment://id)` at the cursor;
+`renderMarkdownInline` gained real image-syntax support (previously absent entirely) and resolves
+`attachment://<id>` to a real download URL, validating the id shape first and leaving anything malformed
+as inert text -- the same "safe by construction" posture as the existing `javascript:`-scheme guard. A new
+admin-only "Attachment recycle bin" nav item mirrors the audit log's visibility pattern. New
+SQLite-integration and authorization-integration test coverage (full CRUD, both permission rules, the
+fixed limits, the recycle-bin split). Verified against live PostgreSQL directly. Extensively
+browser-verified with Playwright/Chromium: upload/preview/sort/delete through the real UI; all four
+preview kinds rendering the correct native element; real native `drop`/`paste` DOM events (not just
+`setInputFiles`) working on both the dedicated dropzone and directly on the Markdown editor; an inserted
+`attachment://` reference actually resolving to a working download link once a comment is posted and
+rendered; and the full recycle-bin restore/permanent-delete flow. Two real bugs were caught and fixed
+before this could be considered complete: a Postgres-only "inconsistent types deduced for $1" error from
+reusing one placeholder for two differently-typed columns in the `INSERT`, and a redundant first-draft
+migration that tried to re-add three columns the schema already had (caught immediately by `ctest`,
+never shipped). **This closes out Phase 5 -- every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5 list
+is now implemented, and Milestone 2 is fully closed.**
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -624,8 +688,9 @@ What **was** compiled and tested in this environment, with all warnings enabled
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
   renumbering, moving an issue between projects, and (Phase 4, now complete) comment editing/tombstone
   delete, fixed emoji reactions, @mention handles/the fixed in-app notification set, simplified worklogs,
-  the admin/security audit log, and (Phase 5, underway) the widened ad-hoc issue filter/search model,
-  personal dashboard widgets, and Kanban board WIP limits, in both database adapters),
+  the admin/security audit log, and (Phase 5, now complete) the widened ad-hoc issue filter/search model,
+  personal dashboard widgets, Kanban board WIP limits, and the full attachments vertical, in both database
+  adapters), plus `Infrastructure::Storage::LocalAttachmentStorage`,
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the

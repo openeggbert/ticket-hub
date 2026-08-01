@@ -38,7 +38,8 @@ void printDiagnostics(const TicketHub::Config::AppConfig& config) {
               << "auto_migrate=" << (config.autoMigrate ? "true" : "false") << '\n'
               << "seed_demo=" << (config.seedDemo ? "true" : "false") << '\n'
               << "web_root=" << config.webRoot << '\n'
-              << "migrations_root=" << config.migrationsRoot << '\n';
+              << "migrations_root=" << config.migrationsRoot << '\n'
+              << "attachments_root=" << config.attachmentsRoot << '\n';
 
     if (config.databaseDriver == "sqlite") {
         std::cout << "deployment_mode=single-process\n";

@@ -106,6 +106,15 @@ remain as the long-term aspirational baseline only — do not build against them
   table -- one row per fixed workflow status, no per-project scoping at all, following
   `docs/REDUCED_SCOPE_DATA_MODEL.md`'s target schema literally. Soft, display-time-only: an over-limit
   column is highlighted in `web/`'s Board view, never blocked from receiving more issues.
+- **Attachments (Phase 5, D15/D98-D105):** the full vertical -- upload, download, delete, and a recycle
+  bin, all via `/api/issues/{key}/attachments` plus `/api/attachments/{id}/...`. Local filesystem storage
+  only, hardwired (D15, no S3/pluggable backend). Fixed limits (D98): 25MB/file, 20/issue, a blocked-
+  extension denylist, no admin configuration. All four native-element previews (D99): image, PDF, text,
+  audio/video. Full upload + drag/drop + paste in the Markdown editor (D100), referencing
+  `attachment://<id>`. Sortable list + recycle bin (D101), fixed 90-day on-demand retention (D102).
+  Upload-time SHA-256/size verification only, no periodic integrity audit (D105). **This closes out Phase
+  5 -- every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5 list is now implemented, and Milestone 2 is
+  fully closed.**
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -113,9 +122,8 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Phase 4 is complete. Phase 5 (Attachments and Kanban board) is underway (filter/search widening,
-  dashboard personalization, and Kanban WIP limits done); only attachments (D15/D98-D105) remain.
-  Drag-and-drop board reordering is optional UX polish, not required by any decision.
+- Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
+  by any decision.
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).

@@ -242,6 +242,27 @@ SELECT w.id, w.issue_id, u.id, u.display_name, u.email,
 FROM worklogs w JOIN users u ON u.id = w.author_user_id
 )SQL";
 
+Domain::Attachment readAttachment(sqlite3_stmt* statement) {
+    Domain::Attachment attachment;
+    attachment.id = text(statement, 0);
+    attachment.issueId = text(statement, 1);
+    attachment.uploader = readUserSummary(statement, 2);
+    attachment.fileName = text(statement, 5);
+    attachment.contentType = text(statement, 6);
+    attachment.byteSize = sqlite3_column_int64(statement, 7);
+    attachment.sha256 = text(statement, 8);
+    attachment.createdAt = text(statement, 9);
+    attachment.deletedAt = optionalText(statement, 10);
+    attachment.issueKey = text(statement, 11);
+    return attachment;
+}
+
+constexpr const char* AttachmentSelect = R"SQL(
+SELECT a.id, a.issue_id, u.id, u.display_name, u.email,
+       a.file_name, a.content_type, a.byte_size, a.sha256, a.created_at, a.deleted_at, i.issue_key
+FROM attachments a JOIN users u ON u.id = a.uploader_user_id JOIN issues i ON i.id = a.issue_id
+)SQL";
+
 Domain::AuditEvent readAuditEvent(sqlite3_stmt* statement) {
     Domain::AuditEvent event;
     event.id = text(statement, 0);
@@ -2042,6 +2063,134 @@ bool SqliteDatabase::permanentlyDeleteIssue(const std::string& issueKey) {
     statement.bind(1, issueKey);
     statement.step();
     return sqlite3_changes(database_) > 0;
+}
+
+Domain::Attachment SqliteDatabase::createAttachment(const std::string& id,
+                                                    const std::string& issueKey,
+                                                    const std::string& uploaderUserId,
+                                                    const std::string& fileName,
+                                                    const std::string& contentType,
+                                                    const std::int64_t byteSize,
+                                                    const std::string& sha256) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+    const std::string uploaderId = requireUserId(database_, uploaderUserId);
+    Statement insert(database_, R"SQL(
+INSERT INTO attachments(id, issue_id, uploader_user_id, file_name, content_type, byte_size, storage_key, sha256)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?1, ?7)
+)SQL");
+    insert.bind(1, id);
+    insert.bind(2, issueId);
+    insert.bind(3, uploaderId);
+    insert.bind(4, fileName);
+    insert.bind(5, contentType);
+    insert.bind(6, byteSize);
+    insert.bind(7, sha256);
+    insert.step();
+
+    Statement read(database_, std::string(AttachmentSelect) + "WHERE a.id = ?");
+    read.bind(1, id);
+    if (read.step() != SQLITE_ROW) {
+        throw std::runtime_error("Failed to read back created attachment");
+    }
+    return readAttachment(read.get());
+}
+
+std::vector<Domain::Attachment> SqliteDatabase::listAttachments(const std::string& issueKey) {
+    std::scoped_lock lock(mutex_);
+    const std::string issueId = lookupIssueId(database_, issueKey);
+    Statement statement(database_, std::string(AttachmentSelect) + "WHERE a.issue_id = ?1 AND a.deleted_at IS NULL ORDER BY a.created_at");
+    statement.bind(1, issueId);
+    std::vector<Domain::Attachment> attachments;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        attachments.push_back(readAttachment(statement.get()));
+    }
+    return attachments;
+}
+
+std::optional<Domain::Attachment> SqliteDatabase::findAttachmentById(const std::string& attachmentId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(AttachmentSelect) + "WHERE a.id = ?");
+    statement.bind(1, attachmentId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readAttachment(statement.get());
+}
+
+bool SqliteDatabase::softDeleteAttachment(const std::string& attachmentId, const std::string& actorUserId) {
+    std::scoped_lock lock(mutex_);
+    const std::string actorId = requireUserId(database_, actorUserId);
+    Statement statement(database_, R"SQL(
+UPDATE attachments SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = ?
+WHERE id = ?2 AND deleted_at IS NULL
+)SQL");
+    statement.bind(1, actorId);
+    statement.bind(2, attachmentId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+bool SqliteDatabase::restoreAttachment(const std::string& attachmentId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE attachments SET deleted_at = NULL, deleted_by_user_id = NULL
+WHERE id = ? AND deleted_at IS NOT NULL
+)SQL");
+    statement.bind(1, attachmentId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+std::vector<Domain::Attachment> SqliteDatabase::listDeletedAttachments() {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(AttachmentSelect) + "WHERE a.deleted_at IS NOT NULL ORDER BY a.deleted_at DESC");
+    std::vector<Domain::Attachment> attachments;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        attachments.push_back(readAttachment(statement.get()));
+    }
+    return attachments;
+}
+
+bool SqliteDatabase::permanentlyDeleteAttachment(const std::string& attachmentId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "DELETE FROM attachments WHERE id = ? AND deleted_at IS NOT NULL");
+    statement.bind(1, attachmentId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+std::vector<std::string> SqliteDatabase::listAttachmentStorageKeysForIssue(const std::string& issueKey) {
+    std::scoped_lock lock(mutex_);
+    // Deliberately does not use lookupIssueId (which excludes soft-deleted
+    // issues): this is called right before a permanent delete, at which
+    // point the issue is expected to already be soft-deleted.
+    Statement statement(database_, R"SQL(
+SELECT a.storage_key FROM attachments a JOIN issues i ON i.id = a.issue_id
+WHERE i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1)
+)SQL");
+    statement.bind(1, issueKey);
+    std::vector<std::string> keys;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        keys.push_back(text(statement.get(), 0));
+    }
+    return keys;
+}
+
+std::vector<std::string> SqliteDatabase::listAttachmentStorageKeysForProject(const std::string& projectKey) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT a.storage_key FROM attachments a
+JOIN issues i ON i.id = a.issue_id
+JOIN projects p ON p.id = i.project_id
+WHERE p.project_key = ?
+)SQL");
+    statement.bind(1, projectKey);
+    std::vector<std::string> keys;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        keys.push_back(text(statement.get(), 0));
+    }
+    return keys;
 }
 
 } // namespace TicketHub::Infrastructure::Database

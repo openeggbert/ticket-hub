@@ -2,6 +2,7 @@
 
 #include "domain/Models.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -32,5 +33,12 @@ std::vector<std::string> validateCreateProject(const CreateProjectRequest& reque
 
 std::vector<std::string> validateAddWorklog(const AddWorklogRequest& request);
 std::vector<std::string> validateEditWorklog(const EditWorklogRequest& request);
+
+// Fixed attachment limits (D98): no admin configuration, no quotas.
+constexpr std::int64_t AttachmentMaxBytes = 25 * 1024 * 1024;
+constexpr int AttachmentMaxPerIssue = 20;
+std::vector<std::string> validateAttachmentUpload(const std::string& fileName,
+                                                  std::int64_t byteSize,
+                                                  int existingAttachmentCount);
 
 } // namespace TicketHub::Domain

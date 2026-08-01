@@ -1,5 +1,7 @@
 #include "application/TicketService.h"
 
+#include "common/Sha256.h"
+#include "common/Uuid.h"
 #include "domain/Errors.h"
 #include "domain/Validation.h"
 
@@ -69,8 +71,8 @@ Domain::EditIssueRequest editRequestFrom(const Domain::Issue& issue) {
 }
 } // namespace
 
-TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database)
-    : database_(std::move(database)) {
+TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database, std::string attachmentsRoot)
+    : database_(std::move(database)), attachmentStorage_(std::move(attachmentsRoot)) {
     if (!database_) {
         throw std::invalid_argument("database must not be null");
     }
@@ -386,6 +388,121 @@ bool TicketService::deleteWorklog(const std::string& issueKey, const std::string
     return database_->deleteWorklog(worklogId, actor.userId);
 }
 
+std::vector<Domain::Attachment> TicketService::listAttachments(const std::string& issueKey,
+                                                                const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listAttachments(Domain::normalizeIssueKey(issueKey));
+}
+
+// The attachment id doubles as its local filesystem storage key (see
+// IDatabase::createAttachment) -- unlike every other create* use case, the
+// id must be known and the file must already be written before the
+// database row is inserted, so a row never describes a file that doesn't
+// exist on disk. If the database insert fails after the file was written,
+// the file is orphaned (unreachable, never listed or served) rather than
+// leaving a broken database reference; D105 has no periodic audit to
+// reconcile this, but it is a silent waste of disk space, not a
+// user-visible correctness issue.
+Domain::Attachment TicketService::uploadAttachment(const std::string& issueKey,
+                                                    const std::string& fileName,
+                                                    const std::string& contentType,
+                                                    const std::string& bytes,
+                                                    const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+
+    const auto existingCount = static_cast<int>(database_->listAttachments(normalizedKey).size());
+    const auto errors = Domain::validateAttachmentUpload(fileName, static_cast<std::int64_t>(bytes.size()), existingCount);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+
+    const std::string id = Common::uuidV4();
+    const std::string sha256 = Common::sha256Hex(bytes);
+    attachmentStorage_.save(id, bytes);
+    return database_->createAttachment(id, normalizedKey, actor.userId, fileName, contentType,
+                                       static_cast<std::int64_t>(bytes.size()), sha256);
+}
+
+std::pair<Domain::Attachment, std::string> TicketService::downloadAttachment(
+    const std::string& attachmentId, const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    const auto attachment = database_->findAttachmentById(attachmentId);
+    if (!attachment) {
+        throw std::invalid_argument("Unknown attachment: " + attachmentId);
+    }
+    return {*attachment, attachmentStorage_.read(attachment->id)};
+}
+
+bool TicketService::deleteAttachment(const std::string& issueKey, const std::string& attachmentId,
+                                     const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const auto issue = database_->findIssueByKey(normalizedKey);
+    if (!issue) {
+        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    }
+    const auto attachment = database_->findAttachmentById(attachmentId);
+    if (!attachment) {
+        return false;
+    }
+    // The uploader may always delete their own attachment; otherwise the
+    // actor needs project-Admin-or-above on the issue's project (or global
+    // admin) -- mirrors D83's comment edit/delete rule, the closest
+    // existing precedent (no decision text addresses attachment deletion
+    // directly).
+    if (attachment->uploader.id != actor.userId) {
+        requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    }
+    return database_->softDeleteAttachment(attachmentId, actor.userId);
+}
+
+std::vector<Domain::Attachment> TicketService::listDeletedAttachments(const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    // Fixed 90-day on-demand retention (D102), implemented here rather than
+    // inside the database adapter (unlike listDeletedIssues/
+    // listDeletedProjects, which purge with a single DELETE entirely at the
+    // SQL layer): purging an attachment also means deleting its file on
+    // disk, which the SQL-only IDatabase layer cannot do. ISO 8601
+    // timestamps compare correctly as plain strings, so no date-parsing
+    // library is needed for the cutoff check.
+    const std::string cutoff = Common::utcNowPlusSecondsIso8601(-90LL * 24 * 3600);
+    auto deleted = database_->listDeletedAttachments();
+    std::vector<Domain::Attachment> stillRetained;
+    for (const auto& attachment : deleted) {
+        if (attachment.deletedAt && *attachment.deletedAt <= cutoff) {
+            attachmentStorage_.remove(attachment.id);
+            database_->permanentlyDeleteAttachment(attachment.id);
+            continue;
+        }
+        stillRetained.push_back(attachment);
+    }
+    return stillRetained;
+}
+
+bool TicketService::restoreAttachment(const std::string& attachmentId, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->restoreAttachment(attachmentId);
+}
+
+bool TicketService::permanentlyDeleteAttachment(const std::string& attachmentId, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    const auto attachment = database_->findAttachmentById(attachmentId);
+    if (!attachment) {
+        return false;
+    }
+    const bool deleted = database_->permanentlyDeleteAttachment(attachmentId);
+    if (deleted) {
+        attachmentStorage_.remove(attachment->id);
+        database_->recordAuditEvent("admin", "attachment.permanently_deleted", actor.userId,
+                                    std::string("attachment"), attachment->id, std::nullopt);
+    }
+    return deleted;
+}
+
 Domain::Issue TicketService::cloneIssue(const std::string& issueKey, const Domain::Principal& actor) {
     const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
     const auto source = database_->findIssueByKey(normalizedKey);
@@ -533,8 +650,16 @@ std::vector<Domain::Issue> TicketService::listDeletedIssues(const Domain::Princi
 bool TicketService::permanentlyDeleteIssue(const std::string& issueKey, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
     const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    // Collected before the delete, regardless of the attachments' own
+    // soft-delete state: ON DELETE CASCADE will hard-delete every
+    // attachment row under this issue, and there is no periodic orphan-file
+    // audit (D105) to catch files left behind afterward.
+    const auto storageKeys = database_->listAttachmentStorageKeysForIssue(normalizedKey);
     const bool deleted = database_->permanentlyDeleteIssue(normalizedKey);
     if (deleted) {
+        for (const auto& storageKey : storageKeys) {
+            attachmentStorage_.remove(storageKey);
+        }
         database_->recordAuditEvent("admin", "issue.permanently_deleted", actor.userId, std::string("issue"),
                                     normalizedKey, std::nullopt);
     }
@@ -725,8 +850,15 @@ std::vector<Domain::Project> TicketService::listDeletedProjects(const Domain::Pr
 bool TicketService::permanentlyDeleteProject(const std::string& projectKey, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
     const std::string normalizedKey = Domain::normalizeProjectKey(projectKey);
+    // Same reasoning as permanentlyDeleteIssue: collected before the delete
+    // since ON DELETE CASCADE will hard-delete every issue (and therefore
+    // every attachment) under this project.
+    const auto storageKeys = database_->listAttachmentStorageKeysForProject(normalizedKey);
     const bool deleted = database_->permanentlyDeleteProject(normalizedKey);
     if (deleted) {
+        for (const auto& storageKey : storageKeys) {
+            attachmentStorage_.remove(storageKey);
+        }
         database_->recordAuditEvent("admin", "project.permanently_deleted", actor.userId, std::string("project"),
                                     normalizedKey, std::nullopt);
     }

@@ -2,17 +2,25 @@
 
 #include "domain/Models.h"
 #include "infrastructure/database/IDatabase.h"
+#include "infrastructure/storage/LocalAttachmentStorage.h"
 
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace TicketHub::Application {
 
 class TicketService {
 public:
-    explicit TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database);
+    // `attachmentsRoot` defaults to a relative dev-mode path; production
+    // wiring (src/main.cpp) always passes the configured
+    // TICKETHUB_ATTACHMENTS_DIR explicitly. Tests that don't exercise
+    // attachments can ignore it; ones that do construct with their own
+    // throwaway directory.
+    explicit TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database,
+                           std::string attachmentsRoot = "./data/attachments");
 
     std::string backendName() const;
 
@@ -122,6 +130,33 @@ public:
                                                const Domain::Principal& actor,
                                                std::optional<std::int64_t> expectedVersion = std::nullopt);
     bool deleteWorklog(const std::string& issueKey, const std::string& worklogId, const Domain::Principal& actor);
+
+    // Attachments (Phase 5, D15/D98-D105). Read access mirrors comments/
+    // issues (any authenticated user, or anonymous if the installation
+    // toggle is on). Uploading requires project-Member-or-above on the
+    // issue's project, the same level as every other issue write. Deleting
+    // is uploader-or-project-Admin-or-above -- no decision text specifies
+    // this, so it mirrors D83's comment edit/delete rule as the closest
+    // precedent (both are "content a specific user added to an issue").
+    // The recycle bin (list deleted/restore/permanent-delete) is
+    // global-administrator-only, the same split as the issue and project
+    // recycle bins.
+    std::vector<Domain::Attachment> listAttachments(const std::string& issueKey,
+                                                     const std::optional<Domain::Principal>& actor);
+    Domain::Attachment uploadAttachment(const std::string& issueKey,
+                                        const std::string& fileName,
+                                        const std::string& contentType,
+                                        const std::string& bytes,
+                                        const Domain::Principal& actor);
+    // Returns the attachment's metadata alongside its raw bytes -- the
+    // download route needs both (bytes for the body, metadata for the
+    // filename/content-type response headers).
+    std::pair<Domain::Attachment, std::string> downloadAttachment(const std::string& attachmentId,
+                                                                   const std::optional<Domain::Principal>& actor);
+    bool deleteAttachment(const std::string& issueKey, const std::string& attachmentId, const Domain::Principal& actor);
+    std::vector<Domain::Attachment> listDeletedAttachments(const Domain::Principal& actor);
+    bool restoreAttachment(const std::string& attachmentId, const Domain::Principal& actor);
+    bool permanentlyDeleteAttachment(const std::string& attachmentId, const Domain::Principal& actor);
 
     // Simple field-copy clone (D60): summary/description/type/priority/labels
     // into a new issue in the same project, plus a `clones`/`is cloned by`
@@ -250,6 +285,7 @@ public:
 
 private:
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;
+    Infrastructure::Storage::LocalAttachmentStorage attachmentStorage_;
 
     void requireProjectRole(const Domain::Principal& actor, const std::string& projectKey, int minimumRank) const;
     void requireGlobalAdmin(const Domain::Principal& actor) const;

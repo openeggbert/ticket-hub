@@ -237,4 +237,60 @@ std::vector<std::string> validateEditWorklog(const EditWorklogRequest& request) 
     return errors;
 }
 
+namespace {
+
+// D98: "blocked dangerous extensions" -- a denylist, not a MIME allow-list
+// (the original decision's allow/deny/quota configuration subsystem was
+// simplified away entirely). Chosen as a conservative, common set of
+// directly-executable/script file types; not exhaustive antivirus-grade
+// filtering, which D98 explicitly excludes.
+const std::vector<std::string>& blockedAttachmentExtensions() {
+    static const std::vector<std::string> extensions = {
+        "exe", "bat", "cmd", "com", "scr", "msi", "msp", "dll", "ps1", "psm1",
+        "vbs", "vbe", "js", "jse", "wsf", "wsh", "jar", "app", "apk", "sh",
+        "bin", "cpl", "gadget", "hta", "lnk", "reg", "vb", "ws", "action",
+    };
+    return extensions;
+}
+
+std::string lowerExtension(const std::string& fileName) {
+    const auto dot = fileName.find_last_of('.');
+    if (dot == std::string::npos || dot + 1 == fileName.size()) {
+        return {};
+    }
+    std::string extension = fileName.substr(dot + 1);
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](const unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return extension;
+}
+
+} // namespace
+
+std::vector<std::string> validateAttachmentUpload(const std::string& fileName,
+                                                  const std::int64_t byteSize,
+                                                  const int existingAttachmentCount) {
+    std::vector<std::string> errors;
+    if (trim(fileName).empty()) {
+        errors.emplace_back("File name is required");
+    }
+    if (byteSize <= 0) {
+        errors.emplace_back("File must not be empty");
+    }
+    if (byteSize > AttachmentMaxBytes) {
+        errors.emplace_back("File exceeds the maximum attachment size of 25MB");
+    }
+    if (existingAttachmentCount >= AttachmentMaxPerIssue) {
+        errors.emplace_back("This issue already has the maximum of 20 attachments");
+    }
+    const auto extension = lowerExtension(fileName);
+    if (!extension.empty()) {
+        const auto& blocked = blockedAttachmentExtensions();
+        if (std::find(blocked.begin(), blocked.end(), extension) != blocked.end()) {
+            errors.emplace_back("File type ." + extension + " is not allowed");
+        }
+    }
+    return errors;
+}
+
 } // namespace TicketHub::Domain
