@@ -913,13 +913,33 @@ async function renderBoard() {
   state.filterLabel = '';
   state.filterDueBefore = '';
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  await fetchIssues();
+  const [, boardColumns] = await Promise.all([fetchIssues(), api('/api/board-columns')]);
+  const isAdmin = Boolean(state.principal?.isAdmin);
   const selected = state.projects.find(project => project.key === state.selectedProject);
   const columns = STATUSES.map(status => {
     const issues = state.issues.filter(issue => issue.status.key === status.key);
+    // Kanban WIP limits (D32/D33): a single flat, installation-wide limit
+    // per fixed workflow status -- soft and display-time-only, an
+    // over-limit column is highlighted, never blocked from receiving more
+    // issues.
+    const column = boardColumns.items.find(candidate => candidate.statusKey === status.key);
+    const wipLimit = column?.wipLimit ?? null;
+    const overLimit = wipLimit !== null && issues.length > wipLimit;
+    const countLabel = wipLimit !== null ? `${issues.length} / ${wipLimit}` : `${issues.length}`;
+    const wipEditor = isAdmin ? `
+      <div class="wip-limit-edit">
+        <input type="number" min="0" placeholder="No limit" value="${wipLimit !== null ? wipLimit : ''}" data-wip-input="${escapeHtml(status.key)}" title="WIP limit for ${escapeHtml(status.name)}">
+        <button type="button" class="icon-button" data-wip-save="${escapeHtml(status.key)}" aria-label="Save WIP limit">✓</button>
+      </div>` : '';
     return `
       <section class="board-column">
-        <div class="board-column-header"><strong>${escapeHtml(status.name)}</strong><span class="column-count">${issues.length}</span></div>
+        <div class="board-column-header">
+          <strong>${escapeHtml(status.name)}</strong>
+          <div class="board-column-header-actions">
+            <span class="column-count ${overLimit ? 'over-limit' : ''}" title="${overLimit ? 'Over the soft WIP limit' : ''}">${countLabel}</span>
+          </div>
+        </div>
+        ${wipEditor}
         <div class="board-list">
           ${issues.length ? issues.map(issue => `
             <article class="issue-card" data-issue-key="${escapeHtml(issue.key)}">
@@ -934,7 +954,7 @@ async function renderBoard() {
 
   content.innerHTML = `
     <div class="page-header">
-      <div><span class="eyebrow">${escapeHtml(state.selectedProject || 'Project')}</span><h1>${escapeHtml(selected?.name || 'Board')}</h1><p>Simple status-based Kanban board.</p></div>
+      <div><span class="eyebrow">${escapeHtml(state.selectedProject || 'Project')}</span><h1>${escapeHtml(selected?.name || 'Board')}</h1><p>Simple status-based Kanban board.${isAdmin ? ' Soft WIP limits are installation-wide and apply to every project’s board.' : ''}</p></div>
       <div class="page-actions"><select id="board-project" class="status-select">${state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('')}</select></div>
     </div>
     <div class="board">${columns}</div>`;
@@ -942,6 +962,17 @@ async function renderBoard() {
     state.selectedProject = event.target.value;
     renderBoard().catch(showError);
   });
+  document.querySelectorAll('[data-wip-save]').forEach(button => button.addEventListener('click', async () => {
+    const statusKey = button.dataset.wipSave;
+    const input = document.querySelector(`[data-wip-input="${CSS.escape(statusKey)}"]`);
+    const raw = input.value.trim();
+    const wipLimit = raw === '' ? null : Number(raw);
+    try {
+      await api(`/api/board-columns/${encodeURIComponent(statusKey)}`, { method: 'PUT', body: JSON.stringify({ wipLimit }) });
+      showToast('WIP limit updated');
+      await renderBoard();
+    } catch (error) { showToast(error.message); }
+  }));
   bindIssueLinks();
 }
 

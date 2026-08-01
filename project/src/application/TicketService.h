@@ -28,6 +28,14 @@ public:
     std::vector<Domain::Comment> listComments(const std::string& issueKey, const std::optional<Domain::Principal>& actor);
     Domain::DashboardStats dashboard(const std::optional<Domain::Principal>& actor);
 
+    // Kanban board WIP limits (D32/D33): a single flat, installation-wide
+    // list (same read-access rule as projects/issues). Setting a limit is
+    // global-administrator-only, like the anonymous-read toggle -- there is
+    // no per-project board admin concept in the reduced-scope model.
+    std::vector<Domain::BoardColumn> listBoardColumns(const std::optional<Domain::Principal>& actor);
+    void setBoardColumnWipLimit(const std::string& statusKey, std::optional<int> wipLimit,
+                                const Domain::Principal& actor);
+
     bool isAnonymousReadEnabled();
     // Global-administrator-only: it is an installation-wide toggle, not a
     // per-project setting.

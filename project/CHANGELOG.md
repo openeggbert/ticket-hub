@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Kanban board WIP limits (D32/D33) — Phase 5 continued
+
+- **Kanban board WIP limits (D32/D33)**: `GET /api/board-columns` returns one entry per fixed workflow
+  status with its optional `wipLimit`; `PUT /api/board-columns/{statusKey}` sets or clears it
+  (global-administrator-only). This is a single flat, installation-wide setting -- one limit per status
+  shared by every project's board, not a per-project setting.
+- New migration `013_board_columns.sql` (both backends).
+- `web/`: the Board view shows each column's count as `N / limit` with a soft, non-blocking highlight
+  when a column is over its limit; global admins get an inline editor to set/clear the limit.
+
 ## Unreleased — Personal dashboard widgets (D24) — Phase 5 continued
 
 - **Personal dashboard (D24)**: `GET /api/dashboard` now also returns `assignedToMe`, `watchedIssues`, and

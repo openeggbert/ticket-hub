@@ -582,6 +582,67 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
+    // Kanban board WIP limits (D32/D33): a single flat, installation-wide
+    // list (same read-access rule as projects/issues), settable only by a
+    // global administrator (there is no per-project board admin concept in
+    // the reduced-scope model).
+    CROW_ROUTE(app, "/api/board-columns")([service, authService](const crow::request& request) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& column : service->listBoardColumns(resolvePrincipal(request, authService))) {
+                crow::json::wvalue item;
+                item["id"] = column.id;
+                item["statusKey"] = column.statusKey;
+                item["statusName"] = column.statusName;
+                item["sortOrder"] = column.sortOrder;
+                if (column.wipLimit) {
+                    item["wipLimit"] = *column.wipLimit;
+                } else {
+                    item["wipLimit"] = nullptr;
+                }
+                items.emplace_back(std::move(item));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/board-columns/<string>")
+    .methods(crow::HTTPMethod::Put)([service, authService](const crow::request& request, const std::string& statusKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            std::optional<int> wipLimit;
+            if (body && body.has("wipLimit") && body["wipLimit"].t() != crow::json::type::Null) {
+                if (body["wipLimit"].t() != crow::json::type::Number) {
+                    return errorResponse(400, "wipLimit must be a number or null");
+                }
+                wipLimit = static_cast<int>(body["wipLimit"].i());
+            }
+            service->setBoardColumnWipLimit(statusKey, wipLimit, *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
     CROW_ROUTE(app, "/api/issues")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {

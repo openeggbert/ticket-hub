@@ -1,5 +1,74 @@
 # Verification record
 
+## 2026-08-01 — Kanban board WIP limits (D32/D33): Phase 5 slice 3
+
+Third Phase 5 slice. Only the full attachments vertical (D15/D98-D105) remains. Drag-and-drop board
+reordering was deliberately left out of this batch: neither D32 nor D33 mentions it, and the roadmap's own
+Phase 5 exit gate ("board usable end-to-end") is already satisfied by click-to-drawer status changes,
+which existed before this batch. It stays listed as optional UX polish in `NEXT.md`, same as before.
+
+### What changed
+
+- Migration `013_board_columns.sql` (both backends) adds `board_columns` -- a **single flat,
+  installation-wide** table (`id`, `status_id` UNIQUE FK to `issue_statuses`, `wip_limit` nullable,
+  `sort_order`), one row per fixed workflow status. This follows `docs/REDUCED_SCOPE_DATA_MODEL.md`'s
+  target schema literally: no `board_id`/`project_id` column at all, matching D32's "one board column
+  equals one workflow status" and D33's "cheap: one numeric field per column" reasoning. A WIP limit set
+  on a column therefore applies to that status's column on *every* project's board, not per-project --
+  there is no per-project board identity in the reduced-scope model. `002_seed_demo.sql` seeds the five
+  rows (unlimited except "In Progress", given a demo-friendly limit of 3).
+- `Domain::BoardColumn`; `IDatabase::listBoardColumns()` (ordered by `sort_order`) and
+  `setBoardColumnWipLimit(statusKey, optional<int>)` (returns `false` for an unknown status key) in both
+  adapters.
+- `TicketService::listBoardColumns` (same read-access rule as projects/issues) and
+  `setBoardColumnWipLimit` (global-administrator-only, like the anonymous-read toggle -- there is no
+  per-project board-admin concept to delegate to instead); an unknown status key throws
+  `std::invalid_argument`.
+- New `GET /api/board-columns` and `PUT /api/board-columns/{statusKey}` routes.
+- `web/`: the Board view fetches board columns alongside issues and shows each column's live count as
+  `N / limit` when a limit is set (plain `N` when unlimited), applying a `.over-limit` highlight class
+  (soft, display-time-only -- moving or creating issues into an over-limit column is never blocked) when
+  the count exceeds the limit. Global admins additionally see a small inline number input per column to
+  set/clear its WIP limit (empty input clears it back to unlimited); non-admins see the count only.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green. New `sqlite_integration_tests` coverage: five seeded columns in
+   `sort_order`, the seeded "In Progress" limit of 3, an unlimited column reporting no limit, setting a
+   limit and reading it back, clearing a limit back to unlimited, and setting a limit on an unknown status
+   key returning `false`. New `authorization_integration_tests` coverage: any authenticated user can read
+   board columns; setting a limit is global-administrator-only; a global admin's change is visible to any
+   reader; an unknown status key throws.
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised
+   `PostgresDatabase::listBoardColumns`/`setBoardColumnWipLimit` directly against a throwaway
+   `tickethub_board_test_*` database -- the same five-column/seeded-limit/set/clear/unknown-key cases as
+   the SQLite integration test. All passed; database dropped afterward.
+5. Standalone Playwright/Chromium script, against a locally running server, SQLite, demo-seeded: logged in
+   as sam (non-admin) and confirmed the board shows column counts (`"1 / 3"` for TH's seeded In Progress
+   column) with no WIP-editor controls visible; logged in as demo (global admin) and confirmed the editor
+   controls appear; created three more in-progress TH issues via the API to push the count to 4/3 and
+   confirmed the over-limit highlight class appears; raised the limit to 10 through the real inline editor
+   control and confirmed the highlight clears; cleared the limit back to unlimited; switched to the WEB
+   project and confirmed its In Progress column reflects the same (cleared) limit, directly demonstrating
+   the setting is genuinely installation-wide and not accidentally scoped to whichever project was open
+   when it was changed.
+6. Re-ran the markdown, mentions/notifications, comment-reaction, worklog, audit-log, comment
+   edit/delete, filter-widening, and dashboard-personalization browser tests against the same build to
+   confirm no regression -- all still pass unchanged.
+
+All checks passed. No committed test scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+Only the full attachments vertical (D15/D98-D105) remains in Phase 5: upload API, hardwired local
+filesystem storage, upload-time SHA-256 verification, four native-element previews, sortable
+list/recycle bin/90-day retention, and Markdown-editor upload/drag-drop/paste integration referencing
+`attachment://UUID`. Drag-and-drop board reordering remains optional UX polish, not required by any
+decision.
+
 ## 2026-08-01 — Personal dashboard widgets (D24): Phase 5 slice 2
 
 Second Phase 5 slice. Kanban WIP limits/drag-and-drop (D33) and the attachments vertical

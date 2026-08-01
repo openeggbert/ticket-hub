@@ -42,8 +42,11 @@ Current schema migrations:
 - `012_audit_log.sql` — simple append-only admin/security audit log (Phase 4 of
   `REDUCED_SCOPE_ROADMAP.md`, D23, the last item in Phase 4). Adds `audit_events`; rows are never
   updated or purged.
+- `013_board_columns.sql` — Kanban board WIP limits (Phase 5 of `REDUCED_SCOPE_ROADMAP.md`, D32/D33).
+  Adds `board_columns`, a single flat, installation-wide table with no `board_id`/`project_id` column at
+  all -- one row per fixed workflow status, not one per project per status.
 
-`002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, an explicit `rank_order` (equal to `issue_number`) for each seeded issue, and (since `010_mentions_and_notifications.sql`, which `seed-demo` always applies first) a `handle` for each of the three demo users.
+`002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, an explicit `rank_order` (equal to `issue_number`) for each seeded issue, (since `010_mentions_and_notifications.sql`, which `seed-demo` always applies first) a `handle` for each of the three demo users, and (since `013_board_columns.sql`) one `board_columns` row per fixed workflow status, with "In Progress" given a demo WIP limit of 3.
 
 ## Current tables
 
@@ -349,6 +352,19 @@ existing writes -- `AuthService::login` (failed/blocked) and `createUser`, `Tick
 setAnonymousReadEnabled`, `permanentlyDeleteProject`, `permanentlyDeleteIssue` -- not a general-purpose
 audit hook on every write. `TicketService::listAuditEvents` is global-administrator-only, like the
 recycle bins.
+
+### `board_columns`
+
+`id`, `status_id` (unique FK to `issue_statuses`), `wip_limit` (nullable), `sort_order` -- migration
+`013_board_columns.sql` (Phase 5, D32/D33). A single flat, installation-wide table, not one row per
+project per status: D32 keeps "one board column equals one workflow status" and the reduced-scope data
+model's target schema for this table lists only `status_id`/`wip_limit`/`sort_order`, with no
+`board_id`/`project_id` column at all. A WIP limit set on a column therefore applies to that status's
+column on every project's board -- there is no per-project board identity in the reduced-scope model.
+`wip_limit` is always soft: `IDatabase::setBoardColumnWipLimit` never blocks a status transition or issue
+creation, it only changes what `web/`'s Board view highlights at display time.
+`TicketService::setBoardColumnWipLimit` is global-administrator-only, like the anonymous-read toggle,
+since there is no per-project board-admin concept to delegate the setting to instead.
 
 ### `attachments`
 

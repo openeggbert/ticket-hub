@@ -297,6 +297,24 @@ SELECT a.id, a.category, a.action, u.id, u.display_name, u.email,
 FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id
 )SQL";
 
+Domain::BoardColumn readBoardColumn(PGresult* result, int row) {
+    Domain::BoardColumn column;
+    column.id = value(result, row, 0);
+    column.statusKey = value(result, row, 1);
+    column.statusName = value(result, row, 2);
+    column.sortOrder = std::stoi(value(result, row, 3));
+    if (PQgetisnull(result, row, 4) == 0) {
+        column.wipLimit = std::stoi(value(result, row, 4));
+    }
+    return column;
+}
+
+constexpr const char* BoardColumnSelect = R"SQL(
+SELECT bc.id, s.status_key, s.name, bc.sort_order, bc.wip_limit
+FROM board_columns bc JOIN issue_statuses s ON s.id = bc.status_id
+ORDER BY bc.sort_order
+)SQL";
+
 } // namespace
 
 PostgresDatabase::PostgresDatabase(std::string connectionString,
@@ -1680,6 +1698,27 @@ WHERE i.deleted_at IS NULL
     }
     stats.recentIssues = std::move(recent);
     return stats;
+}
+
+std::vector<Domain::BoardColumn> PostgresDatabase::listBoardColumns() {
+    auto connection = connect(connectionString_);
+    auto result = exec(connection.get(), BoardColumnSelect, "List board columns");
+    std::vector<Domain::BoardColumn> columns;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        columns.push_back(readBoardColumn(result.get(), row));
+    }
+    return columns;
+}
+
+bool PostgresDatabase::setBoardColumnWipLimit(const std::string& statusKey, const std::optional<int> wipLimit) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE board_columns SET wip_limit = $1
+WHERE status_id = (SELECT id FROM issue_statuses WHERE status_key = $2)
+)SQL",
+                             {wipLimit ? std::optional<std::string>(std::to_string(*wipLimit)) : std::nullopt, statusKey},
+                             "Set board column WIP limit");
+    return std::string(PQcmdTuples(result.get())) != "0";
 }
 
 Domain::IssueLink PostgresDatabase::createIssueLink(const std::string& sourceIssueKey,

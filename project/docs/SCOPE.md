@@ -101,6 +101,11 @@ remain as the long-term aspirational baseline only — do not build against them
   D24's fixed widget set (assigned issues, watched issues, recent activity, deadlines, simple stats) minus
   the active-sprint widget, dropped since Scrum was removed for V1. `assignedToMe`/`upcomingDeadlines`
   exclude Done-category issues.
+- **Kanban board WIP limits (Phase 5, D32/D33):** `GET /api/board-columns` and
+  `PUT /api/board-columns/{statusKey}` (global-administrator-only). A single flat, installation-wide
+  table -- one row per fixed workflow status, no per-project scoping at all, following
+  `docs/REDUCED_SCOPE_DATA_MODEL.md`'s target schema literally. Soft, display-time-only: an over-limit
+  column is highlighted in `web/`'s Board view, never blocked from receiving more issues.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -108,9 +113,9 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Phase 4 is complete. Phase 5 (Attachments and Kanban board) is underway (filter/search widening and
-  dashboard personalization done); Kanban WIP limits/drag-and-drop (D33) and attachments
-  (D15/D98-D105) are not implemented yet.
+- Phase 4 is complete. Phase 5 (Attachments and Kanban board) is underway (filter/search widening,
+  dashboard personalization, and Kanban WIP limits done); only attachments (D15/D98-D105) remain.
+  Drag-and-drop board reordering is optional UX polish, not required by any decision.
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).

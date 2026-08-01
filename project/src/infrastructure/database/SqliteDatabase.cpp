@@ -265,6 +265,24 @@ SELECT a.id, a.category, a.action, u.id, u.display_name, u.email,
 FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id
 )SQL";
 
+Domain::BoardColumn readBoardColumn(sqlite3_stmt* statement) {
+    Domain::BoardColumn column;
+    column.id = text(statement, 0);
+    column.statusKey = text(statement, 1);
+    column.statusName = text(statement, 2);
+    column.sortOrder = sqlite3_column_int(statement, 3);
+    if (sqlite3_column_type(statement, 4) != SQLITE_NULL) {
+        column.wipLimit = sqlite3_column_int(statement, 4);
+    }
+    return column;
+}
+
+constexpr const char* BoardColumnSelect = R"SQL(
+SELECT bc.id, s.status_key, s.name, bc.sort_order, bc.wip_limit
+FROM board_columns bc JOIN issue_statuses s ON s.id = bc.status_id
+ORDER BY bc.sort_order
+)SQL";
+
 } // namespace
 
 SqliteDatabase::SqliteDatabase(std::string databasePath, std::string migrationsDirectory, std::string seedPath)
@@ -1760,6 +1778,28 @@ WHERE i.deleted_at IS NULL
     }
     stats.recentIssues = std::move(recent);
     return stats;
+}
+
+std::vector<Domain::BoardColumn> SqliteDatabase::listBoardColumns() {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, BoardColumnSelect);
+    std::vector<Domain::BoardColumn> columns;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        columns.push_back(readBoardColumn(statement.get()));
+    }
+    return columns;
+}
+
+bool SqliteDatabase::setBoardColumnWipLimit(const std::string& statusKey, const std::optional<int> wipLimit) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE board_columns SET wip_limit = ?1
+WHERE status_id = (SELECT id FROM issue_statuses WHERE status_key = ?2)
+)SQL");
+    wipLimit ? statement.bind(1, static_cast<std::int64_t>(*wipLimit)) : statement.bindNull(1);
+    statement.bind(2, statusKey);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
 }
 
 Domain::IssueLink SqliteDatabase::createIssueLink(const std::string& sourceIssueKey,
