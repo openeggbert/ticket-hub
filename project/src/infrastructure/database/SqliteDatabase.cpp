@@ -785,12 +785,24 @@ ORDER BY p.name
 
 std::vector<Domain::Issue> SqliteDatabase::listIssues(const Domain::IssueFilter& filter) {
     std::scoped_lock lock(mutex_);
+    // `label` is checked via EXISTS rather than the already-joined/aggregated
+    // issue_labels/labels (which feed the GROUP_CONCAT summary column) --
+    // filtering on the joined row directly would silently drop every other
+    // label the issue has from that GROUP_CONCAT.
     const std::string sql = std::string(IssueSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
   AND (?1 IS NULL OR p.project_key = ?1)
   AND (?2 IS NULL OR s.status_key = ?2)
-  AND (?3 IS NULL OR LOWER(i.summary) LIKE LOWER(?3) OR LOWER(i.issue_key) LIKE LOWER(?3))
+  AND (?3 IS NULL OR it.type_key = ?3)
+  AND (?4 IS NULL OR pr.priority_key = ?4)
+  AND (?5 IS NULL OR assignee.email = ?5)
+  AND (?6 IS NULL OR i.due_date <= ?6)
+  AND (?7 IS NULL OR EXISTS (
+        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.issue_id = i.id AND LOWER(l2.name) = LOWER(?7)))
+  AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
+       OR LOWER(i.issue_key) LIKE LOWER(?8))
 GROUP BY i.id
 ORDER BY i.updated_at DESC, i.issue_key DESC
 LIMIT 200
@@ -798,7 +810,12 @@ LIMIT 200
     Statement statement(database_, sql);
     filter.projectKey ? statement.bind(1, *filter.projectKey) : statement.bindNull(1);
     filter.statusKey ? statement.bind(2, *filter.statusKey) : statement.bindNull(2);
-    filter.search ? statement.bind(3, "%" + *filter.search + "%") : statement.bindNull(3);
+    filter.issueTypeKey ? statement.bind(3, *filter.issueTypeKey) : statement.bindNull(3);
+    filter.priorityKey ? statement.bind(4, *filter.priorityKey) : statement.bindNull(4);
+    filter.assigneeEmail ? statement.bind(5, *filter.assigneeEmail) : statement.bindNull(5);
+    filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
+    filter.label ? statement.bind(7, *filter.label) : statement.bindNull(7);
+    filter.search ? statement.bind(8, "%" + *filter.search + "%") : statement.bindNull(8);
 
     std::vector<Domain::Issue> issues;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {

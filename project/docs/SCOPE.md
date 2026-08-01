@@ -91,6 +91,11 @@ remain as the long-term aspirational baseline only — do not build against them
   general-purpose hook on every write. Global-administrator-only read access, via a new "Audit log" nav
   item in `web/`. **This closes out Phase 4 (Collaboration) -- every item in
   `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 4 list is now implemented.**
+- **Ad-hoc issue filter/search widening (Phase 5, D10/D43):** `GET /api/issues` and `Domain::IssueFilter`
+  now also support type/priority/assignee/label/due-date filters (in addition to project/status/search),
+  and search now also matches issue description, not just summary/key. Still ad-hoc, in-UI-only filters
+  (no saved/shared filters, no JQL, not usable as a webhook/board source) and still a plain `LIKE`/`ILIKE`
+  substring match (no full-text index). This is the first Phase 5 slice.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -98,7 +103,9 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Phase 4 is complete. Attachments and the Kanban board are not implemented (Phase 5).
+- Phase 4 is complete. Phase 5 (Attachments and Kanban board) is started (filter/search widening done);
+  dashboard personalization (D24), Kanban WIP limits/drag-and-drop (D33), and attachments
+  (D15/D98-D105) are not implemented yet.
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).

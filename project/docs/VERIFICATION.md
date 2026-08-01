@@ -1,5 +1,68 @@
 # Verification record
 
+## 2026-08-01 — Ad-hoc issue filter/search widening (D10/D43): Phase 5 slice 1
+
+First Phase 5 (Attachments and Kanban board) slice. `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5 list also
+covers dashboard personalization (D24), Kanban WIP limits/drag-and-drop (D33), and the full attachments
+vertical (D15/D98-D105); none of those are touched by this batch.
+
+### What changed
+
+- `Domain::IssueFilter` gains `issueTypeKey`, `priorityKey`, `assigneeEmail`, `label`, and `dueBefore`
+  (all optional, alongside the pre-existing `projectKey`/`statusKey`/`search`) -- still the ad-hoc,
+  in-UI-only filter model from D10: no saved/shared filters, no JQL, not usable as a webhook or board
+  source.
+- `SqliteDatabase::listIssues`/`PostgresDatabase::listIssues` both widened to the same 8-parameter
+  `WHERE` clause: type/priority/assignee are plain equality joins against already-present aliases;
+  `dueBefore` is an inclusive `<=` comparison; `label` is a fresh `EXISTS` subquery against
+  `issue_labels`/`labels` (SQLite) or `issue_labels`/`labels` (PostgreSQL) rather than a condition on the
+  already-aggregated label-list column, so a label filter narrows *which issues* match without dropping
+  any of a matching issue's *other* labels from its displayed label list; `search` now also matches
+  `i.description`, not just summary/issue key, per D43's "simple `LIKE`/`ILIKE` substring match, no
+  full-text index" scope.
+- `GET /api/issues` accepts new `type`, `priority`, `assignee`, `label`, and `dueBefore` query parameters.
+  `TicketService::listIssues` needed no change -- it already passed the filter through unchanged.
+- `web/`: the Issues view's filter bar gains type/priority/assignee dropdowns (fixed catalogs, matching
+  the create-issue form's own hardcoded option lists), a label text input, and a due-date picker,
+  alongside the pre-existing project/status/search controls. "Clear" and the Board/global-search
+  transitions all reset the new fields too, so a lingering ad-hoc filter from the Issues view can't
+  silently leak into the Board view or a fresh global search.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green, including new `sqlite_integration_tests` assertions covering
+   each new filter field individually, a combined multi-field filter, the inclusive `dueBefore` boundary,
+   the widened description search, and an explicit check that filtering by label does not mutate or
+   truncate the filtered issue's own label list.
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised the widened
+   `PostgresDatabase::listIssues` directly -- created and edited an issue, then asserted the same
+   type/priority/assignee/label/dueBefore/description-search cases as the SQLite integration test, plus
+   that the label filter leaves the LATERAL-aggregated label list intact. All passed, against a throwaway
+   `tickethub_filter_test_*` database, dropped afterward.
+5. Standalone Playwright/Chromium script, against a locally running server, SQLite, demo-seeded: verified
+   each new filter control in isolation (type=bug, priority=highest, assignee=alex, label=backend,
+   description-only search text) narrows the Issues table to exactly the expected row(s); verified
+   "Clear" restores the full unfiltered list; verified a combined project+type filter narrows correctly;
+   verified the Board view does not inherit a filter left set on the Issues view. Also directly confirmed
+   the default project preselection on first opening the Issues view is pre-existing behavior (unrelated
+   to this batch) and not a filter-widening regression, and that an empty-result table's "No issues
+   found" placeholder row was the source of an initial miscount in a throwaway debug script, not an
+   application bug.
+6. Re-ran the markdown, mentions/notifications, comment-reaction, worklog, audit-log, and comment
+   edit/delete browser tests against the same build to confirm no regression -- all still pass unchanged.
+
+All checks passed. No committed test scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+Phase 5's remaining items: dashboard personalization (D24), Kanban board WIP limits and drag-and-drop
+(D33 plus the roadmap's own "usable end-to-end" exit-gate wording), and the full attachments vertical
+(D15/D98-D105) -- upload API, local filesystem storage, native-element previews, recycle bin, retention,
+and Markdown-editor integration. All untouched by this batch.
+
 ## 2026-07-31 — Simple append-only admin/security audit log (D23): Phase 4 complete
 
 Sixth and final Phase 4 (Collaboration) slice. With this batch, every item in

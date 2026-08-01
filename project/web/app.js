@@ -50,6 +50,13 @@ function initialState() {
     selectedProject: null,
     search: '',
     status: '',
+    // Ad-hoc in-UI filters only (D10): no saved/shared filters, no JQL, not
+    // usable as a webhook/board source.
+    filterType: '',
+    filterPriority: '',
+    filterAssignee: '',
+    filterLabel: '',
+    filterDueBefore: '',
     currentIssue: null,
     principal: null,
     // Cached user directory (D80) -- powers @mention autocomplete. Fetched
@@ -626,6 +633,11 @@ async function fetchIssues() {
   const params = new URLSearchParams();
   if (state.selectedProject) params.set('project', state.selectedProject);
   if (state.status) params.set('status', state.status);
+  if (state.filterType) params.set('type', state.filterType);
+  if (state.filterPriority) params.set('priority', state.filterPriority);
+  if (state.filterAssignee) params.set('assignee', state.filterAssignee);
+  if (state.filterLabel) params.set('label', state.filterLabel);
+  if (state.filterDueBefore) params.set('dueBefore', state.filterDueBefore);
   if (state.search) params.set('q', state.search);
   const result = await api(`/api/issues?${params}`);
   state.issues = result.items;
@@ -682,7 +694,31 @@ async function renderIssuesView(showingDeleted) {
       <div class="filter-bar">
         <select id="issue-project-filter"><option value="">All projects</option>${projectOptions}</select>
         <select id="issue-status-filter"><option value="">All statuses</option>${statusOptions}</select>
-        <input id="issue-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key or summary">
+        <select id="issue-type-filter">
+          <option value="">All types</option>
+          <option value="epic" ${state.filterType === 'epic' ? 'selected' : ''}>Epic</option>
+          <option value="story" ${state.filterType === 'story' ? 'selected' : ''}>Story</option>
+          <option value="task" ${state.filterType === 'task' ? 'selected' : ''}>Task</option>
+          <option value="bug" ${state.filterType === 'bug' ? 'selected' : ''}>Bug</option>
+          <option value="sub-task" ${state.filterType === 'sub-task' ? 'selected' : ''}>Sub-task</option>
+        </select>
+        <select id="issue-priority-filter">
+          <option value="">All priorities</option>
+          <option value="highest" ${state.filterPriority === 'highest' ? 'selected' : ''}>Highest</option>
+          <option value="high" ${state.filterPriority === 'high' ? 'selected' : ''}>High</option>
+          <option value="medium" ${state.filterPriority === 'medium' ? 'selected' : ''}>Medium</option>
+          <option value="low" ${state.filterPriority === 'low' ? 'selected' : ''}>Low</option>
+          <option value="lowest" ${state.filterPriority === 'lowest' ? 'selected' : ''}>Lowest</option>
+        </select>
+        <select id="issue-assignee-filter">
+          <option value="">Any assignee</option>
+          <option value="demo@ticket-hub.local" ${state.filterAssignee === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
+          <option value="alex@ticket-hub.local" ${state.filterAssignee === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
+          <option value="sam@ticket-hub.local" ${state.filterAssignee === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
+        </select>
+        <input id="issue-label-filter" value="${escapeHtml(state.filterLabel)}" placeholder="Label" style="width:110px">
+        <input id="issue-due-filter" type="date" value="${escapeHtml(state.filterDueBefore)}" title="Due on or before">
+        <input id="issue-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key, summary, or description">
         <button class="secondary-button" id="clear-filters">Clear</button>
       </div>
       <div class="bulk-bar hidden" id="bulk-bar">
@@ -744,6 +780,26 @@ async function renderIssuesView(showingDeleted) {
     state.status = event.target.value;
     renderIssues().catch(showError);
   });
+  document.querySelector('#issue-type-filter').addEventListener('change', event => {
+    state.filterType = event.target.value;
+    renderIssues().catch(showError);
+  });
+  document.querySelector('#issue-priority-filter').addEventListener('change', event => {
+    state.filterPriority = event.target.value;
+    renderIssues().catch(showError);
+  });
+  document.querySelector('#issue-assignee-filter').addEventListener('change', event => {
+    state.filterAssignee = event.target.value;
+    renderIssues().catch(showError);
+  });
+  document.querySelector('#issue-label-filter').addEventListener('input', debounce(event => {
+    state.filterLabel = event.target.value.trim();
+    renderIssues().catch(showError);
+  }, 300));
+  document.querySelector('#issue-due-filter').addEventListener('change', event => {
+    state.filterDueBefore = event.target.value;
+    renderIssues().catch(showError);
+  });
   document.querySelector('#issue-search-filter').addEventListener('input', debounce(event => {
     state.search = event.target.value.trim();
     renderIssues().catch(showError);
@@ -751,6 +807,11 @@ async function renderIssuesView(showingDeleted) {
   document.querySelector('#clear-filters').addEventListener('click', () => {
     state.status = '';
     state.search = '';
+    state.filterType = '';
+    state.filterPriority = '';
+    state.filterAssignee = '';
+    state.filterLabel = '';
+    state.filterDueBefore = '';
     state.selectedProject = null;
     renderIssues().catch(showError);
   });
@@ -819,6 +880,11 @@ async function renderBoard() {
   state.selectedProject ||= state.projects[0]?.key || null;
   state.search = '';
   state.status = '';
+  state.filterType = '';
+  state.filterPriority = '';
+  state.filterAssignee = '';
+  state.filterLabel = '';
+  state.filterDueBefore = '';
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   await fetchIssues();
   const selected = state.projects.find(project => project.key === state.selectedProject);
@@ -1453,6 +1519,11 @@ document.querySelector('#global-search').addEventListener('input', debounce(even
   state.search = event.target.value.trim();
   if (state.search) {
     state.selectedProject = null;
+    state.filterType = '';
+    state.filterPriority = '';
+    state.filterAssignee = '';
+    state.filterLabel = '';
+    state.filterDueBefore = '';
     navigate('issues');
   }
 }, 350));
