@@ -440,6 +440,30 @@ function tablePanel(issues, title = 'Issues') {
     </div>`;
 }
 
+// Dashboard-only deadlines widget (D24): same shape as tablePanel but with
+// a Due date column, since that's the one thing this particular list is
+// sorted and shown for.
+function deadlinesPanel(issues, title = 'Upcoming deadlines') {
+  const rows = issues.length ? issues.map(issue => `
+    <tr data-issue-key="${escapeHtml(issue.key)}">
+      <td><span class="issue-type" title="${escapeHtml(issue.type.name)}"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)}</span></td>
+      <td><span class="issue-key">${escapeHtml(issue.key)}</span></td>
+      <td class="issue-summary">${escapeHtml(issue.summary)}</td>
+      <td>${statusChip(issue)}</td>
+      <td>${escapeHtml(formatDate(issue.dueDate))}</td>
+    </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state">No upcoming deadlines.</div></td></tr>';
+  return `
+    <div class="panel">
+      <div class="panel-header"><h2>${escapeHtml(title)}</h2><span class="eyebrow">${issues.length} shown</span></div>
+      <div style="overflow-x:auto">
+        <table class="issue-table">
+          <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Due date</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function pageHeader(title, subtitle, eyebrow = 'Ticket Hub') {
   return `<div class="page-header"><div><span class="eyebrow">${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p></div></div>`;
 }
@@ -597,6 +621,9 @@ async function renderDashboard() {
       <div class="stat-card"><div class="stat-label">In progress</div><div class="stat-value">${stats.inProgressIssues}</div><div class="stat-meta">Active and in review</div></div>
       <div class="stat-card"><div class="stat-label">Done</div><div class="stat-value">${stats.doneIssues}</div><div class="stat-meta">Completed work</div></div>
     </div>
+    ${state.principal ? tablePanel(stats.assignedToMe, 'Assigned to me') : ''}
+    ${state.principal ? tablePanel(stats.watchedIssues, 'Issues I’m watching') : ''}
+    ${state.principal ? deadlinesPanel(stats.upcomingDeadlines) : ''}
     ${tablePanel(stats.recentIssues, 'Recently active issues')}`;
   bindIssueLinks();
 }

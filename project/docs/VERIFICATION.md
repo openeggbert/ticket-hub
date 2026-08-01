@@ -1,5 +1,69 @@
 # Verification record
 
+## 2026-08-01 — Personal dashboard widgets (D24): Phase 5 slice 2
+
+Second Phase 5 slice. Kanban WIP limits/drag-and-drop (D33) and the attachments vertical
+(D15/D98-D105) remain untouched.
+
+### What changed
+
+- `Domain::DashboardStats` gains `assignedToMe`, `watchedIssues`, and `upcomingDeadlines` (all
+  `std::vector<Issue>`), alongside the pre-existing installation-wide counts and `recentIssues`. Matches
+  D24's fixed personal-dashboard widget set (assigned issues, watched issues, recent activity, deadlines,
+  simple stats) minus the active-sprint widget, which D24 itself drops since Scrum was removed for V1.
+- New `IDatabase::listWatchedIssues(userId, limit)` in both adapters -- the reverse direction of the
+  existing `listWatchers` (which lists watchers of one issue; this lists issues watched by one user),
+  newest-updated first.
+- `TicketService::dashboard` now personalizes for an authenticated actor: `assignedToMe` reuses the
+  existing `listIssues` assignee filter (no new query) and excludes Done-category issues; `upcomingDeadlines`
+  is derived from that same result set app-side (open issues with a due date, soonest first) rather than a
+  second database round trip; `watchedIssues` calls the new `listWatchedIssues`. All three stay empty for
+  an anonymous viewer (no personal identity to personalize for) -- a conservative default, since D24's
+  decision text describes this as a *personal* dashboard.
+- `GET /api/dashboard` response gains `assignedToMe`/`watchedIssues`/`upcomingDeadlines` arrays.
+- `web/`: the Dashboard view gains three new panels (reusing the existing `tablePanel` helper for
+  "Assigned to me" and "Issues I'm watching"; a new small `deadlinesPanel` helper, structurally identical
+  but with a Due date column, for "Upcoming deadlines") shown only when a principal is present.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green. New `sqlite_integration_tests` coverage for `listWatchedIssues`
+   (returns exactly the issues a given user is watching, empty for a user watching nothing). New
+   `authorization_integration_tests` coverage for `TicketService::dashboard`: an anonymous viewer (with
+   anonymous read temporarily enabled, since dashboard access itself requires read access) gets empty
+   personal widgets; alex's `assignedToMe` excludes the Done-category TH-1 while including the open TH-3
+   and WEB-1; `watchedIssues` reflects a newly watched issue.
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised
+   `PostgresDatabase::listWatchedIssues` directly -- multiple users watching different/overlapping issues,
+   the `limit` parameter capping the result, and cleanup unwatching returning to empty. All passed, against
+   a throwaway `tickethub_dash_test_*` database, dropped afterward.
+5. Standalone Playwright/Chromium script, against a locally running server, SQLite, demo-seeded: logged in
+   as alex and confirmed the dashboard shows exactly three new panels in the expected order and that
+   "Assigned to me" contains WEB-1 and TH-3 but not the Done-category TH-1; watched TH-2 through the real
+   issue-drawer Watch button and confirmed the "Issues I'm watching" panel picks it up after returning to
+   the dashboard; confirmed the deadlines panel shows its empty state when no seed issue has a due date,
+   then separately set a real due date on TH-3 via the edit API and confirmed it appears in the deadlines
+   panel with the correct formatted date; logged in as sam and confirmed sam's own "Assigned to me" shows
+   sam's issues (TH-2, WEB-2) and not alex's TH-3, i.e. the personalization is actually per-actor and not a
+   shared global list. A first draft of this browser script produced confusing results from state left over
+   by an earlier failed run (a stale watch on TH-2 from a script that crashed on a drawer-backdrop click
+   interception); re-running the script against a freshly reseeded server produced clean, correct results,
+   confirming the earlier confusion was test-script state pollution, not an application bug.
+6. Re-ran the markdown, mentions/notifications, comment-reaction, worklog, audit-log, comment
+   edit/delete, and filter-widening browser tests against the same build to confirm no regression -- all
+   still pass unchanged.
+
+All checks passed. No committed test scripts or screenshots (scratchpad only).
+
+### What is still not built
+
+Phase 5's remaining items: Kanban board WIP limits and drag-and-drop (D33 plus the roadmap's own "usable
+end-to-end" exit-gate wording), and the full attachments vertical (D15/D98-D105). Both untouched by this
+batch.
+
 ## 2026-08-01 — Ad-hoc issue filter/search widening (D10/D43): Phase 5 slice 1
 
 First Phase 5 (Attachments and Kanban board) slice. `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5 list also

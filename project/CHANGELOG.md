@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Personal dashboard widgets (D24) — Phase 5 continued
+
+- **Personal dashboard (D24)**: `GET /api/dashboard` now also returns `assignedToMe`, `watchedIssues`, and
+  `upcomingDeadlines` for an authenticated caller (empty for an anonymous viewer). Matches D24's fixed
+  personal-dashboard widget set (assigned issues, watched issues, recent activity, deadlines, simple
+  stats), minus the active-sprint widget dropped by D24 itself since Scrum was removed for V1.
+  `assignedToMe`/`upcomingDeadlines` exclude Done-category issues; `upcomingDeadlines` is sorted soonest
+  due date first.
+- New `IDatabase::listWatchedIssues(userId, limit)` in both adapters.
+- `web/`: the Dashboard view gained "Assigned to me", "Issues I'm watching", and "Upcoming deadlines"
+  panels.
+
 ## Unreleased — Ad-hoc issue filter/search widening (D10/D43) — Phase 5 started
 
 - **Filter widening (D10/D43)**: `GET /api/issues` now also accepts `type`, `priority`, `assignee`,

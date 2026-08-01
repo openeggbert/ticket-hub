@@ -631,9 +631,50 @@ Domain::BulkActionResult TicketService::bulkDelete(const std::vector<std::string
     return result;
 }
 
+// Fixed personal dashboard (D24): the installation-wide widgets (counts,
+// recent activity) come straight from dashboardStats(); the personal
+// widgets (assigned to me, watched, upcoming deadlines) are only
+// meaningful for an authenticated actor and stay empty for an anonymous
+// viewer. `assignedToMe` reuses listIssues' existing assignee filter
+// rather than a dedicated query; `upcomingDeadlines` is derived from that
+// same result set (open issues with a due date, soonest first) instead of
+// a second database round trip.
 Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    return database_->dashboardStats();
+    auto stats = database_->dashboardStats();
+    if (!actor) {
+        return stats;
+    }
+
+    Domain::IssueFilter assignedFilter;
+    assignedFilter.assigneeEmail = actor->email;
+    const auto assigned = database_->listIssues(assignedFilter);
+
+    std::vector<Domain::Issue> openAssigned;
+    std::vector<Domain::Issue> deadlines;
+    for (const auto& issue : assigned) {
+        if (issue.status.category == "done") {
+            continue;
+        }
+        openAssigned.push_back(issue);
+        if (issue.dueDate.has_value()) {
+            deadlines.push_back(issue);
+        }
+    }
+    if (openAssigned.size() > 8) {
+        openAssigned.resize(8);
+    }
+    std::sort(deadlines.begin(), deadlines.end(), [](const Domain::Issue& a, const Domain::Issue& b) {
+        return *a.dueDate < *b.dueDate;
+    });
+    if (deadlines.size() > 8) {
+        deadlines.resize(8);
+    }
+
+    stats.assignedToMe = std::move(openAssigned);
+    stats.upcomingDeadlines = std::move(deadlines);
+    stats.watchedIssues = database_->listWatchedIssues(actor->userId, 8);
+    return stats;
 }
 
 Domain::Project TicketService::createProject(Domain::CreateProjectRequest request, const Domain::Principal& actor) {

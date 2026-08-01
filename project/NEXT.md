@@ -4,8 +4,8 @@ Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, 
 (Collaboration) is now **complete** -- comment editing/tombstone delete, fixed emoji reactions, @mention
 handles/the fixed in-app notification set, the Markdown editor toolbar/preview, simplified worklogs, and
 the admin/security audit log (D23) are all done — see below. Phase 5 (Attachments and Kanban board) is
-now **started**: the ad-hoc issue filter/search widening slice (D10/D43) is done; dashboard
-personalization (D24), Kanban WIP limits/drag-and-drop (D33), and the attachments vertical
+now **underway**: the ad-hoc issue filter/search widening slice (D10/D43) and the personal dashboard
+widgets (D24) are done; Kanban WIP limits/drag-and-drop (D33) and the attachments vertical
 (D15/D98-D105) remain.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
@@ -293,6 +293,22 @@ anything from the removed/deferred list without an explicit new product conversa
   corrupt the filtered issue's own label list. Live-PostgreSQL and browser-verified (Playwright/Chromium)
   the same cases, plus a full regression re-run of the markdown/mentions/reactions/worklog/audit-log/
   comment-editing browser tests. Full detail in `docs/VERIFICATION.md`.
+- **Phase 5 continued (personal dashboard widgets, D24), this batch:** `Domain::DashboardStats` gains
+  `assignedToMe`/`watchedIssues`/`upcomingDeadlines`, matching D24's fixed widget set (assigned issues,
+  watched issues, recent activity, deadlines, simple stats -- no active-sprint widget, since Scrum was
+  removed for V1). New `IDatabase::listWatchedIssues(userId, limit)` in both adapters, the reverse
+  direction of the existing `listWatchers`. `TicketService::dashboard` personalizes for an authenticated
+  actor: `assignedToMe` reuses the existing `listIssues` assignee filter and excludes Done-category
+  issues; `upcomingDeadlines` is derived from that same result set app-side (no second query); all three
+  stay empty for an anonymous viewer. `GET /api/dashboard` gains the three new arrays. `web/`'s Dashboard
+  view gained three new panels (two via the existing `tablePanel` helper, one new `deadlinesPanel` helper
+  with a Due date column), shown only when a principal is present. New SQLite-integration coverage for
+  `listWatchedIssues` and authorization-integration coverage for `TicketService::dashboard`'s
+  personalization (anonymous gets empty widgets, Done-category issues excluded from assigned-to-me,
+  watched-issues reflects a fresh watch). Live-PostgreSQL and browser-verified (Playwright/Chromium: a
+  real Watch-button click populates the watching widget, a real due-date edit populates the deadlines
+  widget, and two different users see their own personalized widgets, not each other's), plus a full
+  regression re-run of prior batches' browser tests. Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phase 4 (Collaboration) is complete. Phase 5 is underway
 
@@ -317,17 +333,16 @@ Phase 4 (Collaboration) is now fully implemented and fully covered in the UI: co
 delete (D81/D82/D83), fixed emoji reactions (D84), @mention handles/the fixed in-app notification set
 (D56/D80/D14), the Markdown editor toolbar/live preview (D16), simplified worklogs (D12/D13), and the
 admin/security audit log (D23). Phase 5 (Attachments and Kanban board) is now underway; the ad-hoc
-filter/search widening slice (D10/D43) is done. What's left:
+filter/search widening slice (D10/D43) and the personal dashboard widgets (D24) are done. What's left:
 
-1. Rest of Phase 5 per `docs/REDUCED_SCOPE_ROADMAP.md`: dashboard personalization (D24, `DashboardStats`/
-   `TicketService::dashboard` currently return only global totals despite already accepting an `actor`);
-   Kanban board WIP limits (D33, needs new schema, e.g. a per-project-per-status limit table, plus a
-   display-time non-blocking visual highlight) and drag-and-drop reordering on the Board view (today's
-   board is read-only, clicking a card just opens the drawer -- zero drag-and-drop code exists yet); the
-   full attachments vertical (D15/D98-D105 -- upload API, hardwired local filesystem storage, upload-time
-   SHA-256 verification, four native-element previews, sortable list/recycle bin/90-day retention, and
-   Markdown-editor upload/drag-drop/paste integration referencing `attachment://UUID`). This is likely the
-   largest remaining item and may need its own multi-batch sub-effort.
+1. Rest of Phase 5 per `docs/REDUCED_SCOPE_ROADMAP.md`: Kanban board WIP limits (D33, needs new schema,
+   e.g. a per-project-per-status limit table, plus a display-time non-blocking visual highlight) and
+   drag-and-drop reordering on the Board view (today's board is read-only, clicking a card just opens the
+   drawer -- zero drag-and-drop code exists yet); the full attachments vertical (D15/D98-D105 -- upload
+   API, hardwired local filesystem storage, upload-time SHA-256 verification, four native-element
+   previews, sortable list/recycle bin/90-day retention, and Markdown-editor upload/drag-drop/paste
+   integration referencing `attachment://UUID`). This is likely the largest remaining item and may need
+   its own multi-batch sub-effort.
 2. Optional UX polish that was never part of the write-route coverage goal: a friendlier bulk-status
    picker that also supports Done-category statuses by prompting for a shared resolution;
    keyboard-driven multi-select.
@@ -345,9 +360,9 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   or any children, so this remains the one open path.
 
 Milestone 2's collaboration half (Phase 4) is now fully closed. What remains of Milestone 2 is the rest of
-Phase 5 (dashboard personalization, Kanban WIP limits/drag-and-drop, attachments -- filter/search
-widening is done), then Milestone 3 (API, backup/restore) and Milestone 4 (packaging and hardening). Do
-not jump ahead to later-phase features early, and do not implement anything from
+Phase 5 (Kanban WIP limits/drag-and-drop, attachments -- filter/search widening and dashboard
+personalization are done), then Milestone 3 (API, backup/restore) and Milestone 4 (packaging and
+hardening). Do not jump ahead to later-phase features early, and do not implement anything from
 `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
@@ -383,7 +398,8 @@ edit/delete any comment); `addCommentReaction`/`removeCommentReaction`/`listComm
 same three-layer coverage (SQLite-integration idempotency/listing, authorization-integration no-project-
 role/unknown-key/unknown-comment rejection, and a live-PostgreSQL smoke test); `findUserByHandle` and the
 five `notifications` methods gained the same three-layer coverage plus identity-integration coverage for
-handle normalization/uniqueness/format validation on `create-user`. The Phase 5 filter/search-widening
-slice added its own SQLite-integration, live-PostgreSQL, and browser-verification coverage on top of that.
-Full detail, including exactly what was exercised (and the several real bugs this browser testing and
-test-writing caught and fixed along the way), is in `docs/VERIFICATION.md`.
+handle normalization/uniqueness/format validation on `create-user`. The Phase 5 filter/search-widening and
+personal-dashboard slices each added their own SQLite-integration, authorization-integration,
+live-PostgreSQL, and browser-verification coverage on top of that. Full detail, including exactly what was
+exercised (and the several real bugs this browser testing and test-writing caught and fixed along the
+way), is in `docs/VERIFICATION.md`.

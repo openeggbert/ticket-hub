@@ -274,6 +274,12 @@ int main() {
         require(!database.unwatchIssue(created.key, demoUserId), "unwatching again is a no-op");
         require(database.listWatchers(created.key).size() == 1, "one watcher remains");
 
+        const auto alexWatched = database.listWatchedIssues(alexUserId, 10);
+        require(alexWatched.size() == 1 && alexWatched[0].key == created.key,
+               "listWatchedIssues (the reverse of listWatchers) returns the issues a given user is watching");
+        require(database.listWatchedIssues(demoUserId, 10).empty(),
+               "listWatchedIssues is empty for a user watching nothing (demo unwatched above)");
+
         require(database.voteIssue(created.key, demoUserId), "voting for an issue succeeds");
         require(!database.voteIssue(created.key, demoUserId), "voting again is a no-op");
         require(database.listVoters(created.key).size() == 1, "the voter is listed");

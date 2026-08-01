@@ -115,6 +115,7 @@ public:
     bool watchIssue(const std::string& issueKey, const std::string& userId) override;
     bool unwatchIssue(const std::string& issueKey, const std::string& userId) override;
     std::vector<Domain::UserSummary> listWatchers(const std::string& issueKey) override;
+    std::vector<Domain::Issue> listWatchedIssues(const std::string& userId, int limit) override;
     bool voteIssue(const std::string& issueKey, const std::string& userId) override;
     bool unvoteIssue(const std::string& issueKey, const std::string& userId) override;
     std::vector<Domain::UserSummary> listVoters(const std::string& issueKey) override;

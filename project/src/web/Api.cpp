@@ -1500,6 +1500,21 @@ void registerApiRoutes(crow::SimpleApp& app,
                 recent.emplace_back(issueJson(issue));
             }
             body["recentIssues"] = std::move(recent);
+            crow::json::wvalue::list assignedToMe;
+            for (const auto& issue : stats.assignedToMe) {
+                assignedToMe.emplace_back(issueJson(issue));
+            }
+            body["assignedToMe"] = std::move(assignedToMe);
+            crow::json::wvalue::list watchedIssues;
+            for (const auto& issue : stats.watchedIssues) {
+                watchedIssues.emplace_back(issueJson(issue));
+            }
+            body["watchedIssues"] = std::move(watchedIssues);
+            crow::json::wvalue::list upcomingDeadlines;
+            for (const auto& issue : stats.upcomingDeadlines) {
+                upcomingDeadlines.emplace_back(issueJson(issue));
+            }
+            body["upcomingDeadlines"] = std::move(upcomingDeadlines);
             return jsonResponse(200, std::move(body));
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());

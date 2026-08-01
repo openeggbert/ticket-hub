@@ -294,7 +294,10 @@ check** -- unlike every other issue write, only project-Member-or-above -- since
 watch/vote by "browse" access rather than a write-capable role, and this reduced model's closest
 equivalent is simply being an authenticated user (D58). `watchIssue`/`voteIssue` return `true` only when
 the row was newly inserted (idempotent on a repeat call); `unwatchIssue`/`unvoteIssue` return `true` only
-when a row was actually removed.
+when a row was actually removed. `IDatabase::listWatchedIssues(userId, limit)` (Phase 5, D24) is the
+reverse direction of `listWatchers` -- every non-deleted issue a given user is watching, newest-updated
+first -- backing the personal dashboard's "watched issues" widget; no equivalent reverse query exists for
+votes, since D24's dashboard has no "voted issues" widget.
 
 ### `comment_reactions`
 
