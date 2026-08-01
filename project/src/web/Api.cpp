@@ -44,6 +44,19 @@ crow::json::wvalue principalJson(const Domain::Principal& principal) {
     return json;
 }
 
+// Never includes the raw token (D40) -- only tokenJson(CreatedPersonalAccessToken)
+// does, and only in the create response.
+crow::json::wvalue tokenJson(const Domain::PersonalAccessToken& token) {
+    crow::json::wvalue json;
+    json["id"] = token.id;
+    json["name"] = token.name;
+    json["createdAt"] = token.createdAt;
+    json["expiresAt"] = token.expiresAt;
+    json["lastUsedAt"] = token.lastUsedAt ? crow::json::wvalue(*token.lastUsedAt) : crow::json::wvalue(nullptr);
+    json["revokedAt"] = token.revokedAt ? crow::json::wvalue(*token.revokedAt) : crow::json::wvalue(nullptr);
+    return json;
+}
+
 crow::json::wvalue projectJson(const Domain::Project& project) {
     crow::json::wvalue json;
     json["id"] = project.id;
@@ -319,19 +332,40 @@ void clearSessionCookies(crow::response& response) {
     response.add_header("Set-Cookie", std::string(CsrfCookieName) + "=; Path=/; Secure; SameSite=Strict; Max-Age=0");
 }
 
-// Resolves the caller's Principal from the session cookie. Returns nullopt
-// (never throws) so route handlers can turn a missing/invalid session into a
-// clean 401 response.
-std::optional<Domain::Principal> resolvePrincipal(const crow::request& request,
-                                                   const std::shared_ptr<Application::AuthService>& authService) {
-    const auto token = cookieValue(request, SessionCookieName);
-    if (!token) {
+// Bearer-token PAT authentication (Phase 6, D39/D40), tried only when no
+// session cookie is present -- the browser-vs-API auth methods are
+// deliberately mutually exclusive per request (D54).
+std::optional<std::string> bearerToken(const crow::request& request) {
+    const std::string header = request.get_header_value("Authorization");
+    constexpr const char* prefix = "Bearer ";
+    if (header.rfind(prefix, 0) != 0) {
         return std::nullopt;
     }
-    return authService->validateSession(*token);
+    return header.substr(std::string(prefix).size());
 }
 
+// Resolves the caller's Principal from the session cookie, or (if absent) a
+// PAT Bearer token. Returns nullopt (never throws) so route handlers can
+// turn a missing/invalid session into a clean 401 response.
+std::optional<Domain::Principal> resolvePrincipal(const crow::request& request,
+                                                   const std::shared_ptr<Application::AuthService>& authService) {
+    if (const auto token = cookieValue(request, SessionCookieName)) {
+        return authService->validateSession(*token);
+    }
+    if (const auto token = bearerToken(request)) {
+        return authService->validatePersonalAccessToken(*token);
+    }
+    return std::nullopt;
+}
+
+// CSRF only protects against a browser silently attaching a session cookie
+// to a forged cross-origin request. A PAT Bearer token is never
+// auto-attached by a browser, so a request with no session cookie in play
+// is exempt -- whatever authenticated it (if anything), it wasn't a cookie.
 bool csrfTokenValid(const crow::request& request) {
+    if (!cookieValue(request, SessionCookieName)) {
+        return true;
+    }
     const auto cookie = cookieValue(request, CsrfCookieName);
     const std::string header = request.get_header_value("X-CSRF-Token");
     return cookie.has_value() && !cookie->empty() && *cookie == header;
@@ -401,6 +435,77 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(401, "Not authenticated");
         }
         return jsonResponse(200, principalJson(*principal));
+    });
+
+    // Personal access tokens (Phase 6, D39/D40): self-service, no admin-
+    // managed tokens -- every route here operates only on the caller's own
+    // tokens. Managing tokens is a web-UI action (session-cookie-
+    // authenticated, like every other write in this app), even though the
+    // tokens themselves authenticate API calls.
+    CROW_ROUTE(app, "/api/tokens")
+    .methods(crow::HTTPMethod::Get)([authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& token : authService->listPersonalAccessTokens(principal->userId)) {
+                items.emplace_back(tokenJson(token));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/tokens")
+    .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const auto body = crow::json::load(request.body);
+            if (!body || !body.has("expiresInDays") || body["expiresInDays"].t() != crow::json::type::Number) {
+                return errorResponse(400, "expiresInDays must be a number");
+            }
+            const auto created = authService->createPersonalAccessToken(
+                principal->userId, requiredString(body, "name"), body["expiresInDays"].i());
+            crow::json::wvalue responseBody = tokenJson(created.token);
+            responseBody["token"] = created.rawToken;
+            return jsonResponse(201, std::move(responseBody));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/tokens/<string>")
+    .methods(crow::HTTPMethod::Delete)([authService](const crow::request& request, const std::string& tokenId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            if (!authService->revokePersonalAccessToken(tokenId, principal->userId)) {
+                return errorResponse(404, "Token not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
     });
 
     CROW_ROUTE(app, "/api/projects")

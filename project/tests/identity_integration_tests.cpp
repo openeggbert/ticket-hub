@@ -210,6 +210,56 @@ int main() {
         require(!userWithoutHandle.handle.has_value(), "the handle remains optional -- omitting it is not an error");
     }
 
+    // --- Personal access tokens (Phase 6, D39/D40) ---
+    {
+        const std::string demoUserId = "00000000-0000-4000-8000-000000000001";
+        const std::string alexUserId = "00000000-0000-4000-8000-000000000002";
+
+        const auto created = auth.createPersonalAccessToken(demoUserId, "CI script", 30);
+        require(!created.rawToken.empty(), "creating a token returns a non-empty raw token");
+        require(created.token.name == "CI script", "the token name round-trips");
+        require(!created.token.revokedAt.has_value() && !created.token.lastUsedAt.has_value(),
+               "a freshly created token is not revoked and has never been used");
+
+        const auto principal = auth.validatePersonalAccessToken(created.rawToken);
+        require(principal.has_value() && principal->userId == demoUserId,
+               "a fresh PAT validates and resolves to its owner");
+        require(!auth.validatePersonalAccessToken("not-a-real-token").has_value(), "an unknown PAT never validates");
+        require(!auth.validatePersonalAccessToken("").has_value(), "an empty PAT never validates");
+
+        const auto afterUse = auth.listPersonalAccessTokens(demoUserId);
+        const auto match = std::find_if(afterUse.begin(), afterUse.end(),
+                                        [&](const auto& t) { return t.id == created.token.id; });
+        require(match != afterUse.end() && match->lastUsedAt.has_value(),
+               "validating a PAT updates its last_used_at timestamp");
+
+        require(!auth.revokePersonalAccessToken(created.token.id, alexUserId),
+               "revoking someone else's token fails (ownership is enforced)");
+        require(auth.validatePersonalAccessToken(created.rawToken).has_value(),
+               "a token survives a failed revoke attempt by a non-owner");
+
+        require(auth.revokePersonalAccessToken(created.token.id, demoUserId), "the owner can revoke their own token");
+        require(!auth.validatePersonalAccessToken(created.rawToken).has_value(),
+               "a revoked token no longer validates");
+        require(!auth.revokePersonalAccessToken(created.token.id, demoUserId), "revoking an already-revoked token is a no-op");
+
+        bool zeroExpiryRejected = false;
+        try {
+            auth.createPersonalAccessToken(demoUserId, "bad", 0);
+        } catch (const std::invalid_argument&) {
+            zeroExpiryRejected = true;
+        }
+        require(zeroExpiryRejected, "a non-positive expiresInDays is rejected -- D40 requires an expiration");
+
+        bool emptyNameRejected = false;
+        try {
+            auth.createPersonalAccessToken(demoUserId, "", 30);
+        } catch (const std::invalid_argument&) {
+            emptyNameRejected = true;
+        }
+        require(emptyNameRejected, "an empty token name is rejected");
+    }
+
     // --- Simple append-only admin/security audit log (D23) ---
     // Every login-failed/login-blocked/user-created event from the blocks
     // above should already have been recorded by this point.

@@ -115,17 +115,22 @@ remain as the long-term aspirational baseline only — do not build against them
   Upload-time SHA-256/size verification only, no periodic integrity audit (D105). **This closes out Phase
   5 -- every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5 list is now implemented, and Milestone 2 is
   fully closed.**
+- **Personal access tokens (Phase 6, D39/D40):** self-service `GET`/`POST /api/tokens`,
+  `DELETE /api/tokens/{id}`. Hashed storage, mandatory expiration, revocation, last-used tracking; no
+  scopes/rotation/admin-configurable lifetime. `Authorization: Bearer <token>` now authenticates any
+  route (mutually exclusive with the session cookie per request, D54); Bearer-authenticated requests are
+  exempt from the CSRF check. No web UI yet for managing tokens.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
-- Active-session list / "sign out everywhere" and the full configurable lockout policy are resequenced
-  to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
 - Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
   by any decision.
-- The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
-  (Phase 6-7).
+- Phase 6 is started (PATs done). The versioned `/api/v1` prefix itself, fixed rate limits and the full
+  configurable-replacing lockout policy, the active-session list/"sign out everywhere" endpoint, fixed
+  request/body/batch-size constants, numbered/offset pagination, read-only CSV export, and the security
+  hardening pass are all still open. Phase 7 (backup/restore/upgrade) is not started.
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).
 
 ## Permanently out of V1 scope (do not build these)

@@ -214,15 +214,22 @@ Do not put production secrets in shell history. The target product uses a plugga
 
 ## Prototype API
 
-The current unversioned demo API will evolve into `/api/v1` in Phase 6 of `docs/REDUCED_SCOPE_ROADMAP.md`,
-alongside PAT authentication, fixed rate limits, and numbered pagination.
+The current unversioned demo API will evolve into a formal `/api/v1` prefix later in Phase 6 of
+`docs/REDUCED_SCOPE_ROADMAP.md`, alongside fixed rate limits and numbered pagination. PAT authentication
+(D39/D40) is already live: every route below marked "session" also accepts an `Authorization: Bearer
+<token>` header from a personal access token instead -- the two are mutually exclusive per request (D54),
+and a Bearer-authenticated write needs no `X-CSRF-Token` header (CSRF only defends against a browser
+silently attaching a session cookie, which a PAT is never subject to).
 
 | Method | Route | Auth required | Purpose |
 |---|---|---|---|
 | `GET` | `/api/health` | no | health, version and backend |
 | `POST` | `/api/auth/login` | no | `{email,password}` → sets session + CSRF cookies |
 | `POST` | `/api/auth/logout` | no | clears session (safe to call unauthenticated) |
-| `GET` | `/api/auth/me` | session | current principal, or 401 |
+| `GET` | `/api/auth/me` | session or PAT | current principal, or 401 |
+| `GET` | `/api/tokens` | session | list the caller's own personal access tokens (D39/D40) |
+| `POST` | `/api/tokens` | session + CSRF | `{name, expiresInDays}` → `{token, ...}`; raw token shown only once |
+| `DELETE` | `/api/tokens/{id}` | session + CSRF | revoke one of the caller's own tokens |
 | `GET` | `/api/dashboard` | session, or anon if enabled | counts, recent issues, and (authenticated only, D24) assigned-to-me/watched/upcoming-deadline issues |
 | `GET` | `/api/board-columns` | session, or anon if enabled | one entry per fixed workflow status with its optional soft WIP limit (D32/D33) |
 | `PUT` | `/api/board-columns/{statusKey}` | session + CSRF, global admin | `{wipLimit}` (number or null); installation-wide, not per-project |
@@ -678,6 +685,23 @@ reusing one placeholder for two differently-typed columns in the `INSERT`, and a
 migration that tried to re-add three columns the schema already had (caught immediately by `ctest`,
 never shipped). **This closes out Phase 5 -- every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5 list
 is now implemented, and Milestone 2 is fully closed.**
+
+A seventeenth batch started Phase 6 (Milestone 3) with personal access tokens (D39/D40). New migration
+`015_personal_access_tokens.sql` adds `personal_access_tokens`, mirroring `sessions` (same SHA-256
+token-hash convention, same "raw value returned once at creation" rule) plus `name`, `last_used_at`, and
+`revoked_at`. New `Domain::PersonalAccessToken`/`CreatedPersonalAccessToken`; matching `IDatabase`/
+`AuthService` methods (`findPersonalAccessTokenByHash` filters out expired/revoked tokens at the SQL
+layer, exactly like session lookup does; `revokePersonalAccessToken` is ownership-scoped). `Api.cpp`'s
+`resolvePrincipal` now also accepts an `Authorization: Bearer <token>` header when no session cookie is
+present; `csrfTokenValid` now exempts any request with no session cookie in play, since CSRF only
+defends against a browser silently attaching a cookie -- this needed zero changes to the ~50 existing
+route handlers that already call it. New self-service `GET`/`POST /api/tokens` and
+`DELETE /api/tokens/{id}` routes. New identity-integration test coverage. Verified against live
+PostgreSQL directly, and end-to-end via `curl` against a running server: created a token via cookie auth,
+used it as a Bearer header with no cookies at all to both read `/api/auth/me` and **write** via
+`POST /api/projects` with no CSRF header (confirming the exemption through the real HTTP layer), watched
+`lastUsedAt` update, revoked it, and confirmed the same token then gets a 401. There is no web UI yet for
+managing tokens -- `/api/tokens` is fully functional but reachable only via `curl`/scripts today.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

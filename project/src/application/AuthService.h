@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace TicketHub::Application {
 
@@ -37,6 +38,21 @@ public:
     // nullopt if the token is missing, unknown, expired, or belongs to a
     // deactivated user.
     std::optional<Domain::Principal> validateSession(const std::string& sessionToken);
+
+    // Personal access tokens (Phase 6, D39/D40): self-service only, no
+    // admin-managed tokens. `expiresInDays` must be positive (D40 requires
+    // an expiration; there is no "never expires" option). The raw token is
+    // returned only in CreatedPersonalAccessToken, never again afterward.
+    Domain::CreatedPersonalAccessToken createPersonalAccessToken(const std::string& userId,
+                                                                  const std::string& name,
+                                                                  int expiresInDays);
+    std::vector<Domain::PersonalAccessToken> listPersonalAccessTokens(const std::string& userId);
+    // False if the token doesn't exist, doesn't belong to userId, or is
+    // already revoked -- ownership is enforced here, not left to the caller.
+    bool revokePersonalAccessToken(const std::string& tokenId, const std::string& userId);
+    // nullopt if the token is missing, unknown, expired, revoked, or
+    // belongs to a deactivated user. Updates last_used_at on success.
+    std::optional<Domain::Principal> validatePersonalAccessToken(const std::string& rawToken);
 
 private:
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;

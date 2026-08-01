@@ -68,6 +68,26 @@ struct AuthenticatedSession {
     std::string sessionToken; // returned to the caller exactly once, at creation
 };
 
+// Personal access tokens (Phase 6, D39/D40): PAT-only API authentication,
+// no service accounts. A token carries exactly its owner's permissions --
+// no scopes. `lastUsedAt`/`revokedAt` are both nullable (never used yet /
+// not revoked). Metadata only; the raw token itself is never stored or
+// returned again after creation.
+struct PersonalAccessToken {
+    std::string id;
+    std::string userId;
+    std::string name;
+    std::string createdAt;
+    std::string expiresAt;
+    std::optional<std::string> lastUsedAt;
+    std::optional<std::string> revokedAt;
+};
+
+struct CreatedPersonalAccessToken {
+    PersonalAccessToken token;
+    std::string rawToken; // returned to the caller exactly once, at creation
+};
+
 // Fixed project roles (Phase 2, D3). Replaces the original plan's
 // configurable permission schemes -- there is no admin UI to define new
 // roles or grant targets in V1. `ProjectRoleRank` returns -1 for an unknown
