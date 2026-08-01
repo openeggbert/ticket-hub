@@ -592,6 +592,29 @@ void PostgresDatabase::deleteExpiredSessions() {
     exec(connection.get(), "DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP", "Delete expired sessions");
 }
 
+std::vector<Domain::Session> PostgresDatabase::listSessionsForUser(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT id, user_id, created_at::text, expires_at::text FROM sessions
+WHERE user_id = $1 AND expires_at > CURRENT_TIMESTAMP
+ORDER BY created_at DESC
+)SQL",
+                             {userId}, "List sessions for user");
+    std::vector<Domain::Session> sessions;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        sessions.push_back(Domain::Session{
+            value(result.get(), row, 0), value(result.get(), row, 1), value(result.get(), row, 2), value(result.get(), row, 3)});
+    }
+    return sessions;
+}
+
+int PostgresDatabase::deleteOtherSessionsForUser(const std::string& userId, const std::string& keepSessionId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "DELETE FROM sessions WHERE user_id = $1 AND id <> $2",
+                             {userId, keepSessionId}, "Delete other sessions for user");
+    return std::stoi(PQcmdTuples(result.get()));
+}
+
 namespace {
 Domain::PersonalAccessToken readPersonalAccessToken(PGresult* result, int row) {
     Domain::PersonalAccessToken token;

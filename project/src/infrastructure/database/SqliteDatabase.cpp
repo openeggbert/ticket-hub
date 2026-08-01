@@ -611,6 +611,31 @@ void SqliteDatabase::deleteExpiredSessions() {
     executeScript("DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP;");
 }
 
+std::vector<Domain::Session> SqliteDatabase::listSessionsForUser(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT id, user_id, created_at, expires_at FROM sessions
+WHERE user_id = ? AND expires_at > CURRENT_TIMESTAMP
+ORDER BY created_at DESC
+)SQL");
+    statement.bind(1, userId);
+    std::vector<Domain::Session> sessions;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        sessions.push_back(Domain::Session{
+            text(statement.get(), 0), text(statement.get(), 1), text(statement.get(), 2), text(statement.get(), 3)});
+    }
+    return sessions;
+}
+
+int SqliteDatabase::deleteOtherSessionsForUser(const std::string& userId, const std::string& keepSessionId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "DELETE FROM sessions WHERE user_id = ?1 AND id <> ?2");
+    statement.bind(1, userId);
+    statement.bind(2, keepSessionId);
+    statement.step();
+    return sqlite3_changes(database_);
+}
+
 namespace {
 Domain::PersonalAccessToken readPersonalAccessToken(sqlite3_stmt* statement) {
     Domain::PersonalAccessToken token;

@@ -54,6 +54,17 @@ public:
     // belongs to a deactivated user. Updates last_used_at on success.
     std::optional<Domain::Principal> validatePersonalAccessToken(const std::string& rawToken);
 
+    // Active-session list and "sign out everywhere" (Phase 6, D54,
+    // resequenced from Phase 1). currentSession resolves the session row
+    // (not just the Principal) for a raw session token, so a caller can
+    // identify which listed session is "this one." signOutOtherSessions
+    // deliberately keeps currentSessionId active -- the request making the
+    // call should never lock its own caller out -- and returns the number
+    // of sessions removed.
+    std::optional<Domain::Session> currentSession(const std::string& sessionToken);
+    std::vector<Domain::Session> listActiveSessions(const std::string& userId);
+    int signOutOtherSessions(const std::string& userId, const std::string& currentSessionId);
+
 private:
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;
 };

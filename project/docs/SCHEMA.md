@@ -81,7 +81,7 @@ Minimal login-attempt lockout only (locks for 15 minutes after `IDatabase::MaxFa
 
 `id`, `user_id` FK to `users(id)`, `token_hash` (SHA-256 hex, unique), `created_at`, `expires_at`.
 
-The raw session token is never stored, only its SHA-256 hash; it is returned to the caller exactly once, at login. 30-day fixed lifetime; there is no active-session list or "sign out everywhere" endpoint yet (resequenced to Phase 6).
+The raw session token is never stored, only its SHA-256 hash; it is returned to the caller exactly once, at login. 30-day fixed lifetime. The active-session list (`GET /api/sessions`) and "sign out everywhere" (`POST /api/sessions/sign-out-others`) endpoints (Phase 6, D54) are now implemented -- `IDatabase::listSessionsForUser`/`deleteOtherSessionsForUser`, no new migration needed. "Sign out everywhere" keeps the caller's own current session active and only removes the others (a conservative default; no decision text specifies this).
 
 ### `personal_access_tokens`
 

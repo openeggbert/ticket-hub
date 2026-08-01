@@ -52,6 +52,14 @@ public:
     virtual void deleteSession(const std::string& sessionId) = 0;
     // Opportunistic housekeeping call (no background job exists in V1).
     virtual void deleteExpiredSessions() = 0;
+    // Active-session list and "sign out everywhere" (Phase 6, D54,
+    // resequenced from Phase 1). listSessionsForUser returns every
+    // non-expired session, newest first. deleteOtherSessionsForUser deletes
+    // every session for userId except keepSessionId (the caller's own
+    // current session, so "sign out everywhere" cannot lock the caller out
+    // of the request they're making) and returns the number removed.
+    virtual std::vector<Domain::Session> listSessionsForUser(const std::string& userId) = 0;
+    virtual int deleteOtherSessionsForUser(const std::string& userId, const std::string& keepSessionId) = 0;
 
     // Personal access tokens (Phase 6, D39/D40). Same tokenHash convention
     // as sessions. findPersonalAccessTokenByHash mirrors

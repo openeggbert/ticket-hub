@@ -1,5 +1,62 @@
 # Verification record
 
+## 2026-08-01 — Active-session list and "sign out everywhere" (D54): Phase 6 slice 2
+
+Second Phase 6 slice, directly following the PAT batch. Still open: the versioned `/api/v1` prefix, rate
+limits and the full lockout policy, CSV export, and the security hardening pass.
+
+### What changed
+
+- `IDatabase::listSessionsForUser(userId)` (every non-expired session, newest first) and
+  `deleteOtherSessionsForUser(userId, keepSessionId)` (deletes every session for that user except
+  `keepSessionId`, returns the count removed) in both adapters -- no new migration, `sessions` already had
+  everything needed.
+- `AuthService::currentSession(sessionToken)` resolves the session row itself (not just the `Principal`
+  `validateSession` returns), so a caller can identify which entry in a session list is "this one."
+  `listActiveSessions`/`signOutOtherSessions` are thin wrappers over the new `IDatabase` methods.
+- **Conservative default, no decision text specifies this:** "sign out everywhere" keeps the caller's own
+  current session active and only removes the others -- the request making the call should never lock its
+  own caller out, matching the common GitHub/Google pattern. Documented here explicitly since the roadmap
+  only says "active-session list and sign out everywhere endpoint" without this detail.
+- New `GET /api/sessions` and `POST /api/sessions/sign-out-others` routes. Deliberately session-cookie-only
+  (checked directly via the cookie, not through `resolvePrincipal`, which would also accept a PAT Bearer
+  token): "your active web sessions" has no meaning for a PAT-authenticated caller, since a PAT is not a
+  session at all.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green. New `identity_integration_tests` coverage: three concurrent
+   sessions for one user all appear in `listActiveSessions`; `currentSession` resolves the right row (and
+   is `nullopt` for an unknown token); `signOutOtherSessions` removes exactly the other two, the caller's
+   own session survives (`validateSession` still succeeds on it), and the two removed sessions no longer
+   validate.
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) created three sessions
+   directly, confirmed `listSessionsForUser` returns all three, confirmed `deleteOtherSessionsForUser`
+   removes exactly two and returns `2`, and confirmed the kept session still resolves via
+   `findSessionByTokenHash` while the removed two do not. All passed; database dropped afterward.
+5. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded): logged
+   in twice as `demo` (simulating two browser tabs) with two independent cookie jars; `GET /api/sessions`
+   from tab A correctly listed both sessions with `isCurrent` set on the right one;
+   `POST /api/sessions/sign-out-others` from tab A returned `{"signedOutCount":1}`; confirmed tab A's own
+   session still authenticates (`200` on `/api/auth/me`) while tab B's now returns `401`; confirmed a
+   follow-up `GET /api/sessions` from tab A shows only the one remaining (current) session.
+6. A quick regression check (not the full suite, since nothing in `web/` changed and this batch is purely
+   backend/API): re-ran the comment-editing and board-WIP-limits browser tests, both still passing
+   unchanged, confirming ordinary cookie-based login and CSRF-protected writes were not affected by the
+   `resolvePrincipal`/`csrfTokenValid` changes made in the prior PAT batch.
+
+All checks passed. No committed test scripts (scratchpad only).
+
+### What is still not built
+
+Phase 6 (Milestone 3), continued: the versioned `/api/v1` prefix, fixed rate limits on login/write
+endpoints and the full lockout policy (today's is still the minimal Phase 1 version), fixed
+request/body/batch-size constants, numbered/offset pagination, read-only CSV export of issues, and the
+security hardening pass. No web UI yet for viewing/signing-out sessions or managing tokens.
+
 ## 2026-08-01 — Personal access tokens (D39/D40): Phase 6 slice 1
 
 First Phase 6 (Milestone 3) slice: PAT-only API authentication. The rest of Phase 6 (a versioned
