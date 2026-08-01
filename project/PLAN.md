@@ -20,10 +20,12 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   browser-verified end-to-end with Playwright/Chromium.
 - **Milestone 3** (Phase 6: API/security hardening/export; Phase 7: backup/restore/upgrade) -- **started**.
   Personal access tokens (D39/D40) are done: self-service create/list/revoke, `Authorization: Bearer`
-  authentication wired into every existing route, CSRF correctly exempted for non-cookie auth. Still
-  open: the versioned `/api/v1` prefix itself, fixed rate limits and the full lockout policy, the
-  active-session list/"sign out everywhere" endpoint, fixed request/body/batch-size constants, numbered
-  pagination, read-only CSV export, the security hardening pass, and all of Phase 7.
+  authentication wired into every existing route, CSRF correctly exempted for non-cookie auth. The
+  active-session list and "sign out everywhere" endpoint (D54) are also done (`GET /api/sessions`,
+  `POST /api/sessions/sign-out-others`; keeps the caller's own current session active). Still open: the
+  versioned `/api/v1` prefix itself, fixed rate limits and the full lockout policy, fixed
+  request/body/batch-size constants, numbered pagination, read-only CSV export, the security hardening
+  pass, and all of Phase 7. No web UI yet for managing tokens or sessions.
 - **Milestone 4** (Phase 8: packaging and hardening) -- not started.
 
 ## Implementation rules

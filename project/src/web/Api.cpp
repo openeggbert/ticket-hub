@@ -57,6 +57,15 @@ crow::json::wvalue tokenJson(const Domain::PersonalAccessToken& token) {
     return json;
 }
 
+crow::json::wvalue sessionJson(const Domain::Session& session, const bool isCurrent) {
+    crow::json::wvalue json;
+    json["id"] = session.id;
+    json["createdAt"] = session.createdAt;
+    json["expiresAt"] = session.expiresAt;
+    json["isCurrent"] = isCurrent;
+    return json;
+}
+
 crow::json::wvalue projectJson(const Domain::Project& project) {
     crow::json::wvalue json;
     json["id"] = project.id;
@@ -503,6 +512,53 @@ void registerApiRoutes(crow::SimpleApp& app,
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Active-session list and "sign out everywhere" (Phase 6, D54,
+    // resequenced from Phase 1). Deliberately session-cookie-only, not
+    // resolvePrincipal (which would also accept a PAT Bearer token) --
+    // "your active web sessions" has no meaning for a PAT-authenticated
+    // caller, since a PAT is not a session at all.
+    CROW_ROUTE(app, "/api/sessions")
+    .methods(crow::HTTPMethod::Get)([authService](const crow::request& request) {
+        const auto token = cookieValue(request, SessionCookieName);
+        const auto current = token ? authService->currentSession(*token) : std::nullopt;
+        if (!current) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& session : authService->listActiveSessions(current->userId)) {
+                items.emplace_back(sessionJson(session, session.id == current->id));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Keeps the calling session active -- signing out "everywhere" should
+    // never lock the caller out of the request they're currently making.
+    CROW_ROUTE(app, "/api/sessions/sign-out-others")
+    .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
+        const auto token = cookieValue(request, SessionCookieName);
+        const auto current = token ? authService->currentSession(*token) : std::nullopt;
+        if (!current) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        try {
+            const int removed = authService->signOutOtherSessions(current->userId, current->id);
+            crow::json::wvalue body;
+            body["signedOutCount"] = removed;
+            return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

@@ -6,11 +6,12 @@ handles/the fixed in-app notification set, the Markdown editor toolbar/preview, 
 the admin/security audit log (D23) are all done — see below. Phase 5 (Attachments and Kanban board) is now
 **complete** -- the ad-hoc issue filter/search widening slice (D10/D43), the personal dashboard widgets
 (D24), Kanban board WIP limits (D32/D33), and the full attachments vertical (D15/D98-D105) are all done.
-This closes out Milestone 2. Phase 6 (Milestone 3) is **started**: personal access tokens (D39/D40) are
-done -- PAT-only API authentication, self-service create/list/revoke, Bearer-token auth wired into every
-existing route with a CSRF exemption for non-cookie auth. Still open in Phase 6: the versioned `/api/v1`
-prefix itself, fixed rate limits and the full lockout policy, active-session list, CSV export, and the
-security hardening pass. No web UI yet for managing tokens.)
+This closes out Milestone 2. Phase 6 (Milestone 3) is **underway**: personal access tokens (D39/D40) --
+PAT-only API authentication, self-service create/list/revoke, Bearer-token auth wired into every existing
+route with a CSRF exemption for non-cookie auth -- and the active-session list / "sign out everywhere"
+endpoint (D54) are both done. Still open in Phase 6: the versioned `/api/v1` prefix itself, fixed rate
+limits and the full lockout policy, CSV export, and the security hardening pass. No web UI yet for
+managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -389,6 +390,25 @@ anything from the removed/deferred list without an explicit new product conversa
   the real HTTP layer), confirmed `lastUsedAt` updates, and confirmed a revoked token gets a 401. No web
   UI yet for managing tokens -- `/api/tokens` is fully functional but reachable only via `curl`/scripts.
   Full detail in `docs/VERIFICATION.md`.
+- **Phase 6 continued (active-session list and "sign out everywhere", D54), this batch:** no new
+  migration -- `sessions` already had everything needed. New `IDatabase::listSessionsForUser(userId)`
+  and `deleteOtherSessionsForUser(userId, keepSessionId)` in both adapters. New
+  `AuthService::currentSession(sessionToken)` resolves the session row itself (not just the `Principal`),
+  so a caller can identify which listed session is "this one"; `listActiveSessions`/
+  `signOutOtherSessions` are thin wrappers. Conservative default, since no decision text specifies it:
+  "sign out everywhere" keeps the caller's own current session active and only removes the others
+  (matching the common GitHub/Google pattern), documented explicitly in `docs/VERIFICATION.md`. New
+  `GET /api/sessions` and `POST /api/sessions/sign-out-others` routes, deliberately session-cookie-only
+  (not `resolvePrincipal`, which would also accept a PAT) since "your active web sessions" has no meaning
+  for a PAT-authenticated caller. New identity-integration test coverage (three concurrent sessions all
+  listed, sign-out-others removes exactly the others and keeps the caller's own session valid). Verified
+  against live PostgreSQL directly, and end-to-end via `curl` simulating two browser tabs: listed both
+  sessions with the right one marked `isCurrent`, signed out the other from tab A, confirmed tab A stayed
+  authenticated while tab B got a 401, and confirmed a follow-up list showed only the surviving session. A
+  quick regression check (comment-editing and board-WIP-limits browser tests, not the full suite, since
+  this batch touched no `web/` code) confirmed ordinary cookie login/CSRF-protected writes still work
+  after the prior batch's `resolvePrincipal`/`csrfTokenValid` changes. No web UI yet for viewing/signing
+  out sessions. Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -439,10 +459,11 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   or any children, so this remains the one open path.
 
 Milestone 2 (Phases 4 and 5) is now **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
-backup/restore/upgrade) is underway -- personal access tokens (D39/D40) are done; the versioned `/api/v1`
-prefix, rate limits/lockout policy, active-session list, CSV export, and the security hardening pass all
-remain, then Phase 7, then Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to
-later-phase features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+backup/restore/upgrade) is underway -- personal access tokens (D39/D40) and the active-session list/
+"sign out everywhere" endpoint (D54) are done; the versioned `/api/v1` prefix, rate limits/the full
+lockout policy, CSV export, and the security hardening pass all remain, then Phase 7, then Milestone 4
+(Phase 8: packaging and hardening). Do not jump ahead to later-phase features early, and do not implement
+anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 

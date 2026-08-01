@@ -230,6 +230,8 @@ silently attaching a session cookie, which a PAT is never subject to).
 | `GET` | `/api/tokens` | session | list the caller's own personal access tokens (D39/D40) |
 | `POST` | `/api/tokens` | session + CSRF | `{name, expiresInDays}` → `{token, ...}`; raw token shown only once |
 | `DELETE` | `/api/tokens/{id}` | session + CSRF | revoke one of the caller's own tokens |
+| `GET` | `/api/sessions` | session (not PAT) | the caller's own active web sessions, with `isCurrent` marked (D54) |
+| `POST` | `/api/sessions/sign-out-others` | session + CSRF (not PAT) | signs out every other session for the caller, keeps the current one |
 | `GET` | `/api/dashboard` | session, or anon if enabled | counts, recent issues, and (authenticated only, D24) assigned-to-me/watched/upcoming-deadline issues |
 | `GET` | `/api/board-columns` | session, or anon if enabled | one entry per fixed workflow status with its optional soft WIP limit (D32/D33) |
 | `PUT` | `/api/board-columns/{statusKey}` | session + CSRF, global admin | `{wipLimit}` (number or null); installation-wide, not per-project |
@@ -702,6 +704,21 @@ used it as a Bearer header with no cookies at all to both read `/api/auth/me` an
 `POST /api/projects` with no CSRF header (confirming the exemption through the real HTTP layer), watched
 `lastUsedAt` update, revoked it, and confirmed the same token then gets a 401. There is no web UI yet for
 managing tokens -- `/api/tokens` is fully functional but reachable only via `curl`/scripts today.
+
+An eighteenth batch continued Phase 6 with the active-session list and "sign out everywhere" endpoint
+(D54, resequenced from Phase 1). No new migration -- `sessions` already had everything needed. New
+`IDatabase::listSessionsForUser(userId)`/`deleteOtherSessionsForUser(userId, keepSessionId)` in both
+adapters; new `AuthService::currentSession(sessionToken)` (resolves the session row itself, not just the
+`Principal`), `listActiveSessions`, and `signOutOtherSessions`. New `GET /api/sessions` and
+`POST /api/sessions/sign-out-others` routes, deliberately session-cookie-only (not `resolvePrincipal`,
+which would also accept a PAT) since "your active web sessions" has no meaning for a PAT-authenticated
+caller. "Sign out everywhere" keeps the caller's own current session active and only removes the others
+-- a conservative default, since no decision text specifies this, documented explicitly in
+`docs/VERIFICATION.md`. New identity-integration test coverage. Verified against live PostgreSQL
+directly, and end-to-end via `curl` simulating two browser tabs: listed both sessions with the right one
+marked `isCurrent`, signed out the other from tab A, confirmed tab A stayed authenticated while tab B got
+a 401, and confirmed a follow-up list showed only the surviving session. There is no web UI yet for
+viewing or signing out sessions.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

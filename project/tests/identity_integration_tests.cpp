@@ -210,6 +210,43 @@ int main() {
         require(!userWithoutHandle.handle.has_value(), "the handle remains optional -- omitting it is not an error");
     }
 
+    // --- Active-session list and "sign out everywhere" (Phase 6, D54) ---
+    {
+        const std::string demoUserId = "00000000-0000-4000-8000-000000000001";
+        const LoginRequest demoLogin{"demo@ticket-hub.local", "demo12345"};
+
+        const auto sessionA = auth.login(demoLogin);
+        const auto sessionB = auth.login(demoLogin);
+        const auto sessionC = auth.login(demoLogin);
+
+        const auto resolvedA = auth.currentSession(sessionA.sessionToken);
+        require(resolvedA.has_value() && resolvedA->id == sessionA.session.id,
+               "currentSession resolves the session row (not just the Principal) for a raw token");
+        require(!auth.currentSession("not-a-real-token").has_value(), "currentSession is nullopt for an unknown token");
+
+        const auto active = auth.listActiveSessions(demoUserId);
+        require(active.size() >= 3, "listActiveSessions includes all three freshly created sessions");
+        require(std::any_of(active.begin(), active.end(), [&](const auto& s) { return s.id == sessionA.session.id; })
+                    && std::any_of(active.begin(), active.end(), [&](const auto& s) { return s.id == sessionB.session.id; })
+                    && std::any_of(active.begin(), active.end(), [&](const auto& s) { return s.id == sessionC.session.id; }),
+               "all three sessions are present in the list");
+
+        const int removed = auth.signOutOtherSessions(demoUserId, sessionA.session.id);
+        require(removed >= 2, "signOutOtherSessions removes every other session for the user");
+        require(auth.validateSession(sessionA.sessionToken).has_value(),
+               "signOutOtherSessions keeps the caller's own current session active");
+        require(!auth.validateSession(sessionB.sessionToken).has_value(),
+               "a different session for the same user is signed out");
+        require(!auth.validateSession(sessionC.sessionToken).has_value(),
+               "every other session for the same user is signed out");
+
+        const auto afterSignOut = auth.listActiveSessions(demoUserId);
+        require(afterSignOut.size() == 1 && afterSignOut[0].id == sessionA.session.id,
+               "only the caller's own session remains listed");
+
+        auth.logout(sessionA.sessionToken);
+    }
+
     // --- Personal access tokens (Phase 6, D39/D40) ---
     {
         const std::string demoUserId = "00000000-0000-4000-8000-000000000001";

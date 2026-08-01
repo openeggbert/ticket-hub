@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Active-session list and "sign out everywhere" (D54) — Phase 6 continued
+
+- **Active sessions**: `GET /api/sessions` lists the caller's own active web sessions;
+  `POST /api/sessions/sign-out-others` signs out every other session for the caller, keeping the current
+  one active (session-cookie-only, not usable via PAT).
+- No new migration -- `sessions` already had everything needed.
+- No web UI yet for viewing/signing out sessions.
+
 ## Unreleased — Personal access tokens (D39/D40) — Phase 6 started
 
 - **Personal access tokens**: self-service create/list/revoke via `POST`/`GET /api/tokens` and

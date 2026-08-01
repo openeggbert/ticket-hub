@@ -161,4 +161,19 @@ std::optional<Domain::Principal> AuthService::validatePersonalAccessToken(const 
     return toPrincipal(*user);
 }
 
+std::optional<Domain::Session> AuthService::currentSession(const std::string& sessionToken) {
+    if (sessionToken.empty()) {
+        return std::nullopt;
+    }
+    return database_->findSessionByTokenHash(Common::sha256Hex(sessionToken));
+}
+
+std::vector<Domain::Session> AuthService::listActiveSessions(const std::string& userId) {
+    return database_->listSessionsForUser(userId);
+}
+
+int AuthService::signOutOtherSessions(const std::string& userId, const std::string& currentSessionId) {
+    return database_->deleteOtherSessionsForUser(userId, currentSessionId);
+}
+
 } // namespace TicketHub::Application

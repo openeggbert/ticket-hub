@@ -31,6 +31,8 @@ public:
     std::optional<Domain::Session> findSessionByTokenHash(const std::string& tokenHash) override;
     void deleteSession(const std::string& sessionId) override;
     void deleteExpiredSessions() override;
+    std::vector<Domain::Session> listSessionsForUser(const std::string& userId) override;
+    int deleteOtherSessionsForUser(const std::string& userId, const std::string& keepSessionId) override;
 
     Domain::PersonalAccessToken createPersonalAccessToken(const std::string& userId,
                                                            const std::string& name,
