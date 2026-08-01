@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Ad-hoc issue filter/search widening (D10/D43) — Phase 5 started
+
+- **Filter widening (D10/D43)**: `GET /api/issues` now also accepts `type`, `priority`, `assignee`,
+  `label`, and `dueBefore` query parameters, alongside the existing `project`/`status`/`q`. Still the
+  ad-hoc, in-UI-only filter model (no saved/shared filters, no JQL, not usable as a webhook/board source).
+  `q` now also matches issue description, not just summary/key (plain `LIKE`/`ILIKE` substring match, no
+  full-text index).
+- `web/`: the Issues view filter bar gained type/priority/assignee dropdowns, a label input, and a
+  due-date picker.
+- This is the first Phase 5 (Attachments and Kanban board) slice. Dashboard personalization (D24), Kanban
+  WIP limits/drag-and-drop (D33), and the attachments vertical (D15/D98-D105) remain.
+
 ## Unreleased — Simple append-only admin/security audit log (D23) — Phase 4 complete
 
 - **Audit log (D23)**: a simple, append-only `audit_events` table -- no categories-as-a-feature, export, or

@@ -758,12 +758,23 @@ ORDER BY p.name
 
 std::vector<Domain::Issue> PostgresDatabase::listIssues(const Domain::IssueFilter& filter) {
     auto connection = connect(connectionString_);
+    // `label` is checked via EXISTS rather than the already-aggregated `labels`
+    // LATERAL join (which feeds the label-list summary column) -- filtering on
+    // the joined row directly would restrict that aggregate to only the
+    // matching label instead of the issue's full label list.
     const std::string sql = std::string(IssueSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
   AND ($1::text IS NULL OR p.project_key = $1)
   AND ($2::text IS NULL OR s.status_key = $2)
-  AND ($3::text IS NULL OR i.summary ILIKE $3 OR i.issue_key ILIKE $3)
+  AND ($3::text IS NULL OR it.type_key = $3)
+  AND ($4::text IS NULL OR pr.priority_key = $4)
+  AND ($5::text IS NULL OR assignee.email = $5)
+  AND ($6::text IS NULL OR i.due_date <= $6::date)
+  AND ($7::text IS NULL OR EXISTS (
+        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.issue_id = i.id AND l2.name ILIKE $7))
+  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.issue_key ILIKE $8)
 ORDER BY i.updated_at DESC, i.issue_key DESC
 LIMIT 200
 )SQL";
@@ -771,6 +782,11 @@ LIMIT 200
                              sql,
                              {filter.projectKey,
                               filter.statusKey,
+                              filter.issueTypeKey,
+                              filter.priorityKey,
+                              filter.assigneeEmail,
+                              filter.dueBefore,
+                              filter.label,
                               filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt},
                              "List issues");
     std::vector<Domain::Issue> issues;

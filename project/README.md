@@ -231,7 +231,7 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `DELETE` | `/api/projects/{key}/permanent` | session + CSRF, global admin | permanently delete |
 | `GET` | `/api/settings/anonymous-read` | session | current toggle value |
 | `PUT` | `/api/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
-| `GET` | `/api/issues` | session, or anon if enabled | filter by `project`, `status`, `q` |
+| `GET` | `/api/issues` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description) |
 | `POST` | `/api/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
 | `GET` | `/api/issues/{key}` | session, or anon if enabled | current key or permanent alias |
 | `PATCH` | `/api/issues/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
@@ -545,6 +545,27 @@ rows in the log showing the correct action and actor. Verified against live Post
 including confirming that a CLI-driven `create-user` call actually produced an `identity`/`user.created`
 event with no actor, end-to-end through the real CLI binary (not just a direct database call).
 
+A thirteenth batch started Phase 5 (Attachments and Kanban board) with ad-hoc issue filter/search
+widening (D10/D43). `Domain::IssueFilter` gained `issueTypeKey`/`priorityKey`/`assigneeEmail`/`label`/
+`dueBefore`, alongside the pre-existing `projectKey`/`statusKey`/`search` -- still the ad-hoc, in-UI-only
+filter model (no saved/shared filters, no JQL, not usable as a webhook/board source). `SqliteDatabase::
+listIssues`/`PostgresDatabase::listIssues` both widened to match: type/priority/assignee are equality
+joins against already-present query aliases; `dueBefore` is an inclusive `<=`; `label` is a fresh `EXISTS`
+subquery against `issue_labels`/`labels` rather than a condition on the already-joined/aggregated
+label-list column used to display an issue's labels, so a label filter narrows matches without truncating
+a matching issue's own label list; `search` now also matches the issue description, not just summary/
+issue key, per D43's plain-substring, no-full-text-index scope. `GET /api/issues` accepts matching new
+query parameters; `TicketService::listIssues` needed no change. `web/`'s Issues view filter bar gained
+type/priority/assignee dropdowns, a label input, and a due-date picker; the "Clear" button and the
+Board-view/global-search transitions all reset the new fields too, so a lingering ad-hoc filter can't leak
+into a different view. New SQLite-integration test coverage for every new field individually, a combined
+multi-field filter, the inclusive `dueBefore` boundary, and an explicit check that filtering by label
+doesn't corrupt the filtered issue's own label list. Verified against live PostgreSQL directly (a
+standalone smoke-test program exercising the same cases against `PostgresDatabase::listIssues`) and
+browser-verified with Playwright/Chromium (each filter narrows the Issues table correctly, "Clear"
+restores the full list, and the Board view doesn't inherit a lingering Issues-view filter), plus a full
+regression re-run of the markdown/mentions/reactions/worklog/audit-log/comment-editing browser tests.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -554,7 +575,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
   renumbering, moving an issue between projects, and (Phase 4, now complete) comment editing/tombstone
   delete, fixed emoji reactions, @mention handles/the fixed in-app notification set, simplified worklogs,
-  and the admin/security audit log, in both database adapters),
+  the admin/security audit log, and (Phase 5, started) the widened ad-hoc issue filter/search model, in
+  both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the

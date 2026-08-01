@@ -1,6 +1,7 @@
 #include "infrastructure/database/SqliteDatabase.h"
 #include "domain/Errors.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -148,6 +149,66 @@ int main() {
         require(edited->version == done->version + 1, "edit increments the optimistic-lock version");
         require(edited->resolution.has_value() && *edited->resolution == "fixed",
                "editing standard fields does not disturb the resolution set by the earlier status change");
+
+        const auto containsIssue = [](const std::vector<TicketHub::Domain::Issue>& issues, const std::string& key) {
+            return std::any_of(issues.begin(), issues.end(),
+                               [&key](const auto& issue) { return issue.key == key; });
+        };
+
+        {
+            IssueFilter typeFilter;
+            typeFilter.projectKey = "TH";
+            typeFilter.issueTypeKey = "task";
+            require(containsIssue(database.listIssues(typeFilter), created.key), "issueTypeKey filter matches a task-type issue");
+            typeFilter.issueTypeKey = "bug";
+            require(!containsIssue(database.listIssues(typeFilter), created.key), "issueTypeKey filter excludes a non-matching type");
+
+            IssueFilter priorityFilter;
+            priorityFilter.priorityKey = "highest";
+            require(containsIssue(database.listIssues(priorityFilter), created.key), "priorityKey filter matches the edited highest-priority issue");
+            priorityFilter.priorityKey = "low";
+            require(!containsIssue(database.listIssues(priorityFilter), created.key), "priorityKey filter excludes a non-matching priority");
+
+            IssueFilter assigneeFilter;
+            assigneeFilter.assigneeEmail = "sam@ticket-hub.local";
+            require(containsIssue(database.listIssues(assigneeFilter), created.key), "assigneeEmail filter matches the edited assignee");
+            assigneeFilter.assigneeEmail = "alex@ticket-hub.local";
+            require(!containsIssue(database.listIssues(assigneeFilter), created.key), "assigneeEmail filter excludes a non-matching assignee");
+
+            IssueFilter labelFilter;
+            labelFilter.label = "database";
+            require(containsIssue(database.listIssues(labelFilter), created.key), "label filter matches an issue carrying that label");
+            require(database.listIssues(labelFilter).size() == 1,
+                   "label filter does not corrupt the aggregated label list into a per-row match count");
+            labelFilter.label = "backend";
+            require(!containsIssue(database.listIssues(labelFilter), created.key), "label filter excludes an issue without that label");
+
+            IssueFilter dueFilter;
+            dueFilter.dueBefore = "2026-12-31";
+            require(containsIssue(database.listIssues(dueFilter), created.key), "dueBefore filter is inclusive of the exact due date");
+            dueFilter.dueBefore = "2026-12-30";
+            require(!containsIssue(database.listIssues(dueFilter), created.key), "dueBefore filter excludes an issue due after the cutoff");
+
+            IssueFilter descriptionSearch;
+            descriptionSearch.search = "SQLite integration test";
+            require(containsIssue(database.listIssues(descriptionSearch), created.key),
+                   "search now matches the issue description, not just summary/key");
+
+            IssueFilter combined;
+            combined.projectKey = "TH";
+            combined.issueTypeKey = "task";
+            combined.priorityKey = "highest";
+            combined.assigneeEmail = "sam@ticket-hub.local";
+            combined.label = "database";
+            require(containsIssue(database.listIssues(combined), created.key), "combined filters all narrow to the same edited issue");
+            combined.label = "frontend";
+            require(!containsIssue(database.listIssues(combined), created.key), "combined filters exclude when any single field mismatches");
+
+            const auto stillHasBothLabels = database.findIssueByKey(created.key);
+            require(stillHasBothLabels.has_value() && stillHasBothLabels->labels.size() == 1
+                        && stillHasBothLabels->labels[0] == "database",
+                   "filtering by label does not mutate the issue's own label list");
+        }
 
         bool editConflictDetected = false;
         try {

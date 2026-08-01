@@ -357,6 +357,14 @@ Only metadata exists. Filesystem/S3 providers and attachment APIs remain future 
 
 Indexes cover project/status/assignee/update issue access, live issue listing, comment timelines, aliases, label joins, and session lookup/expiry. Full-text indexes are not planned at all for V1 -- search uses a plain `LIKE`/`ILIKE` query (`docs/REDUCED_SCOPE_SPECIFICATION.md` section 10).
 
+`Domain::IssueFilter` (D10/D43, Phase 5) is the ad-hoc, in-UI-only filter model used by `IDatabase::
+listIssues` and `GET /api/issues` -- no saved/shared filters, no JQL, not usable as a webhook/board
+source. It combines `projectKey`, `statusKey`, `issueTypeKey`, `priorityKey`, `assigneeEmail`, `label`,
+`dueBefore` (inclusive `<=`), and `search` (matches summary, description, and issue key). `label` is
+implemented as an `EXISTS` subquery against `issue_labels`/`labels` rather than a condition on the
+already-joined/aggregated label-list column used to *display* an issue's labels, so filtering by one
+label does not truncate a matching issue's own label list to just that label.
+
 ## Deliberate implementation gap
 
 The current schema is a migration-safe foundation for the **reduced-scope V1**, not the full original

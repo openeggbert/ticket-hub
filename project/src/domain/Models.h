@@ -331,9 +331,19 @@ struct Issue {
     std::int64_t rankOrder{0};
 };
 
+// Ad-hoc in-UI filters only (D10): no saved/shared filters, no JQL, not
+// usable as a webhook/board source. `search` is a plain case-insensitive
+// substring match (LIKE/ILIKE) against summary/description/issue key, no
+// full-text index (D43). `dueBefore` is inclusive ("due on or before this
+// date").
 struct IssueFilter {
     std::optional<std::string> projectKey;
     std::optional<std::string> statusKey;
+    std::optional<std::string> issueTypeKey;
+    std::optional<std::string> priorityKey;
+    std::optional<std::string> assigneeEmail;
+    std::optional<std::string> label;
+    std::optional<std::string> dueBefore;
     std::optional<std::string> search;
 };
 

@@ -588,6 +588,11 @@ void registerApiRoutes(crow::SimpleApp& app,
             Domain::IssueFilter filter;
             filter.projectKey = queryParameter(request, "project");
             filter.statusKey = queryParameter(request, "status");
+            filter.issueTypeKey = queryParameter(request, "type");
+            filter.priorityKey = queryParameter(request, "priority");
+            filter.assigneeEmail = queryParameter(request, "assignee");
+            filter.label = queryParameter(request, "label");
+            filter.dueBefore = queryParameter(request, "dueBefore");
             filter.search = queryParameter(request, "q");
             crow::json::wvalue::list items;
             for (const auto& issue : service->listIssues(filter, resolvePrincipal(request, authService))) {
