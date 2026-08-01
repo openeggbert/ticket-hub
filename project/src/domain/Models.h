@@ -433,12 +433,24 @@ struct AuditEvent {
     std::string createdAt;
 };
 
+// Fixed personal dashboard (D24): assigned issues, watched issues, recent
+// activity, deadlines, simple stats -- no active-sprint widget (Scrum was
+// removed for V1). `recentIssues`/the four counts stay installation-wide;
+// `assignedToMe`/`watchedIssues`/`upcomingDeadlines` are empty for an
+// anonymous viewer (no personal identity to personalize for) and otherwise
+// scoped to the requesting actor. `assignedToMe` and `upcomingDeadlines`
+// both exclude Done-category issues (an already-finished issue isn't
+// something to act on); `upcomingDeadlines` is further limited to issues
+// that have a due date, soonest first.
 struct DashboardStats {
     std::int64_t totalIssues{};
     std::int64_t todoIssues{};
     std::int64_t inProgressIssues{};
     std::int64_t doneIssues{};
     std::vector<Issue> recentIssues;
+    std::vector<Issue> assignedToMe;
+    std::vector<Issue> watchedIssues;
+    std::vector<Issue> upcomingDeadlines;
 };
 
 } // namespace TicketHub::Domain

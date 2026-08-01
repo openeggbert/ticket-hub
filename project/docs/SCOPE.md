@@ -96,6 +96,11 @@ remain as the long-term aspirational baseline only — do not build against them
   and search now also matches issue description, not just summary/key. Still ad-hoc, in-UI-only filters
   (no saved/shared filters, no JQL, not usable as a webhook/board source) and still a plain `LIKE`/`ILIKE`
   substring match (no full-text index). This is the first Phase 5 slice.
+- **Personal dashboard widgets (Phase 5, D24):** `GET /api/dashboard` now returns `assignedToMe`,
+  `watchedIssues`, and `upcomingDeadlines` for an authenticated caller (empty for anonymous). Matches
+  D24's fixed widget set (assigned issues, watched issues, recent activity, deadlines, simple stats) minus
+  the active-sprint widget, dropped since Scrum was removed for V1. `assignedToMe`/`upcomingDeadlines`
+  exclude Done-category issues.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -103,8 +108,8 @@ remain as the long-term aspirational baseline only — do not build against them
   to Phase 6, alongside REST rate limiting.
 - Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
   `issueTypeKey`/`parentIssueKey`).
-- Phase 4 is complete. Phase 5 (Attachments and Kanban board) is started (filter/search widening done);
-  dashboard personalization (D24), Kanban WIP limits/drag-and-drop (D33), and attachments
+- Phase 4 is complete. Phase 5 (Attachments and Kanban board) is underway (filter/search widening and
+  dashboard personalization done); Kanban WIP limits/drag-and-drop (D33) and attachments
   (D15/D98-D105) are not implemented yet.
 - The `/api/v1` REST surface, CSV export, backup/restore, and upgrade command are not implemented
   (Phase 6-7).

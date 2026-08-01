@@ -574,6 +574,41 @@ SELECT id, '00000000-0000-4000-8000-000000000002', 'admin' FROM projects WHERE p
                "every admin-triggered event in this run was attributed to demo, the actor who performed each action");
     }
 
+    // --- Fixed personal dashboard (D24) ---
+    // By this point TH-1 (Done, assigned to alex), TH-3 (In Review, assigned
+    // to alex), and WEB-1 (In Progress, assigned to alex, unchanged by the
+    // sam-forbidden bulk-assign attempt above) are all still in their
+    // original seeded state.
+    {
+        const std::optional<Principal> anonymous = std::nullopt;
+        tickets.setAnonymousReadEnabled(true, demo);
+        const auto anonDashboard = tickets.dashboard(anonymous);
+        tickets.setAnonymousReadEnabled(false, demo);
+        require(anonDashboard.assignedToMe.empty() && anonDashboard.watchedIssues.empty()
+                    && anonDashboard.upcomingDeadlines.empty(),
+               "an anonymous viewer's dashboard has no personal widgets, even when anonymous read is enabled");
+
+        const auto alexDashboard = tickets.dashboard(alex);
+        require(alexDashboard.assignedToMe.size() == 2,
+               "alex's assigned-to-me widget excludes the Done-category TH-1, keeping TH-3 and WEB-1");
+        require(std::none_of(alexDashboard.assignedToMe.begin(), alexDashboard.assignedToMe.end(),
+                             [](const auto& issue) { return issue.key == "TH-1"; }),
+               "a Done-category issue does not appear in assigned-to-me");
+        require(std::any_of(alexDashboard.assignedToMe.begin(), alexDashboard.assignedToMe.end(),
+                            [](const auto& issue) { return issue.key == "TH-3"; }),
+               "an open issue assigned to the actor appears in assigned-to-me");
+        require(std::none_of(alexDashboard.watchedIssues.begin(), alexDashboard.watchedIssues.end(),
+                             [](const auto& issue) { return issue.key == "TH-2"; }),
+               "alex is not watching TH-2 yet (alex is already watching an earlier notification-test issue)");
+
+        require(tickets.watchIssue("TH-2", alex), "alex watches TH-2 for the dashboard test");
+        const auto alexDashboardAfterWatch = tickets.dashboard(alex);
+        require(std::any_of(alexDashboardAfterWatch.watchedIssues.begin(), alexDashboardAfterWatch.watchedIssues.end(),
+                            [](const auto& issue) { return issue.key == "TH-2"; }),
+               "the watched-issues widget reflects a newly watched issue");
+        require(tickets.unwatchIssue("TH-2", alex), "cleanup: alex unwatches TH-2");
+    }
+
     fs::remove(databasePath, removeError);
     fs::remove(databasePath.string() + "-wal", removeError);
     fs::remove(databasePath.string() + "-shm", removeError);

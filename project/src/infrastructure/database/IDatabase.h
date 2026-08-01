@@ -244,6 +244,10 @@ public:
     virtual bool watchIssue(const std::string& issueKey, const std::string& userId) = 0;
     virtual bool unwatchIssue(const std::string& issueKey, const std::string& userId) = 0;
     virtual std::vector<Domain::UserSummary> listWatchers(const std::string& issueKey) = 0;
+    // The reverse direction of listWatchers: every non-deleted issue the
+    // given user is watching, newest-updated first, capped at `limit`.
+    // Backs the personal dashboard's "watched issues" widget (D24).
+    virtual std::vector<Domain::Issue> listWatchedIssues(const std::string& userId, int limit) = 0;
     virtual bool voteIssue(const std::string& issueKey, const std::string& userId) = 0;
     virtual bool unvoteIssue(const std::string& issueKey, const std::string& userId) = 0;
     virtual std::vector<Domain::UserSummary> listVoters(const std::string& issueKey) = 0;

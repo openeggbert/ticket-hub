@@ -1914,6 +1914,26 @@ std::vector<Domain::UserSummary> SqliteDatabase::listWatchers(const std::string&
     return listMembers(database_, "issue_watchers", issueId);
 }
 
+std::vector<Domain::Issue> SqliteDatabase::listWatchedIssues(const std::string& userId, int limit) {
+    std::scoped_lock lock(mutex_);
+    const std::string sql = std::string(IssueSelect) + R"SQL(
+WHERE i.deleted_at IS NULL
+  AND p.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM issue_watchers w WHERE w.issue_id = i.id AND w.user_id = ?1)
+GROUP BY i.id
+ORDER BY i.updated_at DESC
+LIMIT ?2
+)SQL";
+    Statement statement(database_, sql);
+    statement.bind(1, userId);
+    statement.bind(2, static_cast<std::int64_t>(limit));
+    std::vector<Domain::Issue> issues;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        issues.push_back(readIssue(statement.get()));
+    }
+    return issues;
+}
+
 bool SqliteDatabase::voteIssue(const std::string& issueKey, const std::string& userId) {
     std::scoped_lock lock(mutex_);
     const std::string issueId = lookupIssueId(database_, issueKey);

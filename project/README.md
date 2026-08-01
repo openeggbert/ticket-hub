@@ -215,7 +215,7 @@ alongside PAT authentication, fixed rate limits, and numbered pagination.
 | `POST` | `/api/auth/login` | no | `{email,password}` → sets session + CSRF cookies |
 | `POST` | `/api/auth/logout` | no | clears session (safe to call unauthenticated) |
 | `GET` | `/api/auth/me` | session | current principal, or 401 |
-| `GET` | `/api/dashboard` | session, or anon if enabled | counts and recent issues |
+| `GET` | `/api/dashboard` | session, or anon if enabled | counts, recent issues, and (authenticated only, D24) assigned-to-me/watched/upcoming-deadline issues |
 | `GET` | `/api/users` | session | user directory (id/displayName/email/handle) for @mention autocomplete (D80) |
 | `GET` | `/api/notifications` | session | `?unread=true` filters; fixed set (D14) |
 | `GET` | `/api/notifications/unread-count` | session | `{count}` |
@@ -566,6 +566,29 @@ browser-verified with Playwright/Chromium (each filter narrows the Issues table 
 restores the full list, and the Board view doesn't inherit a lingering Issues-view filter), plus a full
 regression re-run of the markdown/mentions/reactions/worklog/audit-log/comment-editing browser tests.
 
+A fourteenth batch continued Phase 5 with personal dashboard widgets (D24). `Domain::DashboardStats`
+gained `assignedToMe`/`watchedIssues`/`upcomingDeadlines`, matching D24's fixed widget set (assigned
+issues, watched issues, recent activity, deadlines, simple stats -- no active-sprint widget, since Scrum
+was removed for V1). New `IDatabase::listWatchedIssues(userId, limit)` in both adapters, the reverse
+direction of the existing `listWatchers`. `TicketService::dashboard` personalizes for an authenticated
+actor -- `assignedToMe` reuses the existing `listIssues` assignee filter and excludes Done-category
+issues, `upcomingDeadlines` is derived from that same result set app-side rather than a second database
+round trip, `watchedIssues` calls the new method -- and all three stay empty for an anonymous viewer.
+`GET /api/dashboard` gained the three new arrays. `web/`'s Dashboard view gained "Assigned to me", "Issues
+I'm watching", and "Upcoming deadlines" panels, shown only when a principal is present. New
+SQLite-integration coverage for `listWatchedIssues` and authorization-integration coverage for the
+dashboard personalization (anonymous gets empty widgets even with anonymous read enabled; Done-category
+issues excluded from assigned-to-me; watched-issues reflects a fresh watch). Verified against live
+PostgreSQL directly (`listWatchedIssues` across multiple users, overlapping watches, the `limit`
+parameter, and cleanup back to empty). Browser-verified with Playwright/Chromium: a real Watch-button
+click in the issue drawer populates the watching widget after returning to the dashboard; a real due-date
+edit through the API populates the deadlines widget with the correct formatted date; two different users
+(alex, sam) each see their own personalized widgets, not each other's. A first draft of the browser script
+produced confusing results from state left over by an earlier run that crashed mid-test (a stale watch on
+an issue from a script that hit a drawer-backdrop click interception); re-running against a freshly
+reseeded server produced clean results, confirming the confusion was test-script state pollution across
+runs against the same long-lived dev server, not an application bug.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -575,8 +598,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   self-service watching/voting, the issue recycle bin, simple bulk actions, manual ordering with
   renumbering, moving an issue between projects, and (Phase 4, now complete) comment editing/tombstone
   delete, fixed emoji reactions, @mention handles/the fixed in-app notification set, simplified worklogs,
-  the admin/security audit log, and (Phase 5, started) the widened ad-hoc issue filter/search model, in
-  both database adapters),
+  the admin/security audit log, and (Phase 5, underway) the widened ad-hoc issue filter/search model and
+  personal dashboard widgets, in both database adapters),
 - `ticket-hub-cli` (including `create-user`),
 - all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the

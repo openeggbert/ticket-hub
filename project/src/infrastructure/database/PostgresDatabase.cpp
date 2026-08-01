@@ -1831,6 +1831,23 @@ std::vector<Domain::UserSummary> PostgresDatabase::listWatchers(const std::strin
     return listMembers(connection.get(), "issue_watchers", issueId);
 }
 
+std::vector<Domain::Issue> PostgresDatabase::listWatchedIssues(const std::string& userId, int limit) {
+    auto connection = connect(connectionString_);
+    const std::string sql = std::string(IssueSelect) + R"SQL(
+WHERE i.deleted_at IS NULL
+  AND p.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM issue_watchers w WHERE w.issue_id = i.id AND w.user_id = $1)
+ORDER BY i.updated_at DESC
+LIMIT $2
+)SQL";
+    auto result = execParams(connection.get(), sql, {userId, std::to_string(limit)}, "List watched issues");
+    std::vector<Domain::Issue> issues;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        issues.push_back(readIssue(result.get(), row));
+    }
+    return issues;
+}
+
 bool PostgresDatabase::voteIssue(const std::string& issueKey, const std::string& userId) {
     auto connection = connect(connectionString_);
     const std::string issueId = lookupIssueId(connection.get(), issueKey);
