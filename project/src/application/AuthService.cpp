@@ -120,4 +120,45 @@ std::optional<Domain::Principal> AuthService::validateSession(const std::string&
     return toPrincipal(*user);
 }
 
+Domain::CreatedPersonalAccessToken AuthService::createPersonalAccessToken(const std::string& userId,
+                                                                          const std::string& name,
+                                                                          const int expiresInDays) {
+    if (name.empty()) {
+        throw std::invalid_argument("Token name is required");
+    }
+    if (expiresInDays <= 0) {
+        throw std::invalid_argument("expiresInDays must be positive");
+    }
+    const std::string rawToken = Common::randomTokenHex(32);
+    const std::string tokenHash = Common::sha256Hex(rawToken);
+    const std::string expiresAt = Common::utcNowPlusSecondsIso8601(static_cast<long long>(expiresInDays) * 24 * 60 * 60);
+    const auto token = database_->createPersonalAccessToken(userId, name, tokenHash, expiresAt);
+    return Domain::CreatedPersonalAccessToken{token, rawToken};
+}
+
+std::vector<Domain::PersonalAccessToken> AuthService::listPersonalAccessTokens(const std::string& userId) {
+    return database_->listPersonalAccessTokens(userId);
+}
+
+bool AuthService::revokePersonalAccessToken(const std::string& tokenId, const std::string& userId) {
+    return database_->revokePersonalAccessToken(tokenId, userId);
+}
+
+std::optional<Domain::Principal> AuthService::validatePersonalAccessToken(const std::string& rawToken) {
+    if (rawToken.empty()) {
+        return std::nullopt;
+    }
+    const std::string tokenHash = Common::sha256Hex(rawToken);
+    const auto token = database_->findPersonalAccessTokenByHash(tokenHash);
+    if (!token) {
+        return std::nullopt;
+    }
+    const auto user = database_->findUserById(token->userId);
+    if (!user || !user->active) {
+        return std::nullopt;
+    }
+    database_->touchPersonalAccessTokenLastUsed(token->id);
+    return toPrincipal(*user);
+}
+
 } // namespace TicketHub::Application

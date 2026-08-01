@@ -611,6 +611,88 @@ void SqliteDatabase::deleteExpiredSessions() {
     executeScript("DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP;");
 }
 
+namespace {
+Domain::PersonalAccessToken readPersonalAccessToken(sqlite3_stmt* statement) {
+    Domain::PersonalAccessToken token;
+    token.id = text(statement, 0);
+    token.userId = text(statement, 1);
+    token.name = text(statement, 2);
+    token.createdAt = text(statement, 3);
+    token.expiresAt = text(statement, 4);
+    token.lastUsedAt = optionalText(statement, 5);
+    token.revokedAt = optionalText(statement, 6);
+    return token;
+}
+constexpr const char* PersonalAccessTokenSelect =
+    "SELECT id, user_id, name, created_at, expires_at, last_used_at, revoked_at FROM personal_access_tokens";
+} // namespace
+
+Domain::PersonalAccessToken SqliteDatabase::createPersonalAccessToken(const std::string& userId,
+                                                                       const std::string& name,
+                                                                       const std::string& tokenHash,
+                                                                       const std::string& expiresAtIso8601) {
+    std::scoped_lock lock(mutex_);
+    const std::string tokenId = Common::uuidV4();
+    Statement insert(database_, R"SQL(
+INSERT INTO personal_access_tokens(id, user_id, name, token_hash, created_at, expires_at)
+VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+)SQL");
+    insert.bind(1, tokenId);
+    insert.bind(2, userId);
+    insert.bind(3, name);
+    insert.bind(4, tokenHash);
+    insert.bind(5, expiresAtIso8601);
+    expectDone(database_, insert, "Create personal access token");
+
+    Statement read(database_, std::string(PersonalAccessTokenSelect) + " WHERE id = ?");
+    read.bind(1, tokenId);
+    if (read.step() != SQLITE_ROW) {
+        throw std::runtime_error("Created personal access token could not be read back");
+    }
+    return readPersonalAccessToken(read.get());
+}
+
+std::optional<Domain::PersonalAccessToken> SqliteDatabase::findPersonalAccessTokenByHash(const std::string& tokenHash) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(PersonalAccessTokenSelect)
+        + " WHERE token_hash = ? AND expires_at > CURRENT_TIMESTAMP AND revoked_at IS NULL");
+    statement.bind(1, tokenHash);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readPersonalAccessToken(statement.get());
+}
+
+std::vector<Domain::PersonalAccessToken> SqliteDatabase::listPersonalAccessTokens(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(PersonalAccessTokenSelect) + " WHERE user_id = ? ORDER BY created_at DESC");
+    statement.bind(1, userId);
+    std::vector<Domain::PersonalAccessToken> tokens;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        tokens.push_back(readPersonalAccessToken(statement.get()));
+    }
+    return tokens;
+}
+
+bool SqliteDatabase::revokePersonalAccessToken(const std::string& tokenId, const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE personal_access_tokens SET revoked_at = CURRENT_TIMESTAMP
+WHERE id = ?1 AND user_id = ?2 AND revoked_at IS NULL
+)SQL");
+    statement.bind(1, tokenId);
+    statement.bind(2, userId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+void SqliteDatabase::touchPersonalAccessTokenLastUsed(const std::string& tokenId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "UPDATE personal_access_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?");
+    statement.bind(1, tokenId);
+    statement.step();
+}
+
 // --- Authorization and project lifecycle ---
 
 namespace {

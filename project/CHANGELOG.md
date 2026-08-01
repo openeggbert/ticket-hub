@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Personal access tokens (D39/D40) — Phase 6 started
+
+- **Personal access tokens**: self-service create/list/revoke via `POST`/`GET /api/tokens` and
+  `DELETE /api/tokens/{id}` (session-cookie-authenticated). The raw token is shown only once, at
+  creation. Hashed storage, a mandatory expiration, revocation, and last-used tracking (D40) -- no
+  scopes (a token carries exactly its owner's permissions), no rotation, no admin-configurable lifetime.
+- `Authorization: Bearer <token>` now authenticates any existing route, alongside the existing session
+  cookie (mutually exclusive per request). Requests authenticated via Bearer token are exempt from the
+  CSRF check (which only defends against cookie-based forgery).
+- New migration `015_personal_access_tokens.sql` (both backends).
+- No web UI yet for managing tokens.
+
 ## Unreleased — Attachments (D15/D98-D105) — Phase 5 complete
 
 - **Attachments**: issues can now have files attached, closing out Phase 5 (and Milestone 2).

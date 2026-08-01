@@ -53,6 +53,23 @@ public:
     // Opportunistic housekeeping call (no background job exists in V1).
     virtual void deleteExpiredSessions() = 0;
 
+    // Personal access tokens (Phase 6, D39/D40). Same tokenHash convention
+    // as sessions. findPersonalAccessTokenByHash mirrors
+    // findSessionByTokenHash exactly: it returns nullopt for an
+    // unknown/expired/revoked token, so a caller need only check for a
+    // present value to know the token is currently valid.
+    // listPersonalAccessTokens returns every token regardless of
+    // expiry/revocation state, newest first, so a user can see (and revoke)
+    // tokens that already expired.
+    virtual Domain::PersonalAccessToken createPersonalAccessToken(const std::string& userId,
+                                                                   const std::string& name,
+                                                                   const std::string& tokenHash,
+                                                                   const std::string& expiresAtIso8601) = 0;
+    virtual std::optional<Domain::PersonalAccessToken> findPersonalAccessTokenByHash(const std::string& tokenHash) = 0;
+    virtual std::vector<Domain::PersonalAccessToken> listPersonalAccessTokens(const std::string& userId) = 0;
+    virtual bool revokePersonalAccessToken(const std::string& tokenId, const std::string& userId) = 0;
+    virtual void touchPersonalAccessTokenLastUsed(const std::string& tokenId) = 0;
+
     // --- Authorization and project lifecycle (Phase 2) ---
     // nullopt means "no membership row" -- combined with an unrecognized
     // role string, Domain::projectRoleRank(...) treats both as no access.

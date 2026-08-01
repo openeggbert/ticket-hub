@@ -49,6 +49,8 @@ Current schema migrations:
   in Phase 5). Adds only an `issue_id` index on `attachments` -- `sha256`/`deleted_at`/
   `deleted_by_user_id` already existed from `003_product_foundation.sql`, pre-provisioned ahead of this
   phase.
+- `015_personal_access_tokens.sql` — personal access tokens (Phase 6 of `REDUCED_SCOPE_ROADMAP.md`,
+  D39/D40). Adds `personal_access_tokens`, mirroring `sessions` plus `name`/`last_used_at`/`revoked_at`.
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, an explicit `rank_order` (equal to `issue_number`) for each seeded issue, (since `010_mentions_and_notifications.sql`, which `seed-demo` always applies first) a `handle` for each of the three demo users, and (since `013_board_columns.sql`) one `board_columns` row per fixed workflow status, with "In Progress" given a demo WIP limit of 3.
 
@@ -80,6 +82,21 @@ Minimal login-attempt lockout only (locks for 15 minutes after `IDatabase::MaxFa
 `id`, `user_id` FK to `users(id)`, `token_hash` (SHA-256 hex, unique), `created_at`, `expires_at`.
 
 The raw session token is never stored, only its SHA-256 hash; it is returned to the caller exactly once, at login. 30-day fixed lifetime; there is no active-session list or "sign out everywhere" endpoint yet (resequenced to Phase 6).
+
+### `personal_access_tokens`
+
+`id`, `user_id` FK to `users(id)`, `name`, `token_hash` (SHA-256 hex, unique), `created_at`, `expires_at`,
+`last_used_at` (nullable), `revoked_at` (nullable) -- Phase 6, D39/D40, migration
+`015_personal_access_tokens.sql`. Mirrors `sessions` closely: the raw token is never stored, only
+returned once at creation, hashed with the same SHA-256 convention. Unlike sessions, a token also carries
+a user-chosen `name` (to tell multiple tokens apart) and can be `revoked_at` before it naturally expires.
+`IDatabase::findPersonalAccessTokenByHash` filters out expired/revoked tokens at the SQL layer, exactly
+like `findSessionByTokenHash` does for `expires_at`. No scopes -- a token authenticates with exactly its
+owner's permissions, resolved the same way a session does (`AuthService::validatePersonalAccessToken` ->
+`Domain::Principal`). Self-service only: `TicketService`/`Api.cpp` never expose another user's tokens, and
+`revokePersonalAccessToken` is scoped to `(tokenId, userId)` so a non-owner's revoke attempt is a silent
+no-op (`false`), not a 403 -- there is nothing to distinguish "not yours" from "doesn't exist" here, and
+neither should be revealed.
 
 ### `projects`
 

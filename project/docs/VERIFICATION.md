@@ -1,5 +1,73 @@
 # Verification record
 
+## 2026-08-01 — Personal access tokens (D39/D40): Phase 6 slice 1
+
+First Phase 6 (Milestone 3) slice: PAT-only API authentication. The rest of Phase 6 (a versioned
+`/api/v1` surface, fixed rate limits and the full lockout policy, active-session list, CSV export, and
+the security hardening pass) is untouched.
+
+### What changed
+
+- Migration `015_personal_access_tokens.sql` (both backends) adds `personal_access_tokens`, mirroring
+  `sessions` (`id`, `user_id`, `token_hash` unique, `created_at`, `expires_at`), plus `name` (a
+  user-chosen label), `last_used_at` (nullable), and `revoked_at` (nullable -- a token can be revoked
+  before it naturally expires). D40's "basic token security": hashed storage, expiration, revocation,
+  last-used tracking; no scopes (a token carries exactly its owner's permissions), no rotation, no
+  admin-configurable max lifetime.
+- `Domain::PersonalAccessToken` (metadata only) and `Domain::CreatedPersonalAccessToken` (adds the raw
+  token, returned only once, at creation, never stored or logged). `IDatabase::createPersonalAccessToken`/
+  `findPersonalAccessTokenByHash`/`listPersonalAccessTokens`/`revokePersonalAccessToken`/
+  `touchPersonalAccessTokenLastUsed` in both adapters -- `findPersonalAccessTokenByHash` mirrors
+  `findSessionByTokenHash` exactly, filtering out expired/revoked tokens at the SQL layer so a present
+  result always means "currently valid."
+- `AuthService::createPersonalAccessToken` (requires a name and a positive `expiresInDays` -- D40 requires
+  an expiration, there's no "never expires" option), `listPersonalAccessTokens`, `revokePersonalAccessToken`
+  (ownership-scoped: only the owner can revoke their own token), `validatePersonalAccessToken` (mirrors
+  `validateSession`, additionally touches `last_used_at` on success).
+- `Api.cpp`'s `resolvePrincipal` now also checks an `Authorization: Bearer <token>` header when no
+  session cookie is present -- cookie and Bearer auth are mutually exclusive per request (D54: sessions
+  for web, PATs for API). `csrfTokenValid` now returns `true` unconditionally when no session cookie is
+  present: CSRF only defends against a browser silently attaching a cookie to a forged request, and a
+  Bearer token is never auto-attached, so a PAT-authenticated write needs no CSRF header. This required no
+  changes to any of the ~50 existing route handlers that already call `csrfTokenValid`. New self-service
+  `GET`/`POST /api/tokens` and `DELETE /api/tokens/{id}` routes (session-cookie-authenticated, since
+  managing your own tokens is a web-UI action even though the tokens themselves authenticate API calls).
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 7/7 green. New `identity_integration_tests` coverage: create/validate/
+   list/revoke, last-used-at updates on validation, ownership enforcement (a non-owner's revoke attempt
+   fails and the token survives), a revoked token no longer validates, and both `expiresInDays <= 0` and
+   an empty name are rejected.
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly.
+4. Live PostgreSQL verification: a standalone smoke-test program (not committed) exercised
+   `PostgresDatabase`'s PAT methods directly -- create/find/touch-last-used/list/revoke, and confirmed
+   both a revoked token and a separately created already-expired token both fail to resolve via
+   `findPersonalAccessTokenByHash` while still appearing in `listPersonalAccessTokens` (so a user can see
+   and manage tokens that have already lapsed). All passed; database dropped afterward.
+5. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded, no
+   Playwright for this slice since it has no web UI yet): created a token via cookie-authenticated
+   `POST /api/tokens`; used the raw token as a Bearer header with **no cookies at all** to read
+   `GET /api/auth/me` (resolved correctly) and to **write** via `POST /api/projects` with **no CSRF
+   header** (succeeded, confirming the CSRF exemption works end-to-end through the real HTTP layer, not
+   just in isolation); confirmed `GET /api/tokens` (cookie-authenticated) shows the updated `lastUsedAt`;
+   revoked the token via `DELETE /api/tokens/{id}`; confirmed the same Bearer token now gets a 401.
+
+All checks passed. No committed test scripts (scratchpad only).
+
+### What is still not built
+
+Phase 6 (Milestone 3) has just started. Still open: the versioned `/api/v1` surface itself (routes exist
+today only under the unversioned `/api/*` prefix used by both the web UI and, as of this batch, PATs);
+fixed rate limits on login/write endpoints and the full configurable-replacing lockout policy (today's
+lockout is still the minimal Phase 1 version); the active-session list and "sign out everywhere" endpoint;
+fixed request/body/batch-size constants and numbered/offset pagination; read-only CSV export of issues;
+and the security hardening pass (dependency review, header review, session/CSRF review). There is also no
+web UI yet for a user to create/view/revoke their own tokens -- `/api/tokens` is fully functional but only
+reachable via `curl`/scripts today.
+
 ## 2026-08-01 — Attachments (D15/D98-D105): Phase 5 complete
 
 Fourth and final Phase 5 slice. With this batch, every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5

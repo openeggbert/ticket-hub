@@ -38,6 +38,15 @@ public:
     void deleteSession(const std::string& sessionId) override;
     void deleteExpiredSessions() override;
 
+    Domain::PersonalAccessToken createPersonalAccessToken(const std::string& userId,
+                                                           const std::string& name,
+                                                           const std::string& tokenHash,
+                                                           const std::string& expiresAtIso8601) override;
+    std::optional<Domain::PersonalAccessToken> findPersonalAccessTokenByHash(const std::string& tokenHash) override;
+    std::vector<Domain::PersonalAccessToken> listPersonalAccessTokens(const std::string& userId) override;
+    bool revokePersonalAccessToken(const std::string& tokenId, const std::string& userId) override;
+    void touchPersonalAccessTokenLastUsed(const std::string& tokenId) override;
+
     std::optional<std::string> findProjectRoleByKey(const std::string& projectKey,
                                                      const std::string& userId) override;
     Domain::Project createProject(const Domain::CreateProjectRequest& request,

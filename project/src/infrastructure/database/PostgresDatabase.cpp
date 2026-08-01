@@ -592,6 +592,81 @@ void PostgresDatabase::deleteExpiredSessions() {
     exec(connection.get(), "DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP", "Delete expired sessions");
 }
 
+namespace {
+Domain::PersonalAccessToken readPersonalAccessToken(PGresult* result, int row) {
+    Domain::PersonalAccessToken token;
+    token.id = value(result, row, 0);
+    token.userId = value(result, row, 1);
+    token.name = value(result, row, 2);
+    token.createdAt = value(result, row, 3);
+    token.expiresAt = value(result, row, 4);
+    token.lastUsedAt = optionalValue(result, row, 5);
+    token.revokedAt = optionalValue(result, row, 6);
+    return token;
+}
+constexpr const char* PersonalAccessTokenSelect =
+    "SELECT id, user_id, name, created_at::text, expires_at::text, last_used_at::text, revoked_at::text "
+    "FROM personal_access_tokens";
+} // namespace
+
+Domain::PersonalAccessToken PostgresDatabase::createPersonalAccessToken(const std::string& userId,
+                                                                        const std::string& name,
+                                                                        const std::string& tokenHash,
+                                                                        const std::string& expiresAtIso8601) {
+    auto connection = connect(connectionString_);
+    const std::string tokenId = Common::uuidV4();
+    execParams(connection.get(), R"SQL(
+INSERT INTO personal_access_tokens(id, user_id, name, token_hash, created_at, expires_at)
+VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5::timestamptz)
+)SQL",
+              {tokenId, userId, name, tokenHash, expiresAtIso8601}, "Create personal access token");
+
+    auto result = execParams(connection.get(), std::string(PersonalAccessTokenSelect) + " WHERE id = $1",
+                             {tokenId}, "Read created personal access token");
+    if (PQntuples(result.get()) != 1) {
+        throw std::runtime_error("Created personal access token could not be read back");
+    }
+    return readPersonalAccessToken(result.get(), 0);
+}
+
+std::optional<Domain::PersonalAccessToken> PostgresDatabase::findPersonalAccessTokenByHash(const std::string& tokenHash) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(PersonalAccessTokenSelect)
+        + " WHERE token_hash = $1 AND expires_at > CURRENT_TIMESTAMP AND revoked_at IS NULL",
+                             {tokenHash}, "Find personal access token");
+    if (PQntuples(result.get()) == 0) {
+        return std::nullopt;
+    }
+    return readPersonalAccessToken(result.get(), 0);
+}
+
+std::vector<Domain::PersonalAccessToken> PostgresDatabase::listPersonalAccessTokens(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(PersonalAccessTokenSelect) + " WHERE user_id = $1 ORDER BY created_at DESC",
+                             {userId}, "List personal access tokens");
+    std::vector<Domain::PersonalAccessToken> tokens;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        tokens.push_back(readPersonalAccessToken(result.get(), row));
+    }
+    return tokens;
+}
+
+bool PostgresDatabase::revokePersonalAccessToken(const std::string& tokenId, const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE personal_access_tokens SET revoked_at = CURRENT_TIMESTAMP
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+)SQL",
+                             {tokenId, userId}, "Revoke personal access token");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+void PostgresDatabase::touchPersonalAccessTokenLastUsed(const std::string& tokenId) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), "UPDATE personal_access_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1",
+              {tokenId}, "Touch personal access token last used");
+}
+
 // --- Authorization and project lifecycle ---
 
 namespace {

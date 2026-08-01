@@ -6,7 +6,11 @@ handles/the fixed in-app notification set, the Markdown editor toolbar/preview, 
 the admin/security audit log (D23) are all done — see below. Phase 5 (Attachments and Kanban board) is now
 **complete** -- the ad-hoc issue filter/search widening slice (D10/D43), the personal dashboard widgets
 (D24), Kanban board WIP limits (D32/D33), and the full attachments vertical (D15/D98-D105) are all done.
-This closes out Milestone 2; Phase 6 (Milestone 3: REST API v1/export, backup/restore/upgrade) is next.)
+This closes out Milestone 2. Phase 6 (Milestone 3) is **started**: personal access tokens (D39/D40) are
+done -- PAT-only API authentication, self-service create/list/revoke, Bearer-token auth wired into every
+existing route with a CSRF exemption for non-cookie auth. Still open in Phase 6: the versioned `/api/v1`
+prefix itself, fixed rate limits and the full lockout policy, active-session list, CSV export, and the
+security hardening pass. No web UI yet for managing tokens.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -366,6 +370,25 @@ anything from the removed/deferred list without an explicit new product conversa
   types deduced for $1" error from reusing one placeholder for two differently-typed columns, and a
   redundant migration that tried to re-add three columns the schema already had (caught immediately by
   `ctest`, never shipped). Full detail in `docs/VERIFICATION.md`.
+- **Phase 6 started (personal access tokens, D39/D40), this batch:** migration
+  `015_personal_access_tokens.sql` adds `personal_access_tokens`, mirroring `sessions` plus `name`,
+  `last_used_at`, and `revoked_at`. New `Domain::PersonalAccessToken`/`CreatedPersonalAccessToken` (the
+  raw token is returned only once, at creation); `IDatabase::createPersonalAccessToken`/
+  `findPersonalAccessTokenByHash`/`listPersonalAccessTokens`/`revokePersonalAccessToken`/
+  `touchPersonalAccessTokenLastUsed` in both adapters, mirroring the existing session methods exactly.
+  `AuthService` gained matching self-service methods (`revokePersonalAccessToken` is ownership-scoped).
+  `Api.cpp`'s `resolvePrincipal` now also accepts an `Authorization: Bearer <token>` header when no
+  session cookie is present (D54: cookie and Bearer auth are mutually exclusive per request); `
+  csrfTokenValid` now exempts any request with no session cookie in play, since CSRF only defends against
+  a browser silently attaching a cookie -- this required zero changes to the ~50 existing route handlers.
+  New self-service `GET`/`POST /api/tokens` and `DELETE /api/tokens/{id}` routes. New
+  identity-integration test coverage (create/validate/list/revoke, last-used tracking, ownership
+  enforcement, the fixed-expiration requirement). Live-PostgreSQL verified directly, and end-to-end via
+  `curl` against a running server: created a token via cookie auth, used it as a Bearer header with no
+  cookies at all to both read and **write** with no CSRF header (confirming the exemption works through
+  the real HTTP layer), confirmed `lastUsedAt` updates, and confirmed a revoked token gets a 401. No web
+  UI yet for managing tokens -- `/api/tokens` is fully functional but reachable only via `curl`/scripts.
+  Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -415,8 +438,10 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
   or any children, so this remains the one open path.
 
-Milestone 2 (Phases 4 and 5) is now **fully closed**. Next is Milestone 3 (Phase 6: REST API v1/export;
-Phase 7: backup/restore/upgrade) and Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to
+Milestone 2 (Phases 4 and 5) is now **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
+backup/restore/upgrade) is underway -- personal access tokens (D39/D40) are done; the versioned `/api/v1`
+prefix, rate limits/lockout policy, active-session list, CSV export, and the security hardening pass all
+remain, then Phase 7, then Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to
 later-phase features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
