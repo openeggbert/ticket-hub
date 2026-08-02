@@ -10,8 +10,11 @@ active-session list / "sign out everywhere" endpoint (D54), fixed rate limiting 
 stored-XSS vulnerability in attachment preview/download, plus added standard security headers and a
 CSP), and numbered/offset pagination (D126, for `GET /api/v1/issues` -- a deliberate partial rollout,
 documented as still open for every other list endpoint; along the way, fixed a previously-undocumented
-silent 200-row truncation bug in that same route). No web UI yet for managing tokens or sessions; next up
-is Phase 7 (backup/restore/upgrade).)
+silent 200-row truncation bug in that same route). **Phase 7 (Milestone 3) is underway**: backup and
+restore (D106-D108) are done -- `ticket-hub-cli backup`/`restore`, verified end-to-end on both databases
+matching Phase 7's exit gate exactly. D111 (upgrades) needed no new work (`ticket-hub-cli migrate`
+already satisfies it). Still open in Phase 7: the in-app admin version banner (D112) and structured JSON
+logs to stdout (D133). No web UI yet for managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -524,6 +527,23 @@ anything from the removed/deferred list without an explicit new product conversa
   break the existing UI. This is a deliberate partial rollout of D126: only `GET /api/v1/issues` is
   paginated; every other list endpoint remains open, documented explicitly. **This closes Phase 6.** Full
   detail in `docs/VERIFICATION.md`.
+- **Phase 7 started (backup and restore, D106-D108), this batch:** new `IDatabase::backup(directory)`/
+  `restore(directory)` in both adapters. SQLite uses the SQLite online backup API (correct regardless of
+  WAL/checkpoint state, unlike a raw file copy of a WAL-mode database); PostgreSQL shells out to
+  `pg_dump --clean --if-exists` (self-contained for a direct restore into a non-empty target) and
+  `psql -v ON_ERROR_STOP=1` (aborts on the first SQL error rather than silently reporting success on a
+  partial failure). New `ticket-hub-cli backup <output-directory>` (copies the attachments directory,
+  refuses a non-empty output directory) and `ticket-hub-cli restore <backup-directory> --yes` (mandatory
+  confirmation flag, D108; restores DB + attachments, then runs pending migrations as a visible separate
+  step, D109). Confirmed D111 (upgrades) needs no new work -- `ticket-hub-cli migrate` already fully
+  satisfies it. New SQLite-integration coverage (backup writes a non-empty file; restore reverts a
+  post-backup mutation exactly). Verified end-to-end matching Phase 7's exit gate precisely -- "a fresh
+  install → seed → backup → restore cycle is scripted and tested on both databases" -- on SQLite and a
+  real live local PostgreSQL 16 server (a throwaway database, dropped afterward): seeded, added a marker
+  attachment file, backed up, destroyed the live database and attachments directory entirely, confirmed
+  restore without `--yes` refuses, then restored with `--yes` and confirmed the issue count, project keys,
+  and the marker attachment file all round-tripped correctly on both backends. Re-ran the full three-
+  configuration build matrix, all green. Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -554,10 +574,11 @@ native-element previews, sortable list/recycle bin/90-day retention, and full Ma
 drag-drop/paste integration) are all done and fully covered in the UI. This closes out Milestone 2. What's
 left:
 
-1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: **Phase 6 is now fully complete** (REST API v1/
-   export, rate limiting, active-session list, and the security hardening pass -- pagination (D126) is
-   implemented for `GET /api/v1/issues`, a deliberate partial rollout, with every other list endpoint
-   documented as still open). Phase 7 (backup/restore, upgrade command) is not yet started.
+1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: **Phase 6 is fully complete** (REST API v1/export,
+   rate limiting, active-session list, the security hardening pass, and pagination for
+   `GET /api/v1/issues`, a deliberate partial rollout with every other list endpoint documented as still
+   open). **Phase 7 is underway**: backup/restore (D106-D108) are done; the in-app admin version banner
+   (D112) and structured JSON logs to stdout (D133) remain.
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -580,9 +601,11 @@ fully closed too**: personal access tokens (D39/D40), the active-session list/"s
 endpoint (D54), fixed rate limiting (D124/D125), the versioned `/api/v1` prefix (D127), read-only CSV
 export of issues (D48), fixed request-body/bulk-item constants (D125), the security hardening pass, and
 numbered/offset pagination (D126, for `GET /api/v1/issues`, a deliberate partial rollout -- every other
-list endpoint remains open and is documented as such) are all done. Next: Phase 7 (backup/restore/
-upgrade), then Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to later-phase features
-early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+list endpoint remains open and is documented as such) are all done. **Phase 7 is underway**: backup/
+restore (D106-D108) are done (`ticket-hub-cli backup`/`restore`, live-verified on both databases); D111
+(upgrades) needed no new work. Still open: the in-app admin version banner (D112), structured JSON logs
+to stdout (D133), then Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to later-phase
+features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 

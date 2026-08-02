@@ -13,6 +13,8 @@ public:
     std::string backendName() const override;
     void migrate() override;
     void seedDemoData() override;
+    void backup(const std::string& directory) override;
+    void restore(const std::string& directory) override;
 
     Domain::User createUser(const Domain::CreateUserRequest& request,
                             const std::string& passwordHash) override;

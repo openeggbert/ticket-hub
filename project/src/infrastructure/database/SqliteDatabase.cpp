@@ -6,6 +6,7 @@
 #include "domain/Errors.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -414,6 +415,73 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
                 throw std::runtime_error("Migration " + migration.version + " left dangling foreign keys");
             }
         }
+    }
+}
+
+// Uses SQLite's online backup API (sqlite3_backup_*) rather than a raw file
+// copy: the database is opened in WAL mode, so a plain `cp` of just the main
+// file could miss data still sitting in an unmerged `-wal` file. The backup
+// API produces a correct, complete snapshot regardless of WAL/checkpoint
+// state -- documented as offline/maintenance-window use only (D107) to
+// match what the CLI's `backup`/`restore` commands promise, not because the
+// mechanism itself requires it.
+void SqliteDatabase::backup(const std::string& directory) {
+    std::scoped_lock lock(mutex_);
+    std::filesystem::create_directories(directory);
+    const auto outputPath = (std::filesystem::path(directory) / "database.sqlite3").string();
+    sqlite3* destination = nullptr;
+    if (sqlite3_open_v2(outputPath.c_str(), &destination, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK) {
+        const std::string message = destination == nullptr ? "unknown error" : sqlite3_errmsg(destination);
+        if (destination != nullptr) {
+            sqlite3_close(destination);
+        }
+        throw std::runtime_error("Cannot create backup output file: " + message);
+    }
+    sqlite3_backup* backup = sqlite3_backup_init(destination, "main", database_, "main");
+    if (backup == nullptr) {
+        const std::string message = sqlite3_errmsg(destination);
+        sqlite3_close(destination);
+        throw std::runtime_error("Cannot start SQLite backup: " + message);
+    }
+    const int result = sqlite3_backup_step(backup, -1);
+    sqlite3_backup_finish(backup);
+    if (result != SQLITE_DONE) {
+        const std::string message = sqlite3_errmsg(destination);
+        sqlite3_close(destination);
+        throw std::runtime_error("SQLite backup did not complete: " + message);
+    }
+    sqlite3_close(destination);
+}
+
+// Same backup API used in reverse: `source` (the backup file, read-only) is
+// copied into `database_` (this connection's already-open database),
+// replacing its content in place. D108: direct restore into the target
+// database, no isolated staging environment.
+void SqliteDatabase::restore(const std::string& directory) {
+    std::scoped_lock lock(mutex_);
+    const auto inputPath = std::filesystem::path(directory) / "database.sqlite3";
+    if (!std::filesystem::exists(inputPath)) {
+        throw std::runtime_error("database.sqlite3 not found in backup directory: " + directory);
+    }
+    sqlite3* source = nullptr;
+    if (sqlite3_open_v2(inputPath.string().c_str(), &source, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        const std::string message = source == nullptr ? "unknown error" : sqlite3_errmsg(source);
+        if (source != nullptr) {
+            sqlite3_close(source);
+        }
+        throw std::runtime_error("Cannot open backup file: " + message);
+    }
+    sqlite3_backup* backup = sqlite3_backup_init(database_, "main", source, "main");
+    if (backup == nullptr) {
+        const std::string message = sqlite3_errmsg(database_);
+        sqlite3_close(source);
+        throw std::runtime_error("Cannot start SQLite restore: " + message);
+    }
+    const int result = sqlite3_backup_step(backup, -1);
+    sqlite3_backup_finish(backup);
+    sqlite3_close(source);
+    if (result != SQLITE_DONE) {
+        throw std::runtime_error("SQLite restore did not complete: " + std::string(sqlite3_errmsg(database_)));
     }
 }
 

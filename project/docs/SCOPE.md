@@ -154,6 +154,12 @@ remain as the long-term aspirational baseline only — do not build against them
   `totalItems`/`totalPages`. Fixed, along the way, a previously-undocumented bug: the route's SQL had
   always silently capped results at 200 rows with no `total` returned. A deliberate partial rollout --
   every other list endpoint remains unpaginated, documented as still open. **This closes Phase 6.**
+- **Backup and restore (Phase 7, D106-D108):** `ticket-hub-cli backup <output-directory>` (copies the
+  attachments directory, dumps the database -- SQLite online backup API; PostgreSQL `pg_dump --clean
+  --if-exists`) and `ticket-hub-cli restore <backup-directory> --yes` (mandatory confirmation flag;
+  restores database + attachments, then runs pending migrations). Offline/maintenance-window use only, no
+  isolated staging environment. D111 (upgrades) needed no new work -- `ticket-hub-cli migrate` already
+  satisfies it. Live-verified end-to-end on both SQLite and PostgreSQL matching the exit gate exactly.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -164,8 +170,9 @@ remain as the long-term aspirational baseline only — do not build against them
 - **Phase 6 is fully complete.** Pagination (D126) covers `GET /api/v1/issues` only so far -- every other
   list endpoint (projects, comments, worklogs, attachments, notifications, sessions, tokens, audit
   events, watchers, voters, board-columns, issue-links, comment-reactions) remains unpaginated; extending
-  it further is optional follow-up, not a blocker to Phase 6's exit gate. Phase 7 (backup/restore/
-  upgrade) is not started.
+  it further is optional follow-up, not a blocker to Phase 6's exit gate.
+- Phase 7 is underway: backup/restore (D106-D108) and the upgrade mechanism (D111) are done. The in-app
+  admin version banner (D112) and structured JSON logs to stdout (D133) remain.
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).
 
 ## Permanently out of V1 scope (do not build these)
