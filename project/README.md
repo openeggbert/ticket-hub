@@ -212,6 +212,48 @@ TICKETHUB_DATABASE_URL='host=127.0.0.1 port=5432 dbname=tickethub user=tickethub
 
 Do not put production secrets in shell history. The target product uses a pluggable secrets backend.
 
+## Run with Docker
+
+The official Docker image plus Docker Compose is the only supported distribution path for V1 (D50) --
+no `.deb`/`.rpm`, no Helm/Kubernetes:
+
+```bash
+docker compose up
+```
+
+This builds the image from the `Dockerfile` in this repository (a two-stage build: full toolchain to
+compile, then a slim runtime image with just the shared libraries the binary links against), starts
+PostgreSQL, waits for it to report healthy, then starts Ticket Hub against it -- reachable at
+`http://127.0.0.1:8080`. A fresh instance ships with no accounts at all (D2: administrator-created
+accounts only, no public registration); create the first admin with:
+
+```bash
+docker compose exec ticket-hub ticket-hub-cli create-user "you@example.com" "Your Name" "a sufficiently long password" --admin
+```
+
+Or set `TICKETHUB_SEED_DEMO=true` for the `ticket-hub` service in `docker-compose.yml` to get the same
+demo data/logins used throughout this README instead. The `ticket-hub-attachments` named volume
+(mounted at `/data` in the container, `TICKETHUB_ATTACHMENTS_DIR=/data/attachments`) and
+`ticket-hub-postgres` volume persist data across `docker compose down`/`up` cycles;
+`docker compose down -v` removes both.
+
+`docker compose up -d postgres` (starting only that one service) continues to work exactly as in "Run
+with PostgreSQL" above, for building from source and running the database in Docker only.
+
+**Verification note:** this Docker packaging was written and validated as far as this development
+environment's network policy allows -- `docker build --check` and `docker compose config` both pass
+cleanly (Dockerfile syntax/best-practices and Compose YAML schema), and the exact runtime configuration
+the container sets (`TICKETHUB_WEB_ROOT`/`TICKETHUB_MIGRATIONS_ROOT`/`TICKETHUB_ATTACHMENTS_DIR` pointed
+at a `cmake --install`-produced tree, against both a fresh SQLite file and a live PostgreSQL database
+using the exact `host=... dbname=... user=... password=...` connection-string shape the Compose file
+uses) was verified directly on the host and confirmed fully working. The actual `docker build` of the
+image itself -- pulling the `debian:bookworm-slim` base layers -- could not be executed in this specific
+sandboxed environment: the base-image blob pull is blocked by this session's network egress policy
+(confirmed via the proxy's own status log: a policy-level `403` on the CDN host Docker Hub redirects
+image-layer downloads to, not a bug in the Dockerfile). This is a report-don't-work-around situation per
+this environment's own operating rules, not a Ticket Hub defect -- the same `docker compose up` should
+build and run normally in any environment with ordinary Docker Hub network access.
+
 ## Configuration currently implemented
 
 | Variable | Default | Meaning |
@@ -910,6 +952,22 @@ parse and contain the expected fields; the settings GET/PUT round-trip correctly
 rejected with 400, a non-admin gets 403) and Playwright (an admin with a newer configured version sees
 the banner with the correct text; a non-admin does not see it at all), plus a full regression pass of the
 project-management flow and the three-configuration build matrix, all green.
+
+A twenty-seventh batch opened Phase 8 (Milestone 4, packaging and release hardening) with the official
+Docker image and Docker Compose distribution path (D50). New two-stage `Dockerfile` (full toolchain to
+compile, including Crow's network-fetched CMake `FetchContent`; slim `debian:bookworm-slim` runtime image
+with just `libpq5`/`libsqlite3-0`/`libargon2-1`/`curl`, a non-root user, and a `HEALTHCHECK` hitting
+`/api/health`). `docker-compose.yml` gained a `ticket-hub` app service alongside the existing `postgres`
+one (wired together via `depends_on: condition: service_healthy`, a `ticket-hub-attachments` named
+volume for `/data`), so `docker compose up` alone now brings up the full instance -- the existing
+`docker compose up -d postgres`-only workflow (documented in "Run with PostgreSQL") is untouched. See
+"Run with Docker" above for the exact verification-boundary disclosure: `docker build --check`/
+`docker compose config` both pass cleanly, and the exact runtime configuration the container sets was
+verified directly on the host (against both a fresh SQLite file and a live PostgreSQL database using the
+Compose file's exact connection-string shape), but the actual `docker build` layer pull could not run in
+this sandboxed environment due to a network-egress policy block on the specific CDN host Docker Hub
+redirects to for image layers -- confirmed via the agent proxy's own status log as a policy decision, not
+a bug, and not something to route around per this environment's operating rules.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

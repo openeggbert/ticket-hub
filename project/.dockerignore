@@ -1,0 +1,8 @@
+build/
+build-*/
+.git/
+.github/
+*.db
+*.sqlite3
+data/
+node_modules/
