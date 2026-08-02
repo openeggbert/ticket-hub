@@ -2,15 +2,16 @@
 
 Current version: 0.2.0. Phase 3 is complete at every layer (core, tests, server, and UI). Phase 4
 (Collaboration) and Phase 5 (Attachments and Kanban board) are both **complete**, closing out Milestone 2
--- see below for detail. Phase 6 (Milestone 3) is **underway**: done so far are personal access tokens
-(D39/D40), the active-session list / "sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125,
-including a `Retry-After` header on 429), the versioned `/api/v1` prefix (D127, every route except
+-- see below for detail. **Phase 6 (Milestone 3) is now complete**: personal access tokens (D39/D40), the
+active-session list / "sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125, including a
+`Retry-After` header on 429), the versioned `/api/v1` prefix (D127, every route except
 `GET /api/health`), read-only CSV export of issues (D48), fixed request-body/bulk-item-count constants
-(D125: 1 MiB JSON body cap, 200-item bulk cap), and the security hardening pass -- which found and fixed a
-real stored-XSS vulnerability in attachment preview/download (spoofed `Content-Type` + unsandboxed
-`<iframe>`/`Content-Disposition: inline`), plus added standard security headers and a CSP. Phase 6's only
-remaining item is numbered/offset pagination (D126, which also unblocks D125's still-undefined "max page
-size"). No web UI yet for managing tokens or sessions.)
+(D125: 1 MiB JSON body cap, 200-item bulk cap), the security hardening pass (found and fixed a real
+stored-XSS vulnerability in attachment preview/download, plus added standard security headers and a
+CSP), and numbered/offset pagination (D126, for `GET /api/v1/issues` -- a deliberate partial rollout,
+documented as still open for every other list endpoint; along the way, fixed a previously-undocumented
+silent 200-row truncation bug in that same route). No web UI yet for managing tokens or sessions; next up
+is Phase 7 (backup/restore/upgrade).)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -501,6 +502,28 @@ anything from the removed/deferred list without an explicit new product conversa
   through the sandboxed iframes; a targeted XSS-reproduction test confirms the payload's `alert()` no
   longer fires -- a regression guard against this fix being reverted). Full detail in
   `docs/VERIFICATION.md`.
+- **Phase 6 continued (numbered/offset pagination, D126), this batch, closing out Phase 6:** implementing
+  this surfaced a real, previously-undocumented bug: `listIssues` had always had a hardcoded `LIMIT 200`
+  in its SQL with no `total` count returned anywhere, silently truncating any result set past 200 rows
+  with no way for a caller to detect it. New `Domain::Page<T>` template and fixed
+  `DefaultPageSize`/`MaxPageSize` constants (both 200, matching the pre-existing cap -- a caller sending
+  neither `page` nor `pageSize` gets exactly the same result set as before). New
+  `IDatabase::listIssues(filter, limit, offset)`/`countIssues(filter)` in both adapters, alongside (not
+  replacing) the existing unpaginated overload, still used internally and by CSV export, which wants
+  everything matching the filter, not one page. New `TicketService::listIssuesPaged` clamps `page`/
+  `pageSize` into range. `GET /api/v1/issues`'s response gained `page`/`pageSize`/`totalItems`/
+  `totalPages` fields alongside the existing `items` array. New SQLite-integration coverage (limit/
+  offset behavior, non-overlapping pages, past-the-end/exceeds-total edge cases, filter+pagination
+  composition). Verified against **live PostgreSQL for the first time this session** (found a local
+  PostgreSQL 16 cluster already present in this environment, started it, created a throwaway database,
+  confirmed identical behavior to SQLite, dropped it afterward) and via `curl` (default params reproduce
+  the old behavior exactly; explicit pagination/filtering compose correctly; an out-of-range `pageSize` is
+  clamped, not rejected; a non-numeric `page` is `400`; CSV export/dashboard unaffected). Re-ran all three
+  build configurations and a Playwright regression pass of the reorder/move/bulk-actions flow (the demo
+  UI's heaviest consumer of this route), all green -- confirming the additive response shape doesn't
+  break the existing UI. This is a deliberate partial rollout of D126: only `GET /api/v1/issues` is
+  paginated; every other list endpoint remains open, documented explicitly. **This closes Phase 6.** Full
+  detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -531,9 +554,10 @@ native-element previews, sortable list/recycle bin/90-day retention, and full Ma
 drag-drop/paste integration) are all done and fully covered in the UI. This closes out Milestone 2. What's
 left:
 
-1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 6 (REST API v1/export, rate limiting, active-
-   session list -- everything except numbered/offset pagination (D126) is now done, including the
-   security hardening pass) and Phase 7 (backup/restore, upgrade command, not yet started).
+1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: **Phase 6 is now fully complete** (REST API v1/
+   export, rate limiting, active-session list, and the security hardening pass -- pagination (D126) is
+   implemented for `GET /api/v1/issues`, a deliberate partial rollout, with every other list endpoint
+   documented as still open). Phase 7 (backup/restore, upgrade command) is not yet started.
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -551,12 +575,13 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
   or any children, so this remains the one open path.
 
-Milestone 2 (Phases 4 and 5) is now **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
-backup/restore/upgrade) is underway -- personal access tokens (D39/D40), the active-session list/
-"sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), the versioned `/api/v1` prefix
-(D127), read-only CSV export of issues (D48), fixed request-body/bulk-item constants (D125), and the
-security hardening pass are all done; numbered pagination (D126) is the only Phase 6 item remaining, then
-Phase 7, then Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to later-phase features
+Milestone 2 (Phases 4 and 5) is now **fully closed**. **Milestone 3's Phase 6 (REST API v1/export) is now
+fully closed too**: personal access tokens (D39/D40), the active-session list/"sign out everywhere"
+endpoint (D54), fixed rate limiting (D124/D125), the versioned `/api/v1` prefix (D127), read-only CSV
+export of issues (D48), fixed request-body/bulk-item constants (D125), the security hardening pass, and
+numbered/offset pagination (D126, for `GET /api/v1/issues`, a deliberate partial rollout -- every other
+list endpoint remains open and is documented as such) are all done. Next: Phase 7 (backup/restore/
+upgrade), then Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to later-phase features
 early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status

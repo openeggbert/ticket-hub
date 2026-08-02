@@ -64,6 +64,8 @@ public:
 
     std::vector<Domain::Project> listProjects() override;
     std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter) override;
+    std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter, int limit, int offset) override;
+    std::int64_t countIssues(const Domain::IssueFilter& filter) override;
     std::optional<Domain::Issue> findIssueByKey(const std::string& issueKey) override;
     Domain::Issue createIssue(const Domain::CreateIssueRequest& request,
                               const std::string& reporterUserId) override;

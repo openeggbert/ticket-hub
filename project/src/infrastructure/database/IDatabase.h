@@ -103,7 +103,21 @@ public:
 
     // --- Issue tracker (existing prototype surface, now principal-driven) ---
     virtual std::vector<Domain::Project> listProjects() = 0;
+    // Unpaginated, capped at Domain::DefaultPageSize rows -- used internally
+    // (dashboard "recent issues", "assigned to me") and by the CSV export
+    // route, which deliberately wants everything matching the filter, not
+    // one page of it. `GET /api/v1/issues` uses the paginated overload below
+    // instead (D126).
     virtual std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter) = 0;
+    // Numbered/offset pagination (D126): `limit`/`offset` are already
+    // validated/clamped by the caller (TicketService), not re-validated
+    // here. Returns exactly `limit` rows starting at `offset`, same
+    // ordering/filtering as the unpaginated overload above.
+    virtual std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter, int limit, int offset) = 0;
+    // Total row count matching `filter`, ignoring pagination -- pairs with
+    // the paginated `listIssues` overload above so a caller can compute
+    // `totalPages` and know whether more pages exist.
+    virtual std::int64_t countIssues(const Domain::IssueFilter& filter) = 0;
     virtual std::optional<Domain::Issue> findIssueByKey(const std::string& issueKey) = 0;
     // `parentIssueKey` inside `request`, if present, must already have been
     // validated by the caller against the fixed hierarchy rules (D64-D66) --

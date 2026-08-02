@@ -32,6 +32,11 @@ public:
     // default), otherwise Domain::AuthenticationRequired is thrown.
     std::vector<Domain::Project> listProjects(const std::optional<Domain::Principal>& actor);
     std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter, const std::optional<Domain::Principal>& actor);
+    // Numbered/offset pagination (D126), used by GET /api/v1/issues. The
+    // unpaginated overload above remains for internal/CSV-export use where
+    // "everything matching the filter" is the intended semantics.
+    Domain::Page<Domain::Issue> listIssuesPaged(const Domain::IssueFilter& filter, int page, int pageSize,
+                                                const std::optional<Domain::Principal>& actor);
     std::optional<Domain::Issue> findIssue(const std::string& issueKey, const std::optional<Domain::Principal>& actor);
     std::vector<Domain::Comment> listComments(const std::string& issueKey, const std::optional<Domain::Principal>& actor);
     Domain::DashboardStats dashboard(const std::optional<Domain::Principal>& actor);

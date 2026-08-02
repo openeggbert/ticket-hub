@@ -170,6 +170,32 @@ std::vector<Domain::Issue> TicketService::listIssues(const Domain::IssueFilter& 
     return database_->listIssues(normalized);
 }
 
+Domain::Page<Domain::Issue> TicketService::listIssuesPaged(const Domain::IssueFilter& filter,
+                                                            int page,
+                                                            int pageSize,
+                                                            const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    auto normalized = filter;
+    if (normalized.projectKey) {
+        normalized.projectKey = Domain::normalizeProjectKey(*normalized.projectKey);
+    }
+    // Fixed constants (D125/D126), no admin exceptions: page is clamped to
+    // at least 1 (a caller passing 0 or a negative page gets page 1 rather
+    // than an error, since "no results yet" is a more useful response than
+    // a 400 for a cosmetic off-by-one from the caller); pageSize is clamped
+    // into [1, MaxPageSize].
+    const int clampedPage = std::max(page, 1);
+    const int clampedPageSize = std::clamp(pageSize, 1, Domain::MaxPageSize);
+    const int offset = (clampedPage - 1) * clampedPageSize;
+
+    Domain::Page<Domain::Issue> result;
+    result.page = clampedPage;
+    result.pageSize = clampedPageSize;
+    result.totalItems = database_->countIssues(normalized);
+    result.items = database_->listIssues(normalized, clampedPageSize, offset);
+    return result;
+}
+
 std::optional<Domain::Issue> TicketService::findIssue(const std::string& issueKey,
                                                        const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
