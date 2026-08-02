@@ -136,6 +136,10 @@ remain as the long-term aspirational baseline only — do not build against them
   `Domain::IssueFilter`'s query-parameter filters and authorization with `GET /api/v1/issues`. No CSV
   import, no Jira migration tool. `web/`'s Issues view gained an "Export CSV" link matching the current
   filters.
+- **Fixed request-body/bulk-item constants (Phase 6, D125):** every JSON request body capped at 1 MiB
+  (`413` if exceeded); every bulk-action `issueKeys` array capped at 200 items (`400` if exceeded). No
+  admin configuration. Max page size not implemented -- blocked on numbered pagination (D126) not yet
+  existing.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -143,8 +147,8 @@ remain as the long-term aspirational baseline only — do not build against them
   `issueTypeKey`/`parentIssueKey`).
 - Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
   by any decision.
-- Phase 6 is underway (PATs, active-session list, fixed rate limits, the versioned `/api/v1` prefix, and
-  CSV export done). Fixed request/body/batch-size constants, numbered/offset pagination, and the security
+- Phase 6 is underway (PATs, active-session list, fixed rate limits, the versioned `/api/v1` prefix, CSV
+  export, and fixed request-body/bulk-item constants done). Numbered/offset pagination and the security
   hardening pass are all still open. Phase 7 (backup/restore/upgrade) is not started.
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).
 

@@ -1,24 +1,14 @@
 # Ticket Hub next work
 
-Current version: 0.2.0 (Phase 3 complete at every layer -- core, tests, server, and UI; Phase 4
-(Collaboration) is now **complete** -- comment editing/tombstone delete, fixed emoji reactions, @mention
-handles/the fixed in-app notification set, the Markdown editor toolbar/preview, simplified worklogs, and
-the admin/security audit log (D23) are all done — see below. Phase 5 (Attachments and Kanban board) is now
-**complete** -- the ad-hoc issue filter/search widening slice (D10/D43), the personal dashboard widgets
-(D24), Kanban board WIP limits (D32/D33), and the full attachments vertical (D15/D98-D105) are all done.
-This closes out Milestone 2. Phase 6 (Milestone 3) is **underway**: personal access tokens (D39/D40) --
-PAT-only API authentication, self-service create/list/revoke, Bearer-token auth wired into every existing
-route with a CSRF exemption for non-cookie auth -- the active-session list / "sign out everywhere"
-endpoint (D54) -- fixed rate limiting (D124/D125): a new in-memory `RateLimiter`
-(`src/web/RateLimiter.h/.cpp`) enforces a fixed 20-attempts/15-minutes-per-IP cap on `/api/v1/auth/login`
-(complementing, not replacing, the existing per-account 10-attempts/15-minutes lockout) and a fixed
-120-requests/minute-per-user-or-IP cap shared across every write route (POST/PUT/PATCH/DELETE), both
-returning 429 with a `Retry-After` header on trip -- the versioned `/api/v1` prefix itself (D127): every
-route moved except `GET /api/health`, kept unversioned by convention -- and now read-only CSV export of
-issues (D48): `GET /api/v1/issues/export.csv` shares the same filters/authorization as
-`GET /api/v1/issues`. Still open in Phase 6: fixed request/body/batch-size constants, numbered pagination,
-and the security hardening pass. No
-web UI yet for managing tokens or sessions.)
+Current version: 0.2.0. Phase 3 is complete at every layer (core, tests, server, and UI). Phase 4
+(Collaboration) and Phase 5 (Attachments and Kanban board) are both **complete**, closing out Milestone 2
+-- see below for detail. Phase 6 (Milestone 3) is **underway**: done so far are personal access tokens
+(D39/D40), the active-session list / "sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125,
+including a `Retry-After` header on 429), the versioned `/api/v1` prefix (D127, every route except
+`GET /api/health`), read-only CSV export of issues (D48), and fixed request-body/bulk-item-count
+constants (D125: 1 MiB JSON body cap, 200-item bulk cap). Still open in Phase 6: numbered/offset
+pagination (D126, which also unblocks D125's still-undefined "max page size"), and the security hardening
+pass. No web UI yet for managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -473,6 +463,19 @@ anything from the removed/deferred list without an explicit new product conversa
   layer code verified instead via `curl` and a real Playwright browser download (captured with
   `page.waitForEvent('download')`, confirming the actual downloaded file's name/row count/content, then
   re-verified after filtering by project). Full detail in `docs/VERIFICATION.md`.
+- **Phase 6 continued (fixed request/batch-size constants, D125), this batch:** new
+  `MaxJsonRequestBodyBytes` (1 MiB) constant enforced at all 20 JSON-body-parsing call sites in `Api.cpp`
+  via a single scripted substitution (`request.body.size() > MaxJsonRequestBodyBytes` → `413` before
+  parsing), the same technique used for the CSRF/rate-limit chokepoints in earlier batches. New
+  `MaxBulkItems` (200) constant enforced in the one shared `requiredIssueKeys(body)` helper all four
+  `POST /api/v1/issues/bulk/*` routes already called (`400` if exceeded) -- no per-route changes needed.
+  Max page size intentionally not implemented -- it has no meaning until numbered/offset pagination
+  (D126) exists; documented as still open rather than faked. No admin configuration for either limit, per
+  D125. No database changes, so no live-PostgreSQL check was needed. Verified via `curl` (a ~1.05MB body
+  returns 413; 201 bulk `issueKeys` returns 400 with the boundary exactly at 200; ordinary-sized requests
+  are unaffected) and a Playwright regression pass of reorder/move/bulk actions (the write paths most
+  directly touched, since bulk actions now flow through the new limit). Full detail in
+  `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -504,9 +507,9 @@ drag-drop/paste integration) are all done and fully covered in the UI. This clos
 left:
 
 1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 6 (REST API v1/export, rate limiting, active-
-   session list -- rate limiting, the active-session list, the versioned `/api/v1` prefix, and CSV export
-   are now done; the request/body/batch-size/pagination items and the security hardening pass are not)
-   and Phase 7 (backup/restore, upgrade command, not yet started).
+   session list -- rate limiting, the active-session list, the versioned `/api/v1` prefix, CSV export,
+   and fixed request-body/bulk-item constants are now done; numbered pagination and the security
+   hardening pass are not) and Phase 7 (backup/restore, upgrade command, not yet started).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -527,9 +530,9 @@ Phase 3's core/CLI/test layer is now complete except for one item:
 Milestone 2 (Phases 4 and 5) is now **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
 backup/restore/upgrade) is underway -- personal access tokens (D39/D40), the active-session list/
 "sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), the versioned `/api/v1` prefix
-(D127), and read-only CSV export of issues (D48) are done; fixed request/body/batch-size constants,
-numbered pagination, and the security hardening pass all remain, then Phase 7, then Milestone 4 (Phase 8:
-packaging and hardening). Do not jump ahead to later-phase features early, and do not implement anything
+(D127), read-only CSV export of issues (D48), and fixed request-body/bulk-item constants (D125) are done;
+numbered pagination (D126) and the security hardening pass remain, then Phase 7, then Milestone 4 (Phase
+8: packaging and hardening). Do not jump ahead to later-phase features early, and do not implement anything
 from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status

@@ -298,6 +298,12 @@ crow::json::wvalue bulkActionResultJson(const Domain::BulkActionResult& result) 
     return json;
 }
 
+// Fixed batch-size constant (D125): "fixed constants only (max body size,
+// max bulk items, max page size); no admin exceptions." Applies to every
+// `POST /api/v1/issues/bulk/*` route's `issueKeys` array via the shared
+// `requiredIssueKeys` helper below.
+constexpr std::size_t MaxBulkItems = 200;
+
 // Simple bulk actions (D36) always take {"issueKeys": [...]} plus
 // action-specific fields; every bulk route needs this.
 std::vector<std::string> requiredIssueKeys(const crow::json::rvalue& body) {
@@ -313,6 +319,9 @@ std::vector<std::string> requiredIssueKeys(const crow::json::rvalue& body) {
     }
     if (keys.empty()) {
         throw std::invalid_argument("issueKeys must not be empty");
+    }
+    if (keys.size() > MaxBulkItems) {
+        throw std::invalid_argument("issueKeys must not contain more than " + std::to_string(MaxBulkItems) + " items");
     }
     return keys;
 }
@@ -371,6 +380,25 @@ std::optional<std::string> optionalString(const crow::json::rvalue& body, const 
 constexpr const char* SessionCookieName = "th_session";
 constexpr const char* CsrfCookieName = "th_csrf";
 constexpr long long SessionCookieMaxAgeSeconds = 30LL * 24 * 60 * 60;
+
+// Fixed request-body-size constant (D125): "fixed constants only (max body
+// size, max bulk items, max page size); no admin exceptions." Max page size
+// has no meaning yet -- numbered/offset pagination (D126) does not exist in
+// V1 yet, so it is intentionally not implemented here; max bulk items is
+// enforced above, next to `requiredIssueKeys`.
+//
+// Generous for this API's largest legitimate JSON payload (a
+// full-replacement issue edit with a long Markdown description) while still
+// bounding worst-case processing of a malicious/broken client. Enforced
+// against `request.body.size()` (i.e. after Crow has already buffered the
+// body), not against the `Content-Length` header before reading -- Crow's
+// SimpleApp has no built-in hook to reject an oversized body pre-buffer, so
+// this caps what the application processes rather than what the socket
+// layer buffers; a real internet-facing deployment should also enforce a
+// body-size limit at a reverse proxy in front of it. The separate multipart
+// attachment upload route already enforces its own stricter, purpose-built
+// 25MB/file limit (D98) and is unaffected by this constant.
+constexpr std::size_t MaxJsonRequestBodyBytes = 1024 * 1024; // 1 MiB
 
 std::optional<std::string> cookieValue(const crow::request& request, const std::string& name) {
     const std::string header = request.get_header_value("Cookie");
@@ -512,6 +540,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many login attempts. Try again later.", 900);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -598,6 +629,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body || !body.has("expiresInDays") || body["expiresInDays"].t() != crow::json::type::Number) {
                 return errorResponse(400, "expiresInDays must be a number");
@@ -718,6 +752,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -749,6 +786,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body || !body.has("archived") || (body["archived"].t() != crow::json::type::True
                                                   && body["archived"].t() != crow::json::type::False)) {
@@ -894,6 +934,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body || !body.has("enabled") || (body["enabled"].t() != crow::json::type::True
                                                  && body["enabled"].t() != crow::json::type::False)) {
@@ -953,6 +996,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             std::optional<int> wipLimit;
             if (body && body.has("wipLimit") && body["wipLimit"].t() != crow::json::type::Null) {
@@ -1027,6 +1073,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1185,6 +1234,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1235,6 +1287,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1293,6 +1348,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1323,6 +1381,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1483,6 +1544,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1515,6 +1579,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1795,6 +1862,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1828,6 +1898,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1877,6 +1950,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -2065,6 +2141,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -2093,6 +2172,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -2120,6 +2202,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -2147,6 +2232,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
