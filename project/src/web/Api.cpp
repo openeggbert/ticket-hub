@@ -16,10 +16,24 @@
 namespace TicketHub::Web {
 namespace {
 
+// Security hardening pass (Phase 6): baseline response headers applied to
+// every API response. `X-Content-Type-Options: nosniff` stops a browser
+// from MIME-sniffing a response (e.g. a JSON error body) as HTML/script;
+// `X-Frame-Options`/`Referrer-Policy` are cheap defense-in-depth for an app
+// that is otherwise entirely same-origin. No CSP here -- API responses
+// aren't rendered as documents; the HTML page gets its own, stricter CSP
+// in `HttpServer.cpp`.
+void applySecurityHeaders(crow::response& response) {
+    response.set_header("X-Content-Type-Options", "nosniff");
+    response.set_header("X-Frame-Options", "DENY");
+    response.set_header("Referrer-Policy", "same-origin");
+}
+
 crow::response jsonResponse(int status, crow::json::wvalue body) {
     crow::response response(status, body.dump());
     response.set_header("Content-Type", "application/json; charset=utf-8");
     response.set_header("Cache-Control", "no-store");
+    applySecurityHeaders(response);
     return response;
 }
 
@@ -239,6 +253,36 @@ std::string sanitizeHeaderValue(const std::string& value) {
                                    [](const unsigned char ch) { return ch == '\r' || ch == '\n' || ch == '"'; }),
                     sanitized.end());
     return sanitized;
+}
+
+// Security hardening pass (Phase 6): D98 deliberately has no upload-time
+// MIME allow-list, so `attachment.contentType` is caller-supplied and
+// untrusted -- the multipart upload route stores whatever `Content-Type` the
+// uploading client declared, verbatim. Serving that value back with
+// `Content-Disposition: inline` would let an attacker upload a file (any
+// extension not on D98's blocked-extension list, e.g. "notes.txt") with a
+// spoofed `Content-Type: text/html` body containing `<script>`, then have it
+// render as an HTML document -- either via direct download-URL navigation,
+// or inside the app's own unsandboxed-at-the-time text/PDF `<iframe>`
+// preview -- executing script same-origin (the sandboxed-iframe fix in
+// `web/app.js` closes the iframe path; this closes the direct-navigation
+// path). Only content types that cannot execute script when rendered
+// directly by a browser get `inline`; everything else -- explicitly
+// including HTML/XHTML/SVG/XML and script MIME types -- is forced to
+// `attachment` (a forced download, never rendered as a document). `<img>`/
+// `<audio>`/`<video>` tag rendering is unaffected either way, since those
+// elements do not honor `Content-Disposition`.
+bool contentTypeSafeToRenderInline(const std::string& contentType) {
+    static const std::vector<std::string> unsafePrefixes = {
+        "text/html", "application/xhtml", "image/svg", "application/xml", "text/xml",
+        "application/xslt", "application/javascript", "text/javascript", "application/ecmascript",
+    };
+    for (const auto& unsafe : unsafePrefixes) {
+        if (contentType.rfind(unsafe, 0) == 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 crow::json::wvalue commentReactionJson(const Domain::CommentReaction& reaction) {
@@ -1052,6 +1096,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             response.set_header("Content-Type", "text/csv; charset=utf-8");
             response.set_header("Content-Disposition", "attachment; filename=\"issues.csv\"");
             response.set_header("Cache-Control", "no-store");
+            applySecurityHeaders(response);
             return response;
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
@@ -1738,8 +1783,10 @@ void registerApiRoutes(crow::SimpleApp& app,
             const auto [attachment, bytes] = service->downloadAttachment(attachmentId, resolvePrincipal(request, authService));
             crow::response response(200, bytes);
             response.set_header("Content-Type", sanitizeHeaderValue(attachment.contentType));
-            response.set_header("Content-Disposition", "inline; filename=\"" + sanitizeHeaderValue(attachment.fileName) + "\"");
+            const std::string disposition = contentTypeSafeToRenderInline(attachment.contentType) ? "inline" : "attachment";
+            response.set_header("Content-Disposition", disposition + "; filename=\"" + sanitizeHeaderValue(attachment.fileName) + "\"");
             response.set_header("Cache-Control", "private, max-age=31536000, immutable");
+            applySecurityHeaders(response);
             return response;
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());

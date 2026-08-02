@@ -140,6 +140,16 @@ remain as the long-term aspirational baseline only — do not build against them
   (`413` if exceeded); every bulk-action `issueKeys` array capped at 200 items (`400` if exceeded). No
   admin configuration. Max page size not implemented -- blocked on numbered pagination (D126) not yet
   existing.
+- **Security hardening pass (Phase 6):** found and fixed a real stored-XSS vulnerability -- an uploaded
+  attachment's `Content-Type` is caller-supplied and unvalidated (D98 has no upload-time MIME allow-list),
+  and a spoofed `text/html` value could execute an embedded `<script>` via direct download-URL navigation
+  (`Content-Disposition: inline`) or the app's own text/PDF preview (an unsandboxed `<iframe>`). Fixed:
+  both preview iframes now carry `sandbox=""`; the download route now serves `Content-Disposition:
+  attachment` for any content type on a new document/script-capable deny-list (html/xhtml/svg/xml/
+  javascript variants). Also added standard security headers (`X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy` on every response; a `Content-Security-Policy` with `script-src 'self'` on the HTML
+  document). Dependency review (Crow pinned to a release tag) and session/CSRF cookie review both found
+  no other issues.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -147,9 +157,8 @@ remain as the long-term aspirational baseline only — do not build against them
   `issueTypeKey`/`parentIssueKey`).
 - Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
   by any decision.
-- Phase 6 is underway (PATs, active-session list, fixed rate limits, the versioned `/api/v1` prefix, CSV
-  export, and fixed request-body/bulk-item constants done). Numbered/offset pagination and the security
-  hardening pass are all still open. Phase 7 (backup/restore/upgrade) is not started.
+- Phase 6: only numbered/offset pagination (D126) remains open. Phase 7 (backup/restore/upgrade) is not
+  started.
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).
 
 ## Permanently out of V1 scope (do not build these)

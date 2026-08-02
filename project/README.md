@@ -794,6 +794,30 @@ faked. No admin configuration for either limit, per D125. No database changes. V
 request is unaffected) and a Playwright regression pass of the reorder/move/bulk-actions flow (the write
 paths most directly touched, since bulk actions now flow through the new limit).
 
+A twenty-third batch closed out Phase 6's security hardening pass, and along the way found and fixed a
+real vulnerability: an attachment's `Content-Type` is caller-supplied and unvalidated (D98 has no
+upload-time MIME allow-list), so a file uploaded with a spoofed `text/html` Content-Type could execute an
+embedded `<script>` same-origin -- either via direct download-URL navigation (`Content-Disposition:
+inline`) or via the app's own text/PDF preview, which rendered in an unsandboxed `<iframe>`. This was a
+real stored-XSS/CSRF-bypass chain reachable by any project member against any other user (including a
+global admin) who previewed the malicious attachment. Fixed in two independent layers: both preview
+`<iframe>`s now carry `sandbox=""` (the load-bearing fix, closing the vulnerability regardless of
+Content-Disposition), and the download route now serves `Content-Disposition: attachment` for any
+content type that could render as an executable document (text/html, xhtml, svg, xml, javascript
+variants) via a new `contentTypeSafeToRenderInline` deny-list, leaving normal image/audio/video/PDF/
+plain-text previews unaffected (confirmed via `<img>`/`<audio>`/`<video>` not honoring
+`Content-Disposition` in the first place). Also added standard security headers
+(`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` on every
+response; a `Content-Security-Policy` with `script-src 'self'` on the HTML document), reviewed
+dependencies (Crow pinned to release tag `v1.3.3`, already good practice), and reviewed session/CSRF
+cookie flags (confirmed no regressions across the session's earlier batches). Note: the roadmap's
+referenced `handoff/KNOWN_CONSTRAINTS_AND_RISKS.md` does not exist in this repository; the review was
+performed as a direct code audit instead. Verified via `curl` (headers present on the right responses;
+a spoofed-`text/html` `.txt` upload now downloads instead of rendering; a real PNG still previews inline)
+and Playwright (all four attachment preview kinds still render correctly through the sandboxed iframes; a
+targeted XSS-reproduction test confirms the malicious payload's `alert()` no longer fires). With this
+batch done, Phase 6's only remaining item is numbered/offset pagination (D126).
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 

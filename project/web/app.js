@@ -1624,10 +1624,17 @@ async function openIssue(issueKey) {
           return;
         }
         const url = `/api/v1/attachments/${encodeURIComponent(id)}/download`;
+        // `sandbox=""` (no flags) disables script execution, plugins, and
+        // top-navigation inside the iframe -- an uploaded attachment's
+        // declared Content-Type is caller-supplied (D98 deliberately has no
+        // upload-time MIME allow-list) and is echoed back verbatim on
+        // download, so a file uploaded with a spoofed `text/html`
+        // Content-Type must never get a chance to execute script in this
+        // preview, regardless of what the server serves it as.
         const markup = {
           image: `<img src="${url}" alt="">`,
-          pdf: `<iframe src="${url}" title="PDF preview"></iframe>`,
-          text: `<iframe src="${url}" title="Text preview"></iframe>`,
+          pdf: `<iframe src="${url}" title="PDF preview" sandbox=""></iframe>`,
+          text: `<iframe src="${url}" title="Text preview" sandbox=""></iframe>`,
           audio: `<audio controls src="${url}"></audio>`,
           video: `<video controls src="${url}"></video>`
         }[kind];
