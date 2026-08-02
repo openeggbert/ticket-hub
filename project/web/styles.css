@@ -111,6 +111,7 @@ button { cursor: pointer; }
 .primary-button:hover { background: var(--primary-hover); }
 .secondary-button { padding: 9px 15px; background: var(--surface-soft); color: var(--text); }
 .secondary-button:hover { background: #dcdfe4; }
+a.secondary-button { display: inline-block; text-decoration: none; cursor: pointer; }
 .ghost-button { padding: 7px 10px; background: transparent; color: var(--primary); }
 .ghost-button:hover { background: #e9f2ff; }
 .icon-button { display: grid; place-items: center; width: 34px; height: 34px; background: transparent; color: var(--muted); font-size: 20px; }

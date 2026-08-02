@@ -260,6 +260,7 @@ trip; there is no admin configuration for either limit.
 | `GET` | `/api/v1/settings/anonymous-read` | session | current toggle value |
 | `PUT` | `/api/v1/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
 | `GET` | `/api/v1/issues` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description) |
+| `GET` | `/api/v1/issues/export.csv` | session, or anon if enabled | read-only CSV export of issues (D48), same filters as above |
 | `POST` | `/api/v1/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
 | `GET` | `/api/v1/issues/{key}` | session, or anon if enabled | current key or permanent alias |
 | `PATCH` | `/api/v1/issues/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
@@ -750,6 +751,33 @@ end-to-end via `curl` against a running server: 20 wrong-password login attempts
 returned non-429 codes and the next 10 all returned 429, while a `GET` issued immediately afterward still
 returned 200 (confirming only writes are limited). There is no web UI change for this batch -- a 429
 response surfaces through the existing generic API-error handling like any other error status.
+
+A twentieth batch continued Phase 6 with the versioned `/api/v1` prefix (D127). Every route in `Api.cpp`
+(70 `CROW_ROUTE` registrations) moved from `/api/...` to `/api/v1/...` via a single scripted regex
+substitution, except `GET /api/health`, deliberately kept unversioned -- the common infra/monitoring
+convention, not specified by any decision text, documented explicitly. `web/app.js`'s ~63 hardcoded API
+call sites (there is no single base-URL constant; every call site specifies its own path) were updated
+the same way. Purely a URL rename -- no server/domain/database logic changed. Verified via `curl` (the old
+unversioned `/api/projects` now 404s; `/api/v1/auth/login` and `/api/v1/projects` work as before) and a
+full regression pass with the existing Playwright suite (login/logout, full project lifecycle including
+recycle bin and role-gating, issue watch/vote/clone/links/edit, reorder/move/bulk actions), all green
+against the renamed routes. Formal `/api/v2` deprecation policy remains deferred until a real v2 is
+needed, per D127.
+
+A twenty-first batch continued Phase 6 with read-only CSV export of issues (D48). New
+`GET /api/v1/issues/export.csv` shares `Domain::IssueFilter`'s query parameters and authorization with the
+existing `GET /api/v1/issues` JSON list route -- an export is always scoped to whatever the caller could
+already see via the list view. RFC 4180-style field escaping (quote-wrap on comma/quote/newline, doubled
+internal quotes); columns are key/project/summary/description/type/status/priority/reporter/assignee/
+storyPoints/dueDate/resolution/labels (semicolon-joined)/createdAt/updatedAt. No CSV import, no Jira
+migration tool, per D48's explicit scope. `web/`'s Issues view gained an "Export CSV" link next to the
+recycle-bin toggle (hidden in the recycle-bin view, since that has no meaningful export), building its
+`href` from the same filter state as the JSON list fetch so the download always matches whatever is
+currently filtered/visible. No database/migration changes, so no live-PostgreSQL check applied. Verified
+via `curl` (correct `Content-Type`/`Content-Disposition`, correct CSV body, filters apply, 401 when
+unauthenticated) and Playwright (clicked the link, captured the actual browser download, confirmed the
+suggested filename and row count, then filtered by project and confirmed the re-downloaded CSV contains
+only that project's issues).
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

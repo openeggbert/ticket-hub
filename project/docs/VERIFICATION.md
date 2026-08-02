@@ -1,5 +1,59 @@
 # Verification record
 
+## 2026-08-02 — Read-only CSV export of issues (D48): Phase 6 slice 5
+
+Fifth Phase 6 slice, directly following the `/api/v1` versioning batch. Still open: fixed request/body/
+batch-size constants, numbered pagination, and the security hardening pass.
+
+### What changed
+
+- New `GET /api/v1/issues/export.csv` route in `Api.cpp`. Shares `Domain::IssueFilter`'s query-parameter
+  parsing with the existing `GET /api/v1/issues` JSON list route via a new `issueFilterFromQuery(request)`
+  helper (factored out of both routes) and the same `resolvePrincipal`-based authorization -- an export is
+  always scoped to whatever the caller could already see via the list view. No CSRF/rate-limit check,
+  matching every other read-only GET route.
+- New `csvField(value)` helper (RFC 4180-style: quote-wraps a field containing a comma, quote, or
+  newline, doubling internal quotes) and `issuesToCsv(issues)` (builds the full CSV body, `\r\n` line
+  endings). Columns: key, project, summary, description, type, status, priority, reporter, assignee,
+  storyPoints, dueDate, resolution, labels (semicolon-joined within the field, itself still subject to
+  `csvField` escaping), createdAt, updatedAt.
+- Route ordering: `/api/v1/issues/export.csv` sits at the same path depth as the parameterized
+  `/api/v1/issues/{key}` route. Confirmed via `curl` that Crow's trie router resolves the static segment
+  first (matching the existing precedent of `/api/v1/issues/deleted` and `/api/v1/issues/bulk/*`
+  coexisting with `/api/v1/issues/{key}` without incident).
+- `web/app.js`: factored the existing ad-hoc `fetchIssues()` query-building into a reusable
+  `issueFilterParams()` function, then used it to build the `href` of a new "Export CSV" link
+  (`<a class="secondary-button" download="issues.csv">`) placed in the Issues view's page-actions row,
+  next to the recycle-bin toggle. Hidden in the recycle-bin view (nothing meaningful to export there).
+  Re-rendered on every filter change, so the link's `href` always matches the currently visible/filtered
+  issue set. New `a.secondary-button` CSS rule (`display: inline-block; text-decoration: none; cursor:
+  pointer;`) since this class had only ever been applied to `<button>` elements before.
+- No database/migration changes, no new domain/application code -- purely an `Api.cpp` route plus a thin
+  `web/` affordance.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 8/8 green -- unchanged, since `csvField`/`issuesToCsv`/the new route are
+   pure `Api.cpp`/HTTP-layer code with no domain/application/database surface to unit-test against,
+   verified instead via `curl` and a real browser download, matching how this project has verified other
+   Api.cpp-only route additions (e.g. the PAT Bearer-auth exemption).
+3. No live-PostgreSQL check: no database or `IDatabase` changes in this batch.
+4. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded):
+   confirmed `Content-Type: text/csv; charset=utf-8` and `Content-Disposition: attachment;
+   filename="issues.csv"` headers; confirmed the CSV body lists every seeded issue with correctly-quoted
+   fields (a summary/description containing a literal comma round-tripped correctly, wrapped in quotes);
+   confirmed `?project=WEB` scopes the export to only that project's two seeded issues; confirmed an
+   unauthenticated request (anonymous read disabled, the default) returns `401`; confirmed
+   `GET /api/v1/issues/TH-1` (the parameterized `{key}` route) and the plain `GET /api/v1/issues` list
+   route both still resolve correctly alongside the new static `export.csv` route.
+5. Browser verification via Playwright/Chromium: logged in, navigated to the Issues view, captured the
+   real browser-initiated download (`page.waitForEvent('download')`, not just an HTTP assertion) from
+   clicking the new "Export CSV" link, confirmed the suggested filename (`issues.csv`) and row count
+   matched the seeded data; filtered by `project=WEB` in the UI, confirmed the link's `href` updated to
+   include `project=WEB`, re-downloaded, and confirmed every row in the new file starts with `WEB-`.
+
 ## 2026-08-02 — Versioned `/api/v1` prefix (D127): Phase 6 slice 4
 
 Fourth Phase 6 slice, directly following the rate-limiting batch. Still open: fixed request/body/batch-

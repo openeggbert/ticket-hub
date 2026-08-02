@@ -13,9 +13,11 @@ endpoint (D54) -- fixed rate limiting (D124/D125): a new in-memory `RateLimiter`
 (`src/web/RateLimiter.h/.cpp`) enforces a fixed 20-attempts/15-minutes-per-IP cap on `/api/v1/auth/login`
 (complementing, not replacing, the existing per-account 10-attempts/15-minutes lockout) and a fixed
 120-requests/minute-per-user-or-IP cap shared across every write route (POST/PUT/PATCH/DELETE), both
-returning 429 with a `Retry-After` header on trip -- and now the versioned `/api/v1` prefix itself (D127):
-every route moved except `GET /api/health`, kept unversioned by convention. Still open in Phase 6: fixed
-request/body/batch-size constants, numbered pagination, CSV export, and the security hardening pass. No
+returning 429 with a `Retry-After` header on trip -- the versioned `/api/v1` prefix itself (D127): every
+route moved except `GET /api/health`, kept unversioned by convention -- and now read-only CSV export of
+issues (D48): `GET /api/v1/issues/export.csv` shares the same filters/authorization as
+`GET /api/v1/issues`. Still open in Phase 6: fixed request/body/batch-size constants, numbered pagination,
+and the security hardening pass. No
 web UI yet for managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
@@ -457,6 +459,20 @@ anything from the removed/deferred list without an explicit new product conversa
   edit, reorder/move/bulk actions) all green against the renamed routes, confirming the UI has no
   remaining hardcoded old-prefix paths. Formal `/api/v2` deprecation policy remains deferred until a real
   v2 is needed, per D127. Full detail in `docs/VERIFICATION.md`.
+- **Phase 6 continued (read-only CSV export of issues, D48), this batch:** new
+  `GET /api/v1/issues/export.csv`, sharing `Domain::IssueFilter`'s query-parameter parsing (factored into
+  a new `issueFilterFromQuery(request)` helper) and authorization with the existing
+  `GET /api/v1/issues` JSON list route -- an export is always scoped to whatever the caller could already
+  see via the list view. New `csvField`/`issuesToCsv` helpers in `Api.cpp` (RFC 4180-style escaping,
+  `\r\n` line endings); columns: key/project/summary/description/type/status/priority/reporter/assignee/
+  storyPoints/dueDate/resolution/labels(semicolon-joined)/createdAt/updatedAt. No CSV import, no Jira
+  migration tool, per D48's explicit scope. `web/`'s Issues view gained an "Export CSV" link (hidden in
+  the recycle-bin view) whose `href` is rebuilt from the same filter state as the JSON fetch on every
+  re-render, so it always matches the currently visible/filtered issues. No database/migration changes,
+  so no live-PostgreSQL check was needed; no new ctest binary either, since this is pure Api.cpp/HTTP-
+  layer code verified instead via `curl` and a real Playwright browser download (captured with
+  `page.waitForEvent('download')`, confirming the actual downloaded file's name/row count/content, then
+  re-verified after filtering by project). Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -488,9 +504,9 @@ drag-drop/paste integration) are all done and fully covered in the UI. This clos
 left:
 
 1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 6 (REST API v1/export, rate limiting, active-
-   session list -- rate limiting, the active-session list, and the versioned `/api/v1` prefix are now
-   done; CSV export and the request/body/batch-size/pagination items are not) and Phase 7 (backup/
-   restore, upgrade command, not yet started).
+   session list -- rate limiting, the active-session list, the versioned `/api/v1` prefix, and CSV export
+   are now done; the request/body/batch-size/pagination items and the security hardening pass are not)
+   and Phase 7 (backup/restore, upgrade command, not yet started).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -510,11 +526,11 @@ Phase 3's core/CLI/test layer is now complete except for one item:
 
 Milestone 2 (Phases 4 and 5) is now **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
 backup/restore/upgrade) is underway -- personal access tokens (D39/D40), the active-session list/
-"sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), and the versioned `/api/v1` prefix
-(D127) are done; fixed request/body/batch-size constants, numbered pagination, CSV export, and the
-security hardening pass all remain, then Phase 7, then Milestone 4 (Phase 8: packaging and hardening). Do
-not jump ahead to later-phase features early, and do not implement anything from
-`docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+"sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), the versioned `/api/v1` prefix
+(D127), and read-only CSV export of issues (D48) are done; fixed request/body/batch-size constants,
+numbered pagination, and the security hardening pass all remain, then Phase 7, then Milestone 4 (Phase 8:
+packaging and hardening). Do not jump ahead to later-phase features early, and do not implement anything
+from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 

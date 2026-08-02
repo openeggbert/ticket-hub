@@ -132,6 +132,10 @@ remain as the long-term aspirational baseline only — do not build against them
   `GET /api/health`, deliberately kept unversioned (common infra/monitoring convention; not specified by
   any decision text, documented here explicitly). Formal `/api/v2` deprecation policy deferred until a
   real v2 is needed, per D127.
+- **Read-only CSV export of issues (Phase 6, D48):** `GET /api/v1/issues/export.csv`, sharing
+  `Domain::IssueFilter`'s query-parameter filters and authorization with `GET /api/v1/issues`. No CSV
+  import, no Jira migration tool. `web/`'s Issues view gained an "Export CSV" link matching the current
+  filters.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -139,10 +143,9 @@ remain as the long-term aspirational baseline only — do not build against them
   `issueTypeKey`/`parentIssueKey`).
 - Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
   by any decision.
-- Phase 6 is underway (PATs, active-session list, fixed rate limits, and the versioned `/api/v1` prefix
-  done). Fixed request/body/batch-size constants, numbered/offset pagination, read-only CSV
-  export, and the security hardening pass are all still open. Phase 7 (backup/restore/upgrade) is not
-  started.
+- Phase 6 is underway (PATs, active-session list, fixed rate limits, the versioned `/api/v1` prefix, and
+  CSV export done). Fixed request/body/batch-size constants, numbered/offset pagination, and the security
+  hardening pass are all still open. Phase 7 (backup/restore/upgrade) is not started.
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).
 
 ## Permanently out of V1 scope (do not build these)

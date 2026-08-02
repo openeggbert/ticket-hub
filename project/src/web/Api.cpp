@@ -133,6 +133,50 @@ crow::json::wvalue issueJson(const Domain::Issue& issue) {
     return json;
 }
 
+// RFC 4180-style CSV field escaping: any field containing a comma, quote, or
+// newline is wrapped in quotes with internal quotes doubled. Applied
+// unconditionally (even to fields that happen not to need it) since it is
+// always correct and keeps the call sites simple.
+std::string csvField(const std::string& value) {
+    const bool needsQuoting = value.find_first_of(",\"\n\r") != std::string::npos;
+    if (!needsQuoting) {
+        return value;
+    }
+    std::string escaped = "\"";
+    for (const char c : value) {
+        if (c == '"') {
+            escaped += "\"\"";
+        } else {
+            escaped += c;
+        }
+    }
+    escaped += '"';
+    return escaped;
+}
+
+std::string issuesToCsv(const std::vector<Domain::Issue>& issues) {
+    std::ostringstream csv;
+    csv << "key,project,summary,description,type,status,priority,reporter,assignee,storyPoints,dueDate,"
+           "resolution,labels,createdAt,updatedAt\r\n";
+    for (const auto& issue : issues) {
+        std::ostringstream labels;
+        for (std::size_t i = 0; i < issue.labels.size(); ++i) {
+            if (i > 0) labels << ';';
+            labels << issue.labels[i];
+        }
+        csv << csvField(issue.key) << ',' << csvField(issue.projectKey) << ',' << csvField(issue.summary)
+            << ',' << csvField(issue.description) << ',' << csvField(issue.type.name) << ','
+            << csvField(issue.status.name) << ',' << csvField(issue.priority.name) << ','
+            << csvField(issue.reporter.email) << ','
+            << csvField(issue.assignee ? issue.assignee->email : "") << ',';
+        if (issue.storyPoints) csv << *issue.storyPoints;
+        csv << ',' << csvField(issue.dueDate.value_or("")) << ',' << csvField(issue.resolution.value_or(""))
+            << ',' << csvField(labels.str()) << ',' << csvField(issue.createdAt) << ','
+            << csvField(issue.updatedAt) << "\r\n";
+    }
+    return csv.str();
+}
+
 crow::json::wvalue commentJson(const Domain::Comment& comment) {
     crow::json::wvalue json;
     json["id"] = comment.id;
@@ -279,6 +323,23 @@ std::optional<std::string> queryParameter(const crow::request& request, const ch
         return std::nullopt;
     }
     return std::string(value);
+}
+
+// Read-only CSV export of issues (D48): no CSV import, no Jira migration
+// tool. Shares the same `Domain::IssueFilter` query parameters and
+// authorization as `GET /api/v1/issues`, so an export can be scoped to
+// whatever the caller could already see via the list view.
+Domain::IssueFilter issueFilterFromQuery(const crow::request& request) {
+    Domain::IssueFilter filter;
+    filter.projectKey = queryParameter(request, "project");
+    filter.statusKey = queryParameter(request, "status");
+    filter.issueTypeKey = queryParameter(request, "type");
+    filter.priorityKey = queryParameter(request, "priority");
+    filter.assigneeEmail = queryParameter(request, "assignee");
+    filter.label = queryParameter(request, "label");
+    filter.dueBefore = queryParameter(request, "dueBefore");
+    filter.search = queryParameter(request, "q");
+    return filter;
 }
 
 std::string requiredString(const crow::json::rvalue& body, const char* field) {
@@ -916,15 +977,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     CROW_ROUTE(app, "/api/v1/issues")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {
-            Domain::IssueFilter filter;
-            filter.projectKey = queryParameter(request, "project");
-            filter.statusKey = queryParameter(request, "status");
-            filter.issueTypeKey = queryParameter(request, "type");
-            filter.priorityKey = queryParameter(request, "priority");
-            filter.assigneeEmail = queryParameter(request, "assignee");
-            filter.label = queryParameter(request, "label");
-            filter.dueBefore = queryParameter(request, "dueBefore");
-            filter.search = queryParameter(request, "q");
+            const auto filter = issueFilterFromQuery(request);
             crow::json::wvalue::list items;
             for (const auto& issue : service->listIssues(filter, resolvePrincipal(request, authService))) {
                 items.emplace_back(issueJson(issue));
@@ -932,6 +985,28 @@ void registerApiRoutes(crow::SimpleApp& app,
             crow::json::wvalue body;
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Read-only CSV export (D48): same filters/authorization as the JSON
+    // list route above, just a different representation. Not nested under a
+    // path that could collide with /api/v1/issues/{key} since Crow resolves
+    // static path segments before parameterized ones, matching the existing
+    // /api/v1/issues/deleted and /api/v1/issues/bulk/* routes' precedent.
+    CROW_ROUTE(app, "/api/v1/issues/export.csv")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
+        try {
+            const auto filter = issueFilterFromQuery(request);
+            const auto issues = service->listIssues(filter, resolvePrincipal(request, authService));
+            crow::response response(200, issuesToCsv(issues));
+            response.set_header("Content-Type", "text/csv; charset=utf-8");
+            response.set_header("Content-Disposition", "attachment; filename=\"issues.csv\"");
+            response.set_header("Cache-Control", "no-store");
+            return response;
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
