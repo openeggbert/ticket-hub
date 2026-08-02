@@ -1,5 +1,90 @@
 # Verification record
 
+## 2026-08-02 — Threat-model / security self-review: Phase 8 slice 4 (closes Milestone 4)
+
+The last open Phase 8 item, and with it the whole reduced-scope V1 roadmap: `docs/THREAT_MODEL.md` is the
+full write-up (scope, method, every finding, what was fixed, what's accepted residual risk, and what this
+review did not cover). This entry records how each fix was verified.
+
+### What changed
+
+A dedicated code-reading pass across the entire HTTP attack surface (`src/web/Api.cpp`'s 46 mutating
+routes and all read routes, every `TicketService`/`AuthService` authorization check, both database
+adapters' query construction, attachment storage, and `web/app.js`'s escaping/CSRF handling) found and
+fixed five issues, ranked by severity in `docs/THREAT_MODEL.md`:
+
+1. **Broken access control (IDOR), High severity**: `editComment`/`deleteComment`/`editWorklog`/
+   `deleteWorklog`/`deleteAttachment` in `src/application/TicketService.cpp` checked the project-role
+   requirement against the issue named in the URL but looked up the target comment/worklog/attachment
+   purely by its own id, never confirming the resource actually belonged to that issue. Since every
+   project is readable by every authenticated user (D58), this let a project Member/Admin of *any* one
+   project reach and mutate a comment/worklog/attachment belonging to a *different* project they have no
+   role on, by routing the request through one of their own issues' URLs. Fixed by comparing the looked-up
+   resource's `issueId` against the URL-resolved issue's `id` before proceeding, treating a mismatch the
+   same as "not found" (matches the existing unknown-id convention already used by these same methods).
+2. **CSRF cookie derived from the session token, Medium severity**: the non-`HttpOnly` `th_csrf` cookie was
+   literally the session token's first 16 bytes, hex-encoded -- unnecessary, since `csrfTokenValid` only
+   ever compares cookie-to-header verbatim, and it meant any future cookie-read primitive could leak part
+   of the `HttpOnly` session secret through the intentionally-JS-readable cookie. Fixed by generating the
+   CSRF token independently via `Common::randomTokenHex(16)`.
+3. **Login timing side-channel, Low/Medium severity**: the not-found/inactive-email branch of
+   `AuthService::login` skipped the slow Argon2id verify that the wrong-password branch always runs,
+   letting response time distinguish "no such account" from "wrong password" despite an identical error
+   message -- enabling email enumeration. Fixed with a lazily-computed dummy password hash the not-found
+   branch now verifies against (result discarded) before throwing, equalizing the dominant cost gap.
+4. **Logout missing CSRF check, Low severity**: the only one of 46 mutating routes without a
+   `csrfTokenValid` check. Not presently exploitable (`th_session` is `SameSite=Strict`, already blocking
+   cross-site attachment of the cookie), but a latent inconsistency. Fixed for defense in depth.
+5. **CSV/formula injection in export, Low/Medium severity**: `csvField` in `src/web/Api.cpp` didn't
+   neutralize fields starting with `=`/`+`/`-`/`@`, so a malicious issue summary/description/label could
+   execute as a spreadsheet formula when the CSV export (D48) was opened in Excel/Sheets/Calc. Fixed with
+   the standard OWASP mitigation: a leading apostrophe forces plain-text interpretation.
+
+`docs/THREAT_MODEL.md` also documents what was reviewed and confirmed already correct (password hashing
+parameters, session/PAT secret storage, SQL parameterization throughout both adapters, consistent
+client-side XSS escaping including the earlier Phase 6 stored-XSS fix, path-traversal-proof attachment
+storage, shell-escaped backup/restore commands, and the anonymous-read toggle never weakening write
+authorization), and three deliberate residual risks already implied by earlier fixed-scope decisions
+(unscoped PATs per D39/D40, reverse-proxy-unaware per-IP rate limiting per D124/D125, and no socket-level
+request-body cap -- all restated there rather than treated as new findings, since fixing them would mean
+overriding decisions already made, not closing an oversight).
+
+### Verification
+
+- **IDOR fix**: reproduced live against a running instance before the fix (an authenticated user with a
+  role on Project A successfully edited a comment belonging to Project B by substituting a Project A issue
+  key into the URL, receiving `200`); confirmed fixed after the code change (`404 Comment not found`,
+  matching the existing unknown-resource response). New regression tests added to
+  `tests/authorization_integration_tests.cpp` for all three resource types (comments/worklogs/
+  attachments), covering both the cross-project attack path and confirming the ordinary role check still
+  applies correctly when a resource is addressed through its own issue's URL.
+- **CSRF-cookie independence**: confirmed live via `Set-Cookie` headers from `/api/v1/auth/login` that the
+  `th_csrf` and `th_session` values no longer share a prefix, and that CSRF-protected writes still succeed
+  using the new independently-generated token.
+- **Login timing fix**: confirmed both the wrong-password and unknown-email cases still return `401` with
+  the identical message, and correct login is unaffected.
+- **Logout CSRF check**: confirmed live that logout without `X-CSRF-Token` now returns `403`, and still
+  succeeds with the correct header.
+- **CSV injection fix**: confirmed live that an issue summary of `=cmd|'/c calc'!A1` now exports as
+  `'=cmd|'/c calc'!A1` (apostrophe-prefixed) rather than the raw formula.
+- `ctest --output-on-failure`: 8/8 green, including the three new IDOR regression assertions.
+- Full three-configuration build matrix reconfirmed clean after these changes: the default SQLite+
+  PostgreSQL+server config, a fresh `-DTICKETHUB_WITH_POSTGRES=OFF` (SQLite-only) config, and a fresh
+  `-DTICKETHUB_WITH_SQLITE=OFF` (PostgreSQL-only) config all compile with no errors (transient build
+  directories, removed after verification).
+
+Not independently re-verified against live PostgreSQL: none of these five fixes touch either database
+adapter (`PostgresDatabase.cpp`/`SqliteDatabase.cpp`) -- the IDOR fix only compares fields already returned
+by existing, unmodified `findCommentById`/`findWorklogById`/`findAttachmentById` queries, and the other
+four fixes are entirely in the web/application layer. The PostgreSQL-only build was confirmed to compile,
+which is the applicable check for a change with no new or altered SQL.
+
+**This closes Phase 8, Milestone 4, and the entire reduced-scope V1 roadmap** (`docs/
+REDUCED_SCOPE_ROADMAP.md`'s exit gate: `docker compose up` produces a usable, documented V1 instance --
+done; all supported build configurations compile and pass tests -- confirmed above; no known open security
+issue from the hardening pass -- every finding from this review is now either fixed or explicitly
+documented as an accepted, decision-consistent residual risk in `docs/THREAT_MODEL.md`).
+
 ## 2026-08-02 — Accessibility baseline pass and browser-support note (D47/D139): Phase 8 slice 3
 
 Still open in Phase 8: the threat-model/security self-review and a final documentation-currency pass.

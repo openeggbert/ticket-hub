@@ -191,6 +191,15 @@ remain as the long-term aspirational baseline only — do not build against them
   support) reconfirmed satisfied by construction, no code change. Browser-verified with Playwright/
   Chromium (keyboard-only activation of each fixed element, no mouse-click regression) plus a clean
   regression re-run.
+- **Threat-model / security self-review (Phase 8):** full write-up in `docs/THREAT_MODEL.md`. Found and
+  fixed a real broken-access-control (IDOR) bug -- `editComment`/`deleteComment`/`editWorklog`/
+  `deleteWorklog`/`deleteAttachment` checked the caller's project role against the URL's issue but looked
+  up the target resource purely by id, letting a user with a role on one project reach a comment/worklog/
+  attachment belonging to a different project by routing through their own issue's URL. Also fixed: a
+  CSRF cookie that was an unnecessary literal prefix of the session token, a login timing side channel
+  enabling email enumeration, a missing CSRF check on `/api/v1/auth/logout`, and CSV formula injection in
+  the export route. New regression tests cover the IDOR fix; every fix reproduced and confirmed live over
+  HTTP. **This closes Phase 8, Milestone 4, and the entire reduced-scope V1 roadmap.**
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -202,9 +211,9 @@ remain as the long-term aspirational baseline only — do not build against them
   so far -- every other list endpoint (projects, comments, worklogs, attachments, notifications,
   sessions, tokens, audit events, watchers, voters, board-columns, issue-links, comment-reactions)
   remains unpaginated; extending it further is optional follow-up, not a blocker to Phase 6's exit gate.
-- Phase 8 (Milestone 4) is underway: Docker packaging (D50), light/dark theme (D46), the accessibility
-  baseline pass (D47), and the browser-support note (D139) are done. The threat-model/security self-review
-  is not.
+- **Phase 8 (Milestone 4) is fully complete**, which closes the entire reduced-scope V1 roadmap: Docker
+  packaging (D50), light/dark theme (D46), the accessibility baseline pass (D47), the browser-support note
+  (D139), and the threat-model/security self-review (`docs/THREAT_MODEL.md`) are all done.
 
 ## Permanently out of V1 scope (do not build these)
 

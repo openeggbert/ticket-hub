@@ -1,5 +1,6 @@
 #include "web/Api.h"
 
+#include "common/RandomToken.h"
 #include "domain/Errors.h"
 #include "web/RateLimiter.h"
 
@@ -151,13 +152,26 @@ crow::json::wvalue issueJson(const Domain::Issue& issue) {
 // newline is wrapped in quotes with internal quotes doubled. Applied
 // unconditionally (even to fields that happen not to need it) since it is
 // always correct and keeps the call sites simple.
+//
+// Also neutralizes CSV/formula injection: every field here comes from
+// user-controlled issue content (summary, description, labels, ...), and a
+// spreadsheet application (Excel, Google Sheets, LibreOffice Calc) treats a
+// cell beginning with `=`, `+`, `-`, or `@` as a formula to evaluate when the
+// file is opened, regardless of the exporting application's intent. A
+// leading apostrophe is the standard mitigation (OWASP CSV Injection): every
+// major spreadsheet application treats it as "force this cell to plain
+// text" and does not display the apostrophe itself.
 std::string csvField(const std::string& value) {
-    const bool needsQuoting = value.find_first_of(",\"\n\r") != std::string::npos;
+    std::string field = value;
+    if (!field.empty() && (field.front() == '=' || field.front() == '+' || field.front() == '-' || field.front() == '@')) {
+        field.insert(field.begin(), '\'');
+    }
+    const bool needsQuoting = field.find_first_of(",\"\n\r") != std::string::npos;
     if (!needsQuoting) {
-        return value;
+        return field;
     }
     std::string escaped = "\"";
-    for (const char c : value) {
+    for (const char c : field) {
         if (c == '"') {
             escaped += "\"\"";
         } else {
@@ -622,8 +636,11 @@ void registerApiRoutes(crow::SimpleApp& app,
             auto response = jsonResponse(200, std::move(responseBody));
             // The CSRF half of the cookie pair does not need to be
             // cryptographically tied to the session -- it only needs to be
-            // unguessable and readable solely by same-origin JS.
-            addSessionCookies(response, authenticated.sessionToken, authenticated.sessionToken.substr(0, 32));
+            // unguessable and readable solely by same-origin JS. It is
+            // generated independently (not derived from the session token)
+            // so that a leak of the non-HttpOnly CSRF cookie can never
+            // expose any part of the HttpOnly session bearer secret.
+            addSessionCookies(response, authenticated.sessionToken, Common::randomTokenHex(16));
             return response;
         } catch (const Domain::AccountLocked& error) {
             return errorResponse(423, error.what());
@@ -638,6 +655,13 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     CROW_ROUTE(app, "/api/v1/auth/logout")
     .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
+        // SameSite=Strict on th_session already blocks the session cookie
+        // from being attached to any cross-site request, so a forged
+        // logout is not presently reachable -- this check is defense in
+        // depth, kept consistent with every other state-changing route.
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
         const auto token = cookieValue(request, SessionCookieName);
         if (token) {
             authService->logout(*token);

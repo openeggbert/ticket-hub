@@ -8,6 +8,12 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
 ## Current status (2026-08-02)
 
+**The entire reduced-scope V1 roadmap (`docs/REDUCED_SCOPE_ROADMAP.md`, Milestones 1-4 / Phases 1-8) is
+now complete**, including its Phase 8 exit gate (`docker compose up` produces a usable, documented
+instance; all supported build configurations compile and pass tests; no known open security issue from
+the hardening pass). See "The roadmap is now complete" in `NEXT.md` for the exact closing detail and what
+remains only as optional, non-roadmap follow-up.
+
 - **Milestone 1** (Phases 1-3: identity/sessions, authorization/projects, issue core/fixed workflow) --
   **complete** at the core/CLI/test/server/UI layer, with one deliberate exception: re-typing
   (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation is not implemented.
@@ -42,7 +48,11 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   real bug found and fixed (`.link-form input` had no dark styling). The accessibility baseline pass (D47)
   and browser-support note (D139) are also done: issue rows/board cards/project cards/inline key links are
   now keyboard-focusable and operable with Enter/Space (a real gap found and fixed), and D139 was
-  reconfirmed satisfied by construction. Still open: the threat-model/security self-review.
+  reconfirmed satisfied by construction. **The threat-model/security self-review is also done**
+  (`docs/THREAT_MODEL.md`): it found and fixed a real broken-access-control (IDOR) bug across the comment/
+  worklog/attachment mutation routes, plus four lower-severity issues (a session-derived CSRF cookie, a
+  login timing side channel, a missing CSRF check on logout, and CSV formula injection). **This closes
+  Phase 8, Milestone 4, and the entire roadmap.**
 
 ## Implementation rules
 

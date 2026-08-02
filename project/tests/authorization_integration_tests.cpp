@@ -201,6 +201,32 @@ int main() {
                "editing an unknown comment returns nullopt rather than throwing");
         require(!tickets.deleteComment("TH-1", "00000000-0000-4000-8000-00000000dead", demo),
                "deleting an unknown comment returns false rather than throwing");
+
+        // Regression test for a real IDOR found in the Phase 8 security
+        // self-review: editComment/deleteComment used to resolve the
+        // project-role check from the URL's issueKey but look up the
+        // comment purely by id, so an admin of *some* project could
+        // edit/delete a comment that actually belongs to a *different*
+        // project's issue, as long as the URL named an issue they do
+        // control. alex is TH member / WEB admin but did not author this
+        // TH comment; passing WEB-1 (where alex holds Admin rank) as the
+        // URL issueKey must not let alex reach a TH comment by id, even
+        // though alex is only a plain TH member (not TH admin) on the
+        // project the comment actually belongs to.
+        const auto thComment = tickets.addComment("TH-1", "Comment on a TH issue", sam);
+        require(!tickets.editComment("WEB-1", thComment.id, "cross-issue edit attempt", alex).has_value(),
+               "a comment cannot be edited through an unrelated issue's URL, even by that issue's admin");
+        require(!tickets.deleteComment("WEB-1", thComment.id, alex),
+               "a comment cannot be deleted through an unrelated issue's URL, even by that issue's admin");
+        // Addressed through its own (TH) issue URL, alex is correctly still
+        // rejected (only a plain TH member, not TH admin, and not the
+        // author) -- confirming the mismatch check above isn't just
+        // masking a role check that would have failed anyway for a
+        // different reason.
+        require(throwsForbidden([&] { tickets.deleteComment("TH-1", thComment.id, alex); }),
+               "...and the comment is still protected by the ordinary role check when addressed correctly");
+        require(tickets.deleteComment("TH-1", thComment.id, demo),
+               "a global administrator can still delete it through the correct issue URL");
     }
 
     // --- Watching and voting are self-service and require no project role (D20, D79) ---
@@ -382,6 +408,22 @@ int main() {
                "editing an unknown worklog returns nullopt rather than throwing");
         require(!tickets.deleteWorklog("TH-1", "00000000-0000-4000-8000-00000000dead", demo),
                "deleting an unknown worklog returns false rather than throwing");
+
+        // Regression test for the same class of IDOR as the comment test
+        // above: editWorklog/deleteWorklog checked the project-role from
+        // the URL's issueKey but looked the worklog up purely by id. Sam is
+        // a TH member with *no* WEB membership at all, so sam must not be
+        // able to reach a WEB worklog by routing the request through a TH
+        // issue URL (where sam does hold Member rank).
+        const auto webWorklog = tickets.addWorklog("WEB-1", "2026-07-30", 1800, std::string("Alex's WEB work"), alex);
+        require(!tickets.editWorklog("TH-1", webWorklog.id, "2026-07-31", 900, std::nullopt, sam).has_value(),
+               "a worklog cannot be edited through an unrelated issue's URL, even one the caller is a member of");
+        require(!tickets.deleteWorklog("TH-1", webWorklog.id, sam),
+               "a worklog cannot be deleted through an unrelated issue's URL, even one the caller is a member of");
+        // The correctly-scoped route still works for someone who does have
+        // WEB access.
+        require(tickets.deleteWorklog("WEB-1", webWorklog.id, alex),
+               "the same worklog can be deleted once addressed through its own issue's URL");
     }
 
     // --- Attachments (Phase 5, D15/D98-D105) ---
@@ -424,6 +466,26 @@ int main() {
                "a non-uploader TH member (not project-admin) cannot delete another member's attachment");
         require(tickets.deleteAttachment("TH-1", secondUpload.id, demo),
                "the global administrator can delete any attachment");
+
+        // Regression test for the same class of IDOR as comments/worklogs
+        // above: deleteAttachment checked the project-role from the URL's
+        // issueKey but looked the attachment up purely by id. Alex is a
+        // plain TH member (not TH admin) but *is* WEB admin, so alex must
+        // not be able to reach and delete a TH attachment they didn't
+        // upload by routing the request through a WEB issue URL (where
+        // alex holds Admin rank, satisfying the role check for the wrong
+        // project).
+        const auto thAttachmentBySam = tickets.uploadAttachment("TH-1", "cross-project.txt", "text/plain", "sam's file", sam);
+        require(!tickets.deleteAttachment("WEB-1", thAttachmentBySam.id, alex),
+               "a TH attachment cannot be deleted through a WEB issue URL (returns false, not Forbidden -- "
+               "the attachment/issue mismatch is caught before the role check even runs), even by a WEB "
+               "admin who is only a plain TH member");
+        // The correctly-scoped route still rejects alex (not TH admin, not the uploader)...
+        require(throwsForbidden([&] { tickets.deleteAttachment("TH-1", thAttachmentBySam.id, alex); }),
+               "...and the attachment is still protected when addressed through its own (TH) issue URL");
+        // ...but the uploader can still delete it themselves.
+        require(tickets.deleteAttachment("TH-1", thAttachmentBySam.id, sam),
+               "the uploader can still delete their own attachment through the correct issue URL");
 
         // --- Fixed limits (D98): oversized file and blocked extension ---
         bool oversizedRejected = false;
