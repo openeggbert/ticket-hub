@@ -10,8 +10,10 @@ upgrade requirement, structured JSON logs to stdout, and an in-app admin version
 batch-by-batch detail below. **Phase 8 (Milestone 4, packaging and release hardening) is now underway**:
 the Docker image and Compose distribution path (D50) are done -- `docker compose up` brings up the full
 instance, verified as far as this environment's network policy allows (see `docs/VERIFICATION.md` for
-the exact disclosure). Still open in Phase 8: light/dark theme (D46), the accessibility baseline review
-(D47), the threat-model/security self-review, and a final documentation-currency pass. No web UI yet for
+the exact disclosure). Light and dark theme (D46) is also done -- the UI now follows the OS-level
+`prefers-color-scheme` signal automatically, browser-verified in both modes. Still open in Phase 8: the
+accessibility baseline review (D47), the browser-support note (D139, already satisfied by construction),
+the threat-model/security self-review, and a final documentation-currency pass. No web UI yet for
 managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
@@ -577,6 +579,20 @@ anything from the removed/deferred list without an explicit new product conversa
   live PostgreSQL database using the Compose file's exact connection-string shape; the documented
   `ticket-hub-cli create-user ... --admin` workflow works against the installed binaries). Full detail,
   including the precise proxy-log evidence, in `docs/VERIFICATION.md`.
+- **Phase 8 continued (light and dark theme, D46), this batch:** `web/styles.css` gained a full
+  `@media (prefers-color-scheme: dark)` variable-override block plus `color-scheme: light dark`, so the
+  UI automatically follows the OS-level dark-mode signal with no manual toggle or persisted preference (a
+  deliberate scope choice -- D46 only calls for "light and dark theme... simple"). ~30 hardcoded literal
+  colors converted to CSS custom properties so every surface themes consistently; new `--surface-hover`/
+  `--text-secondary`/`--info-*`/`--success-*`/`--danger-*`/`--warning-*`/`--overlay`/`--topbar-bg`
+  variables added. Found and fixed a real bug during verification: `.link-form input` had no explicit
+  dark-mode styling and rendered as a stray unreadable white box. Browser-verified with Playwright/
+  Chromium: light mode confirmed byte-identical to before, dark mode confirmed via computed styles
+  (`body`/`.content`/`.panel`/drawer backgrounds all match the new variables) plus a five-view screenshot
+  review (Issues list, issue drawer, create-issue modal, Kanban board, Projects grid), and both existing
+  browser regression scripts (`login_browser_test.mjs`, `reorder_move_bulk_test.mjs`) re-run clean with no
+  functional regression from this CSS-only change. `ctest --output-on-failure`: 8/8 green (no C++ source
+  touched). Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 

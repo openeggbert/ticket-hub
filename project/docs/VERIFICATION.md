@@ -1,5 +1,62 @@
 # Verification record
 
+## 2026-08-02 — Light and dark theme (D46): Phase 8 slice 2
+
+CSS-only batch, no C++/schema/route changes. Still open in Phase 8: the baseline accessibility review
+(D47), the browser-support note (D139, already satisfied by construction), the threat-model/security
+self-review, and a final documentation-currency pass.
+
+### What changed
+
+- `web/styles.css`'s `:root` gained a set of new CSS custom properties that were previously missing
+  (`--surface-hover`, `--text-secondary`, `--info-bg`/`--info-text`, `--success-bg`/`--success-text`,
+  `--danger-bg`/`--danger-border`, `--warning-bg`/`--warning-border`/`--warning-text`, `--overlay`,
+  `--topbar-bg`) and `color-scheme: light dark;`, so native form controls (checkboxes, date pickers, the
+  default focus ring) follow the OS dark-mode signal automatically even before any custom override is
+  applied.
+- A new `@media (prefers-color-scheme: dark) { :root { ... } }` block redefines every theme variable with
+  a dark-appropriate value (`--bg: #12151c`, `--surface: #1c212c`, `--text: #e4e8f1`, `--primary:
+  #579dff`, etc.) -- D46 calls for "light and dark theme... simple", with no high-contrast/branding
+  requirement and no mention of a manual in-app toggle, so this deliberately follows the OS-level
+  `prefers-color-scheme` signal only; there is no persisted user preference or UI switch, since building
+  one would be new state/UI machinery the decision text does not call for.
+- Roughly 30 hardcoded literal colors scattered through the stylesheet were converted to reference the
+  variables above instead (`background: white` -> `var(--surface)` across ~15 rules; `color: #44546f` ->
+  `var(--text-secondary)` across ~8 rules; plus targeted fixes for status/priority/label chips, unread
+  notifications, the bulk-action bar, form/error banners, the update banner, modal/drawer backdrops, the
+  filter bar, board columns, issue-table hover/border colors, the over-WIP-limit column count, ghost
+  buttons, small avatars, the loading spinner, and the inline WIP-limit editor). Left deliberately
+  unconverted: the sidebar (a fixed navy `#0b214a`, always dark by design regardless of theme), `.avatar`/
+  `.project-avatar` (fixed colored badges with their own contrasting fixed text), and `.toast` (a fixed
+  dark overlay) -- all three are self-contained and stay readable in both themes without needing to track
+  the page theme.
+- Found and fixed a real bug during verification: `.link-form input` (the "Issue key, e.g. TH-3" field in
+  the issue-linking UI) had no explicit `background`/`color` at all, so in dark mode it fell back to the
+  browser's light default form-control appearance -- a white box that was hard to read against the rest of
+  the now-dark page. Fixed by adding explicit `background: var(--surface); color: var(--text);`, matching
+  every other form input in the stylesheet.
+
+### Verification
+
+Ran a Playwright/Chromium script (`dark_theme_test.mjs`, scratchpad-only, not committed) that logs in and
+emulates both `colorScheme: 'light'` and `colorScheme: 'dark'` at the browser level:
+
+- Confirmed light mode is byte-identical to before this change (computed `body` background, `.content`
+  text color, and `.panel` background all matched the pre-existing light-theme values).
+- Confirmed dark mode correctly switches: computed `body` background resolved to `rgb(18, 21, 28)`,
+  matching the new `--bg: #12151c` variable, and the issue drawer's background switched accordingly too.
+- Took screenshots of five views in dark mode -- the Issues list, the issue drawer, the create-issue
+  modal, the Kanban board, and the Projects grid -- and reviewed each image directly, confirming all text/
+  chip/border contrast is readable and no element is left with a stray light-mode background. This is how
+  the `.link-form input` bug above was actually caught: a screenshot of the issue drawer with the "Link
+  issue" panel open showed a plainly-wrong white input box against the dark surface.
+- Re-ran the existing `login_browser_test.mjs` and `reorder_move_bulk_test.mjs` Playwright regression
+  scripts unchanged -- both passed, confirming this CSS-only change caused no functional regression.
+- `ctest --output-on-failure`: 8/8 green (unaffected by construction -- no C++ source changed).
+
+Not independently verified: automated contrast-ratio (WCAG) measurement -- deferred to the upcoming
+accessibility baseline review (D47), which is the next item in Phase 8.
+
 ## 2026-08-02 — Docker image and Compose distribution (D50): Phase 8 slice 1
 
 First Phase 8 (Milestone 4) slice, directly following the close of Phase 7/Milestone 3. Still open in

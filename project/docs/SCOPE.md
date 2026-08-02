@@ -177,6 +177,12 @@ remain as the long-term aspirational baseline only — do not build against them
   the runtime configuration was verified directly on the host against both SQLite and live PostgreSQL);
   the actual image build was blocked here by a network-egress policy denial, precisely disclosed in
   `docs/VERIFICATION.md`, not worked around.
+- **Light and dark theme (Phase 8, D46):** `web/styles.css` follows the OS-level `prefers-color-scheme`
+  signal automatically via `color-scheme: light dark` and a full `@media (prefers-color-scheme: dark)`
+  variable-override block -- no manual in-app toggle or persisted preference, since D46 only calls for
+  "light and dark theme... simple". ~30 hardcoded literal colors converted to the CSS custom-property set
+  so the whole UI themes consistently. Browser-verified with Playwright/Chromium in both modes; found and
+  fixed one real bug (`.link-form input` had no dark styling and rendered as a stray white box).
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -188,8 +194,9 @@ remain as the long-term aspirational baseline only — do not build against them
   so far -- every other list endpoint (projects, comments, worklogs, attachments, notifications,
   sessions, tokens, audit events, watchers, voters, board-columns, issue-links, comment-reactions)
   remains unpaginated; extending it further is optional follow-up, not a blocker to Phase 6's exit gate.
-- Phase 8 (Milestone 4) is underway: Docker packaging (D50) is done. Light/dark theme (D46), the
-  accessibility baseline review (D47), and the threat-model/security self-review are not.
+- Phase 8 (Milestone 4) is underway: Docker packaging (D50) and light/dark theme (D46) are done. The
+  accessibility baseline review (D47), the browser-support note (D139, already satisfied by construction),
+  and the threat-model/security self-review are not.
 
 ## Permanently out of V1 scope (do not build these)
 

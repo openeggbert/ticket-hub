@@ -969,6 +969,22 @@ this sandboxed environment due to a network-egress policy block on the specific 
 redirects to for image layers -- confirmed via the agent proxy's own status log as a policy decision, not
 a bug, and not something to route around per this environment's operating rules.
 
+A twenty-eighth batch continued Phase 8 with light and dark theme support (D46). `web/styles.css` now
+declares `color-scheme: light dark` and a full `@media (prefers-color-scheme: dark)` override block for
+every CSS custom property, so the UI automatically follows the operating system's dark-mode signal -- no
+manual in-app toggle or persisted preference, since D46 only calls for "light and dark theme... simple"
+and does not ask for one. Roughly 30 previously-hardcoded literal colors across the stylesheet were
+converted to reference the variable set instead, so chips, banners, modals, the board, tables, and buttons
+all theme consistently; the sidebar, avatar badges, and toast notifications were deliberately left as
+fixed colors since they are self-contained and stay readable in either theme. Verification (Playwright/
+Chromium) found and fixed one real bug along the way: the issue-linking `.link-form input` field had no
+dark-mode styling at all and rendered as a stray white box against the rest of the dark page. Verified by
+emulating both `colorScheme: 'light'` and `'dark'` at the browser level -- confirmed light mode is
+unchanged, confirmed dark mode's computed styles match the new variables, reviewed screenshots of five
+views (Issues list, issue drawer, create-issue modal, Kanban board, Projects grid) for readability, and
+re-ran both existing Playwright regression scripts clean to confirm no functional regression from this
+CSS-only change.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 

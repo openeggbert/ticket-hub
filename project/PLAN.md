@@ -37,7 +37,10 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   `docker compose config` pass cleanly and the runtime configuration was verified directly on the host
   against both SQLite and live PostgreSQL, but the actual image build was blocked by a network-egress
   policy denial on the CDN host Docker Hub redirects layer pulls to (see `docs/VERIFICATION.md` for the
-  full disclosure). Still open: light/dark theme (D46), the accessibility baseline review (D47), and the
+  full disclosure). Light and dark theme (D46) is also done: the UI follows the OS-level
+  `prefers-color-scheme` signal automatically (no manual toggle), browser-verified in both modes with a
+  real bug found and fixed (`.link-form input` had no dark styling). Still open: the accessibility
+  baseline review (D47), the browser-support note (D139, already satisfied by construction), and the
   threat-model/security self-review.
 
 ## Implementation rules
