@@ -826,7 +826,7 @@ async function renderAttachmentRecycleBin() {
   }));
 }
 
-async function fetchIssues() {
+function issueFilterParams() {
   const params = new URLSearchParams();
   if (state.selectedProject) params.set('project', state.selectedProject);
   if (state.status) params.set('status', state.status);
@@ -836,7 +836,11 @@ async function fetchIssues() {
   if (state.filterLabel) params.set('label', state.filterLabel);
   if (state.filterDueBefore) params.set('dueBefore', state.filterDueBefore);
   if (state.search) params.set('q', state.search);
-  const result = await api(`/api/v1/issues?${params}`);
+  return params;
+}
+
+async function fetchIssues() {
+  const result = await api(`/api/v1/issues?${issueFilterParams()}`);
   state.issues = result.items;
 }
 
@@ -883,6 +887,7 @@ async function renderIssuesView(showingDeleted) {
         <p>${showingDeleted ? 'Issues moved to the recycle bin (90-day retention).' : 'Search, filter, and inspect the work items in a project.'}</p>
       </div>
       <div class="page-actions">
+        ${showingDeleted ? '' : `<a class="secondary-button" id="export-issues-csv" href="/api/v1/issues/export.csv?${issueFilterParams()}" download="issues.csv">⬇ Export CSV</a>`}
         ${isAdmin ? `<button type="button" class="secondary-button" id="toggle-issue-recycle-bin">${showingDeleted ? '← Back to issues' : '🗑 Recycle bin'}</button>` : ''}
       </div>
     </div>

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Read-only CSV export of issues (D48) — Phase 6 continued
+
+- **CSV export**: `GET /api/v1/issues/export.csv` returns the same issues `GET /api/v1/issues` would,
+  as CSV, with the same query-parameter filters (`project`, `status`, `type`, `priority`, `assignee`,
+  `label`, `dueBefore`, `q`) and authorization.
+- Columns: key, project, summary, description, type, status, priority, reporter, assignee, storyPoints,
+  dueDate, resolution, labels (semicolon-joined), createdAt, updatedAt. RFC 4180-style field escaping.
+- No CSV import, no Jira migration tool -- out of scope per D48.
+- `web/`: the Issues view gained an "Export CSV" link that reflects the current filters.
+
 ## Unreleased — Versioned `/api/v1` prefix (D127) — Phase 6 continued
 
 - **API versioning**: every route now lives under `/api/v1` (e.g. `POST /api/v1/auth/login`,
