@@ -155,6 +155,22 @@ void TicketService::setAnonymousReadEnabled(const bool enabled, const Domain::Pr
                                 enabled ? std::string("enabled") : std::string("disabled"));
 }
 
+std::optional<std::string> TicketService::latestKnownVersion(const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->getSetting("latest_known_version");
+}
+
+void TicketService::setLatestKnownVersion(const std::string& version, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    if (version.empty()) {
+        throw std::invalid_argument("version must not be empty");
+    }
+    database_->setSetting("latest_known_version", version);
+    database_->recordAuditEvent("admin", "settings.latest_known_version_changed", actor.userId,
+                                std::string("installation_settings"), std::string("latest_known_version"),
+                                version);
+}
+
 std::vector<Domain::Project> TicketService::listProjects(const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
     return database_->listProjects();

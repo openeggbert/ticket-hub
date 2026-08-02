@@ -2,6 +2,7 @@
 
 #include "common/FileUtil.h"
 #include "web/Api.h"
+#include "web/JsonLogHandler.h"
 
 #include <crow.h>
 #include <exception>
@@ -60,6 +61,12 @@ void applyHtmlSecurityHeaders(crow::response& response) {
 void runHttpServer(const Config::AppConfig& config,
                    const std::shared_ptr<Application::TicketService>& service,
                    const std::shared_ptr<Application::AuthService>& authService) {
+    // Must outlive app.run() below -- crow::logger keeps a raw, non-owning
+    // pointer to whatever handler is set (Crow's own default handler is a
+    // function-local static for the same reason).
+    static JsonLogHandler jsonLogHandler;
+    crow::logger::setHandler(&jsonLogHandler);
+
     crow::SimpleApp app;
     registerApiRoutes(app, service, authService);
 
@@ -78,9 +85,9 @@ void runHttpServer(const Config::AppConfig& config,
         return staticResponse(root + "/favicon.svg", "image/svg+xml");
     });
 
-    std::cout << "Ticket Hub " << TICKETHUB_VERSION << " listening on http://"
-              << config.bindAddress << ':' << config.port
-              << " using " << service->backendName() << '\n';
+    CROW_LOG_INFO << "Ticket Hub " << TICKETHUB_VERSION << " listening on http://"
+                  << config.bindAddress << ':' << config.port
+                  << " using " << service->backendName();
 
     app.bindaddr(config.bindAddress)
         .port(config.port)

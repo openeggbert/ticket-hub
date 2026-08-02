@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — Structured JSON logs and admin version banner (D112/D133) — Phase 7 complete
+
+- **Structured JSON logs**: every log line Crow produces (server startup, per-request logs, warnings/
+  errors) is now one JSON object per line on stdout (`timestamp`/`level`/`service`/`message`), via a new
+  `TicketHub::Web::JsonLogHandler` registered as Crow's log handler. No Prometheus, no OpenTelemetry.
+- **Admin version banner**: new global-administrator-only `GET`/`PUT /api/v1/settings/latest-known-version`
+  and a web UI banner shown to admins when the configured "latest known version" differs from the running
+  one. No outbound network calls -- an admin sets the value manually; there is no decision text specifying
+  an automatic update-check mechanism and no HTTP-client infrastructure in this codebase to build one on.
+- This closes out Phase 7's entire roadmap list.
+
 ## Unreleased — Backup and restore (D106-D108) — Phase 7 started
 
 - **Backup**: `ticket-hub-cli backup <output-directory>` copies the attachments directory and dumps the

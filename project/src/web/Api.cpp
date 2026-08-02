@@ -1018,6 +1018,65 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
+    // In-app admin version banner (Phase 7, D112). Global-administrator-only
+    // for both read and write -- see TicketService::latestKnownVersion's
+    // doc comment for why there is no automatic "check for updates"
+    // mechanism (no outbound-HTTP-client infrastructure anywhere in this
+    // codebase; an admin sets what they know the latest version to be).
+    CROW_ROUTE(app, "/api/v1/settings/latest-known-version")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue body;
+            const auto latestKnownVersion = service->latestKnownVersion(*principal);
+            body["currentVersion"] = TICKETHUB_VERSION;
+            body["latestKnownVersion"] = latestKnownVersion ? crow::json::wvalue(*latestKnownVersion) : crow::json::wvalue(nullptr);
+            body["updateAvailable"] = latestKnownVersion.has_value() && *latestKnownVersion != TICKETHUB_VERSION;
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/settings/latest-known-version")
+    .methods(crow::HTTPMethod::Put)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            const auto version = body ? optionalString(body, "version") : std::nullopt;
+            if (!version) {
+                return errorResponse(400, "version must be a non-empty string");
+            }
+            service->setLatestKnownVersion(*version, *principal);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
     // Kanban board WIP limits (D32/D33): a single flat, installation-wide
     // list (same read-access rule as projects/issues), settable only by a
     // global administrator (there is no per-project board admin concept in

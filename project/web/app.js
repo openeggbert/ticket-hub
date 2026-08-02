@@ -602,6 +602,31 @@ async function loadBaseData() {
   document.querySelector('#backend-pill').textContent = health.database;
   renderProjectSelectors();
   await refreshNotificationBadge();
+  await refreshUpdateBanner();
+}
+
+// In-app admin version banner (D112): "simple ... banner when a newer
+// version is available; no email delivery." Global-administrator-only
+// endpoint, so a non-admin's request 403s -- silently treated as "no
+// banner" rather than surfaced as an error, since a non-admin has nothing
+// to act on here anyway.
+async function refreshUpdateBanner() {
+  const banner = document.querySelector('#update-banner');
+  if (!state.principal?.isAdmin) {
+    banner.classList.add('hidden');
+    return;
+  }
+  try {
+    const status = await api('/api/v1/settings/latest-known-version');
+    if (status.updateAvailable) {
+      banner.textContent = `A newer Ticket Hub version is available: ${status.latestKnownVersion} (currently running ${status.currentVersion}). Run 'ticket-hub migrate' after upgrading.`;
+      banner.classList.remove('hidden');
+    } else {
+      banner.classList.add('hidden');
+    }
+  } catch (error) {
+    banner.classList.add('hidden');
+  }
 }
 
 // --- Fixed in-app notifications (D14) ---

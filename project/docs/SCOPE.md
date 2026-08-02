@@ -160,6 +160,15 @@ remain as the long-term aspirational baseline only — do not build against them
   restores database + attachments, then runs pending migrations). Offline/maintenance-window use only, no
   isolated staging environment. D111 (upgrades) needed no new work -- `ticket-hub-cli migrate` already
   satisfies it. Live-verified end-to-end on both SQLite and PostgreSQL matching the exit gate exactly.
+- **Structured JSON logs (Phase 7, D133):** a new `TicketHub::Web::JsonLogHandler` replaces Crow's
+  default stderr text logger, so every log line (startup, per-request, warnings/errors) is one JSON
+  object per line on stdout. No Prometheus, no OpenTelemetry.
+- **Admin version banner (Phase 7, D112):** `GET`/`PUT /api/v1/settings/latest-known-version`
+  (global-administrator-only, reuses the existing generic `installation_settings` key/value table, no new
+  migration) plus a `web/` banner shown to admins when the admin-configured "latest known version"
+  differs from the running one. No automatic update-check mechanism -- no decision text specifies one and
+  no outbound-HTTP-client infrastructure exists in this codebase; an admin sets the value manually.
+  **This closes Phase 7's entire roadmap list, and with it, Milestone 3.**
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -167,13 +176,11 @@ remain as the long-term aspirational baseline only — do not build against them
   `issueTypeKey`/`parentIssueKey`).
 - Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
   by any decision.
-- **Phase 6 is fully complete.** Pagination (D126) covers `GET /api/v1/issues` only so far -- every other
-  list endpoint (projects, comments, worklogs, attachments, notifications, sessions, tokens, audit
-  events, watchers, voters, board-columns, issue-links, comment-reactions) remains unpaginated; extending
-  it further is optional follow-up, not a blocker to Phase 6's exit gate.
-- Phase 7 is underway: backup/restore (D106-D108) and the upgrade mechanism (D111) are done. The in-app
-  admin version banner (D112) and structured JSON logs to stdout (D133) remain.
-- Docker packaging and the hardening/accessibility passes are not done (Phase 8).
+- **Milestone 3 (Phases 6 and 7) is fully complete.** Pagination (D126) covers `GET /api/v1/issues` only
+  so far -- every other list endpoint (projects, comments, worklogs, attachments, notifications,
+  sessions, tokens, audit events, watchers, voters, board-columns, issue-links, comment-reactions)
+  remains unpaginated; extending it further is optional follow-up, not a blocker to Phase 6's exit gate.
+- Docker packaging and the hardening/accessibility passes are not done (Phase 8, Milestone 4).
 
 ## Permanently out of V1 scope (do not build these)
 

@@ -1,5 +1,92 @@
 # Verification record
 
+## 2026-08-02 — Structured JSON logs and admin version banner (D112/D133): Phase 7 slice 2, Phase 7 complete
+
+Second and final Phase 7 slice. Every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 7 list is now
+implemented: backup/restore (D106-D108), the upgrade mechanism (D111, already satisfied by
+`ticket-hub-cli migrate`), structured JSON logs to stdout (D133), and the in-app admin version banner
+(D112). **This closes Phase 7.**
+
+### What changed -- structured JSON logs (D133)
+
+- New `TicketHub::Web::JsonLogHandler` (`src/web/JsonLogHandler.h/.cpp`), implementing Crow's
+  `ILogHandler` interface. `log(message, level)` writes one `crow::json::wvalue` object per call to
+  `std::cout` with fields `timestamp` (ISO 8601 UTC, matching the format already used for
+  `audit_events`/every migration's `created_at`), `level` (lowercased), `service` (always `"ticket-hub"`),
+  and `message` (Crow's own log message text, correctly JSON-escaped by reusing `crow::json::wvalue`'s
+  own serializer rather than hand-rolling escaping).
+- Registered once in `HttpServer.cpp`'s `runHttpServer`, via `crow::logger::setHandler(&jsonLogHandler)`
+  (a `static` local, since Crow's logger keeps a raw non-owning pointer that must outlive `app.run()` --
+  matching how Crow's own default handler is also a function-local static internally). This replaces
+  Crow's default `CerrLogHandler` (plain-text lines to stderr) globally, so every log call Crow already
+  makes internally -- server startup, per-request Info-level request/response lines, warnings/errors --
+  becomes structured JSON on stdout with zero new call sites needed anywhere else in the app.
+- The one manual `std::cout <<` startup banner line in `HttpServer.cpp` was switched to `CROW_LOG_INFO`
+  so it also flows through the same handler instead of bypassing it as raw unstructured text.
+- New source file added to the `ticket-hub` server target only in `CMakeLists.txt` (it depends on
+  `crow.h`, same as `RateLimiter`/`Api`/`HttpServer`).
+
+### What changed -- admin version banner (D112)
+
+- D112's V1 answer: "Simple in-app admin banner when a newer version is available; no email delivery."
+  No decision text (or any other document in this repository) specifies *how* the app would discover the
+  latest available version -- there is no outbound-HTTP-client library linked anywhere in this codebase,
+  and no URL/manifest/release-feed is named. Building an actual "check GitHub releases" (or similar)
+  mechanism would be genuinely new capability, not implementing an already-decided detail. The
+  conservative, explicitly documented choice: a global-administrator-only setting the admin fills in
+  themselves (e.g. after checking a release page), compared against the running build's own
+  `TICKETHUB_VERSION`. No outbound network calls, consistent with the rest of V1's offline-friendly
+  self-hosted posture.
+- New `TicketService::latestKnownVersion(actor)`/`setLatestKnownVersion(version, actor)`, both
+  `requireGlobalAdmin`-gated (unlike the anonymous-read-access toggle, whose *read* is available to any
+  session -- here, only an admin ever acts on this value, so there is no reason for a non-admin to see
+  it). Reuses the existing generic `installation_settings` key/value table via `getSetting`/`setSetting`
+  (no new migration -- `latest_known_version` is just a new key in an already-existing table) and the
+  existing `recordAuditEvent` call, exactly mirroring the anonymous-read-access toggle's implementation
+  pattern.
+- New `GET`/`PUT /api/v1/settings/latest-known-version` routes in `Api.cpp`, structurally identical to
+  the existing `GET`/`PUT /api/v1/settings/anonymous-read` routes (CSRF/rate-limit/body-size checks on
+  the write side, `Domain::Forbidden` → 403 mapping). `GET` returns `{currentVersion, latestKnownVersion,
+  updateAvailable}` -- `updateAvailable` is a simple string-inequality comparison against the setting
+  when present, `false` when the setting has never been set. `PUT` rejects an empty/missing `version`
+  with `400`.
+- `web/index.html` gained a `#update-banner` element (hidden by default) between the topbar and the main
+  content area. `web/app.js`'s `loadBaseData()` (called on every page load and after login) now also
+  calls a new `refreshUpdateBanner()`: skips entirely for a non-admin (`state.principal.isAdmin` false,
+  matching the route's own 403 rather than surfacing an error toast for something a non-admin can't act
+  on anyway), otherwise fetches the endpoint and shows/hides the banner based on `updateAvailable`.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 8/8 green -- unchanged; both features are HTTP/logging-layer additions
+   with no domain/database behavior change to any existing tested path (the `installation_settings` key
+   reuses already-tested generic `getSetting`/`setSetting` methods).
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly and pass their
+   respective test suites (8/8 and 4/4). `JsonLogHandler.cpp` is server-target-only (not part of
+   `ticket-hub-core`), so it is not compiled in either config, matching `RateLimiter`'s precedent.
+4. No live-PostgreSQL check for this batch specifically: the version-banner feature reuses the already
+   live-PostgreSQL-verified generic `getSetting`/`setSetting` code path (previously exercised by the
+   anonymous-read-access toggle in an earlier phase) with no new SQL in either adapter; the JSON-log
+   change has no database dimension at all.
+5. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded):
+   - Piped real request traffic (`/api/health`, a failed login) through the running server and confirmed
+     every stdout line parses as valid JSON (Python's `json.loads`) with the four expected fields present.
+   - `GET /api/v1/settings/latest-known-version` before ever setting it: `latestKnownVersion: null`,
+     `updateAvailable: false`.
+   - `PUT` with the same version as `TICKETHUB_VERSION`: `updateAvailable` stays `false`. `PUT` with a
+     different (higher) version string: `updateAvailable` becomes `true`.
+   - `PUT` with an empty `version`: `400`.
+   - The same `GET` as a non-admin (`sam`): `403`.
+6. Browser verification via Playwright/Chromium: logged in as the admin (`demo`) after setting
+   `latest_known_version` to `0.3.0` via `curl`, confirmed the banner is visible with the exact expected
+   text (`"A newer Ticket Hub version is available: 0.3.0 (currently running 0.2.0)..."`); logged in as
+   the non-admin (`sam`) against the same server state and confirmed the banner is not visible at all.
+   Also re-ran the existing `project_management_test.mjs` regression script (unrelated flow, exercising a
+   different part of `loadBaseData()`'s callers) to confirm no unrelated regression from touching
+   `loadBaseData()`.
+
 ## 2026-08-02 — Backup and restore (D106-D108): Phase 7 slice 1
 
 First Phase 7 slice, directly following the close of Phase 6. Still open in Phase 7: the in-app admin

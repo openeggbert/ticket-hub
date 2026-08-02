@@ -127,8 +127,10 @@ Admin on every project. `createProject` inserts the creator as project Admin aut
 ### `installation_settings`
 
 `setting_key` PK, `value`, `updated_at`. A small generic key/value store for the handful of
-installation-level toggles that survived scope reduction -- currently just `anonymous_read_access`
-(`true`/`false`, absent means disabled), D59. Not a general settings framework
+installation-level toggles that survived scope reduction: `anonymous_read_access` (`true`/`false`, absent
+means disabled), D59; and, since Phase 7 (D112), `latest_known_version` (a free-text version string, set
+by a global administrator, absent means no admin banner is shown -- see `GET`/
+`PUT /api/v1/settings/latest-known-version`). Not a general settings framework
 (`REDUCED_SCOPE_DATA_MODEL.md` section A).
 
 ### Fixed/reference data

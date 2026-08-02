@@ -101,6 +101,7 @@ if(TICKETHUB_BUILD_SERVER)
         src/main.cpp
         src/web/Api.cpp
         src/web/HttpServer.cpp
+        src/web/JsonLogHandler.cpp
         src/web/RateLimiter.cpp
     )
     target_link_libraries(ticket-hub PRIVATE ticket-hub-core Crow::Crow)
