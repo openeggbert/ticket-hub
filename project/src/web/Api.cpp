@@ -378,6 +378,27 @@ std::optional<std::string> queryParameter(const crow::request& request, const ch
     return std::string(value);
 }
 
+// Numbered/offset pagination (D126): a missing `page`/`pageSize` query
+// parameter returns `defaultValue` (used by TicketService::listIssuesPaged
+// to clamp into range); a present-but-non-numeric one is a genuine client
+// error, not silently ignored.
+std::optional<int> optionalIntQueryParameter(const crow::request& request, const char* name) {
+    const auto raw = queryParameter(request, name);
+    if (!raw) {
+        return std::nullopt;
+    }
+    try {
+        std::size_t consumed = 0;
+        const int value = std::stoi(*raw, &consumed);
+        if (consumed != raw->size()) {
+            throw std::invalid_argument(*raw);
+        }
+        return value;
+    } catch (const std::exception&) {
+        throw std::invalid_argument(std::string(name) + " must be an integer");
+    }
+}
+
 // Read-only CSV export of issues (D48): no CSV import, no Jira migration
 // tool. Shares the same `Domain::IssueFilter` query parameters and
 // authorization as `GET /api/v1/issues`, so an export can be scoped to
@@ -1064,19 +1085,34 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
+    // Numbered/offset pagination (D126): `page` (1-based, default 1) and
+    // `pageSize` (default/max Domain::MaxPageSize, D125) are both optional
+    // -- a caller that sends neither gets exactly the same result set this
+    // route always returned (the pre-existing, previously-undocumented
+    // 200-row cap), now with `totalItems`/`totalPages` so a caller can tell
+    // whether more rows exist and page through them explicitly.
     CROW_ROUTE(app, "/api/v1/issues")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {
             const auto filter = issueFilterFromQuery(request);
+            const int page = optionalIntQueryParameter(request, "page").value_or(1);
+            const int pageSize = optionalIntQueryParameter(request, "pageSize").value_or(Domain::DefaultPageSize);
+            const auto result = service->listIssuesPaged(filter, page, pageSize, resolvePrincipal(request, authService));
             crow::json::wvalue::list items;
-            for (const auto& issue : service->listIssues(filter, resolvePrincipal(request, authService))) {
+            for (const auto& issue : result.items) {
                 items.emplace_back(issueJson(issue));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
+            body["page"] = result.page;
+            body["pageSize"] = result.pageSize;
+            body["totalItems"] = result.totalItems;
+            body["totalPages"] = result.totalPages();
             return jsonResponse(200, std::move(body));
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

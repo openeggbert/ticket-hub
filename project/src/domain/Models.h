@@ -398,6 +398,28 @@ struct IssueFilter {
     std::optional<std::string> search;
 };
 
+// Numbered/offset pagination (D126); "no cursor mechanism." `pageSize` is
+// fixed-constant-bounded (D125's "max page size", coupled to this decision):
+// `DefaultPageSize` also equals `MaxPageSize` and matches the pre-existing
+// (previously undocumented) 200-row cap `listIssues` silently applied before
+// this decision was implemented, so a caller that never sends `page`/
+// `pageSize` gets exactly the same result set it always did -- pagination
+// is additive, not a behavior change, for any existing caller. No admin
+// configuration for either constant.
+constexpr int DefaultPageSize = 200;
+constexpr int MaxPageSize = 200;
+
+template <typename T>
+struct Page {
+    std::vector<T> items;
+    int page{1};
+    int pageSize{DefaultPageSize};
+    std::int64_t totalItems{0};
+    std::int64_t totalPages() const {
+        return pageSize > 0 ? (totalItems + pageSize - 1) / pageSize : 0;
+    }
+};
+
 struct CreateIssueRequest {
     std::string projectKey;
     std::string summary;

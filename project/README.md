@@ -217,10 +217,16 @@ Do not put production secrets in shell history. The target product uses a plugga
 The API now lives under a formal `/api/v1` prefix (D127) -- every route below except `GET /api/health`
 (kept unversioned, following the common convention that infra/monitoring health checks live outside API
 versioning; not specified by any decision text, a conservative choice documented here explicitly).
-Numbered/offset pagination (D126) is still open, so "max page size" (D125) has no meaning yet either.
-Every JSON request body is capped at 1 MiB (`413` if exceeded) and every bulk-action `issueKeys` array is
-capped at 200 items (`400` if exceeded) -- fixed constants, no admin configuration, per D125. PAT
-authentication (D39/D40) is already live: every
+`GET /api/v1/issues` supports numbered/offset pagination (D126): optional `page` (1-based, default 1) and
+`pageSize` (default and max 200, D125's "max page size" -- no admin exceptions) query parameters. The
+response envelope is `{"items": [...], "page", "pageSize", "totalItems", "totalPages"}`; a caller that
+sends neither parameter gets exactly the same result set the route always returned (the pre-existing,
+previously undocumented 200-row cap this fixes the silent-truncation transparency of), now with an
+honest `totalItems` so a caller can tell whether more rows exist. No other list endpoint is paginated yet
+-- this is a deliberate, documented partial rollout of D126, not full coverage. Every JSON request body
+is capped at 1 MiB (`413` if exceeded) and every bulk-action `issueKeys` array is capped at 200 items
+(`400` if exceeded) -- fixed constants, no admin configuration, per D125. PAT authentication (D39/D40) is
+already live: every
 route below marked "session" also accepts an `Authorization: Bearer <token>` header from a personal
 access token instead -- the two are mutually exclusive per request (D54), and a Bearer-authenticated
 write needs no `X-CSRF-Token` header (CSRF only defends against a browser silently attaching a session
@@ -262,7 +268,7 @@ trip; there is no admin configuration for either limit.
 | `DELETE` | `/api/v1/projects/{key}/permanent` | session + CSRF, global admin | permanently delete |
 | `GET` | `/api/v1/settings/anonymous-read` | session | current toggle value |
 | `PUT` | `/api/v1/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
-| `GET` | `/api/v1/issues` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description) |
+| `GET` | `/api/v1/issues` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126) |
 | `GET` | `/api/v1/issues/export.csv` | session, or anon if enabled | read-only CSV export of issues (D48), same filters as above |
 | `POST` | `/api/v1/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
 | `GET` | `/api/v1/issues/{key}` | session, or anon if enabled | current key or permanent alias |
@@ -816,7 +822,31 @@ performed as a direct code audit instead. Verified via `curl` (headers present o
 a spoofed-`text/html` `.txt` upload now downloads instead of rendering; a real PNG still previews inline)
 and Playwright (all four attachment preview kinds still render correctly through the sandboxed iframes; a
 targeted XSS-reproduction test confirms the malicious payload's `alert()` no longer fires). With this
-batch done, Phase 6's only remaining item is numbered/offset pagination (D126).
+batch done, Phase 6's only remaining item was numbered/offset pagination (D126).
+
+A twenty-fourth batch implemented that remaining item: numbered/offset pagination (D126) for
+`GET /api/v1/issues`, closing out Phase 6's entire roadmap list. While implementing it, found that the
+route's SQL had always silently capped results at 200 rows -- undocumented anywhere, with no way for a
+caller to know if a response was truncated. New `Domain::Page<T>` template (`items`/`page`/`pageSize`/
+`totalItems`/`totalPages()`) and fixed `DefaultPageSize`/`MaxPageSize` constants (200, matching D125's
+"max page size" and the pre-existing cap, so a caller sending neither `page` nor `pageSize` gets exactly
+the same result set as before -- purely additive, not a behavior change). New `IDatabase::listIssues(filter,
+limit, offset)` and `IDatabase::countIssues(filter)` in both adapters (the existing unpaginated
+`listIssues(filter)` overload is untouched, still used internally for the dashboard's "recent"/"assigned
+to me" fetches and by the CSV export route, which deliberately wants everything matching the filter, not
+one page); new `TicketService::listIssuesPaged` clamps `page`/`pageSize` into range and pairs a count
+query with the limited/offset one. `GET /api/v1/issues`'s response envelope gained `page`/`pageSize`/
+`totalItems`/`totalPages` fields alongside the existing `items` array. New SQLite-integration test
+coverage (limit/offset/pagination-plus-filter composition, an offset past the end returning empty rather
+than erroring, a limit exceeding the total returning everything). Verified end-to-end via `curl` against
+both a local SQLite server and, for the first time this session, a real local PostgreSQL 16 server
+(started via `pg_ctlcluster`/`service postgresql start`, a fresh throwaway database/role, dropped
+afterward) -- identical pagination/filtering/count behavior confirmed on both backends, plus confirmed
+the CSV export and dashboard routes are unaffected. Also re-ran the full three-configuration build matrix
+(full/SQLite-only/PostgreSQL-only) and a Playwright regression pass of the reorder/move/bulk-actions flow
+(the demo UI's heaviest consumer of the issues list), all green -- confirming the additive response shape
+doesn't break the existing UI. This is a deliberate partial rollout of D126: only `GET /api/v1/issues` is
+paginated so far, documented explicitly as still-open for every other list endpoint.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

@@ -421,6 +421,17 @@ implemented as an `EXISTS` subquery against `issue_labels`/`labels` rather than 
 already-joined/aggregated label-list column used to *display* an issue's labels, so filtering by one
 label does not truncate a matching issue's own label list to just that label.
 
+`IDatabase::listIssues(filter)` (unpaginated, used internally and by CSV export) has always had a
+hardcoded `LIMIT 200` in its SQL -- previously with no `total` count exposed anywhere, silently
+truncating any result set past 200 rows. Phase 6 (D126) added
+`IDatabase::listIssues(filter, limit, offset)` and `IDatabase::countIssues(filter)` alongside it (not
+replacing it), and `GET /api/v1/issues` now uses the paginated pair via
+`TicketService::listIssuesPaged`, exposing `page`/`pageSize`/`totalItems`/`totalPages` so a caller can
+detect and page past what used to be a silent cutoff. `Domain::DefaultPageSize`/`Domain::MaxPageSize`
+(both 200, matching the historical cap) mean a caller sending no pagination parameters gets exactly the
+same result set as before. This is a deliberate partial rollout -- no other `IDatabase` list method has
+a paginated counterpart yet.
+
 ## Deliberate implementation gap
 
 The current schema is a migration-safe foundation for the **reduced-scope V1**, not the full original

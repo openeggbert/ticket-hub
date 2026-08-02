@@ -204,6 +204,38 @@ int main() {
             combined.label = "frontend";
             require(!containsIssue(database.listIssues(combined), created.key), "combined filters exclude when any single field mismatches");
 
+            // Numbered/offset pagination (D126).
+            const auto allIssues = database.listIssues(IssueFilter{});
+            require(database.countIssues(IssueFilter{}) == static_cast<std::int64_t>(allIssues.size()),
+                   "countIssues matches the unpaginated listIssues row count for the same filter");
+
+            const auto firstPage = database.listIssues(IssueFilter{}, 3, 0);
+            require(firstPage.size() == 3, "paginated listIssues respects the limit");
+            const auto secondPage = database.listIssues(IssueFilter{}, 3, 3);
+            require(secondPage.size() == 3, "second page also respects the limit");
+            require(firstPage[0].key != secondPage[0].key, "offset actually advances past the first page");
+            for (const auto& firstPageIssue : firstPage) {
+                require(!containsIssue(secondPage, firstPageIssue.key), "pages do not overlap");
+            }
+
+            const auto pastTheEnd = database.listIssues(IssueFilter{}, 100, 100);
+            require(pastTheEnd.empty(), "an offset beyond the total row count returns an empty page, not an error");
+
+            const auto wholeSetAsOnePage = database.listIssues(IssueFilter{}, 100, 0);
+            require(wholeSetAsOnePage.size() == allIssues.size(),
+                   "a limit exceeding the total row count returns every matching row, not an error");
+
+            IssueFilter projectFilter;
+            projectFilter.projectKey = "TH";
+            const auto projectIssuesUnpaged = database.listIssues(projectFilter);
+            require(database.countIssues(projectFilter) == static_cast<std::int64_t>(projectIssuesUnpaged.size()),
+                   "countIssues respects the same filter as the paginated/unpaginated listIssues overloads");
+            const auto projectFirstPage = database.listIssues(projectFilter, 2, 0);
+            require(projectFirstPage.size() == 2, "pagination and filtering compose correctly");
+            for (const auto& issue : projectFirstPage) {
+                require(issue.projectKey == "TH", "a paginated+filtered page still only contains matching rows");
+            }
+
             const auto stillHasBothLabels = database.findIssueByKey(created.key);
             require(stillHasBothLabels.has_value() && stillHasBothLabels->labels.size() == 1
                         && stillHasBothLabels->labels[0] == "database",

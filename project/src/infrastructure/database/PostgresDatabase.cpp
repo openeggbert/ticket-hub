@@ -933,6 +933,84 @@ LIMIT 200
     return issues;
 }
 
+std::vector<Domain::Issue> PostgresDatabase::listIssues(const Domain::IssueFilter& filter, int limit, int offset) {
+    auto connection = connect(connectionString_);
+    const std::string sql = std::string(IssueSelect) + R"SQL(
+WHERE i.deleted_at IS NULL
+  AND p.deleted_at IS NULL
+  AND ($1::text IS NULL OR p.project_key = $1)
+  AND ($2::text IS NULL OR s.status_key = $2)
+  AND ($3::text IS NULL OR it.type_key = $3)
+  AND ($4::text IS NULL OR pr.priority_key = $4)
+  AND ($5::text IS NULL OR assignee.email = $5)
+  AND ($6::text IS NULL OR i.due_date <= $6::date)
+  AND ($7::text IS NULL OR EXISTS (
+        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.issue_id = i.id AND l2.name ILIKE $7))
+  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.issue_key ILIKE $8)
+ORDER BY i.updated_at DESC, i.issue_key DESC
+LIMIT $9::int OFFSET $10::int
+)SQL";
+    auto result = execParams(connection.get(),
+                             sql,
+                             {filter.projectKey,
+                              filter.statusKey,
+                              filter.issueTypeKey,
+                              filter.priorityKey,
+                              filter.assigneeEmail,
+                              filter.dueBefore,
+                              filter.label,
+                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt,
+                              std::optional<std::string>(std::to_string(limit)),
+                              std::optional<std::string>(std::to_string(offset))},
+                             "List issues (paginated)");
+    std::vector<Domain::Issue> issues;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        issues.push_back(readIssue(result.get(), row));
+    }
+    return issues;
+}
+
+std::int64_t PostgresDatabase::countIssues(const Domain::IssueFilter& filter) {
+    auto connection = connect(connectionString_);
+    const std::string sql = R"SQL(
+SELECT COUNT(*)
+FROM issues i
+JOIN projects p ON p.id = i.project_id
+JOIN issue_types it ON it.id = i.issue_type_id
+JOIN issue_statuses s ON s.id = i.status_id
+JOIN priorities pr ON pr.id = i.priority_id
+LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
+WHERE i.deleted_at IS NULL
+  AND p.deleted_at IS NULL
+  AND ($1::text IS NULL OR p.project_key = $1)
+  AND ($2::text IS NULL OR s.status_key = $2)
+  AND ($3::text IS NULL OR it.type_key = $3)
+  AND ($4::text IS NULL OR pr.priority_key = $4)
+  AND ($5::text IS NULL OR assignee.email = $5)
+  AND ($6::text IS NULL OR i.due_date <= $6::date)
+  AND ($7::text IS NULL OR EXISTS (
+        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.issue_id = i.id AND l2.name ILIKE $7))
+  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.issue_key ILIKE $8)
+)SQL";
+    auto result = execParams(connection.get(),
+                             sql,
+                             {filter.projectKey,
+                              filter.statusKey,
+                              filter.issueTypeKey,
+                              filter.priorityKey,
+                              filter.assigneeEmail,
+                              filter.dueBefore,
+                              filter.label,
+                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt},
+                             "Count issues");
+    if (PQntuples(result.get()) == 0) {
+        return 0;
+    }
+    return int64Value(result.get(), 0, 0);
+}
+
 std::optional<Domain::Issue> PostgresDatabase::findIssueByKey(const std::string& issueKey) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))", {issueKey}, "Find issue");

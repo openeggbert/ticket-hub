@@ -1,5 +1,84 @@
 # Verification record
 
+## 2026-08-02 — Numbered/offset pagination for issues (D126): Phase 6 slice 8, Phase 6 complete
+
+Eighth and final Phase 6 slice. Every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 6 list is now
+implemented: `/api/v1` REST surface (D127), PAT authentication (D39/D40), fixed rate limits including the
+account-lockout policy (D124/D125), fixed request/batch-size constants (D125), the active-session list
+(D54), read-only CSV export (D48), the security hardening pass, and now numbered/offset pagination
+(D126). **This closes Phase 6 and its exit gate.** Note: this is a deliberate *partial* rollout of D126 --
+only `GET /api/v1/issues` is paginated. Every other list endpoint (projects, comments, worklogs,
+attachments, notifications, sessions, tokens, audit events, watchers, voters, board-columns, issue-links,
+comment-reactions) remains unpaginated, documented explicitly as still open rather than silently
+incomplete.
+
+### What changed
+
+- **Bug found while implementing this**: `SqliteDatabase::listIssues`/`PostgresDatabase::listIssues` had
+  always had a hardcoded `LIMIT 200` in their SQL, with no `total` count returned anywhere and no
+  documentation of the cap -- a caller with more than 200 matching issues silently got a truncated result
+  set with no way to detect it. This predates this session; it was introduced in the original prototype
+  and never revisited. Fixed as part of this batch (see below), not filed as a separate bug, since the
+  fix *is* the pagination feature.
+- New `Domain::Page<T>` template (`src/domain/Models.h`): `items`, `page`, `pageSize`, `totalItems`, and
+  a computed `totalPages()`. New fixed constants `Domain::DefaultPageSize`/`Domain::MaxPageSize` (both
+  200 -- deliberately equal, and deliberately matching the pre-existing 200-row cap, so a caller that
+  never sends `page`/`pageSize` gets *exactly* the same result set it always got; pagination is additive
+  for every existing caller, not a behavior change). This also gives concrete meaning to D125's
+  previously-undefined "max page size," which had been blocked on D126 not existing yet.
+- New `IDatabase::listIssues(filter, limit, offset)` and `IDatabase::countIssues(filter)` in both
+  `SqliteDatabase` and `PostgresDatabase`, implemented as new methods alongside (not replacing) the
+  existing unpaginated `listIssues(filter)` overload, which is still used internally
+  (`TicketService`'s "assigned to me" dashboard fetch, both adapters' own "recent issues" fetch) and by
+  the CSV export route (D48), which deliberately wants *everything* matching the filter, not one page of
+  it. `countIssues` uses a leaner query (no label-aggregation `LEFT JOIN`/`GROUP BY`, just an `EXISTS`
+  subquery for the label filter, matching how the label filter is already checked in the row-fetching
+  query) to avoid the row-multiplication that the full `IssueSelect` view's label join would otherwise
+  cause in a naive `COUNT(*)`.
+- New `TicketService::listIssuesPaged(filter, page, pageSize, actor)`: clamps `page` to at least 1 and
+  `pageSize` into `[1, MaxPageSize]` (fixed constants, no admin exceptions, per D125), computes the
+  offset, and pairs one `countIssues` call with one paginated `listIssues` call.
+- `GET /api/v1/issues` now calls `listIssuesPaged` instead of the unpaginated `listIssues`; new optional
+  `page`/`pageSize` query parameters (new `optionalIntQueryParameter` helper, throwing `std::invalid_argument`
+  -- mapped to `400` -- for a non-numeric value rather than silently ignoring it); the response envelope
+  gains `page`/`pageSize`/`totalItems`/`totalPages` fields alongside the existing `items` array.
+- New SQLite-integration test coverage: `countIssues` matches the unpaginated `listIssues` row count for
+  the same filter; a 3-item page and a second 3-item page don't overlap and together advance past the
+  first page; an offset beyond the total row count returns an empty page rather than erroring; a limit
+  exceeding the total returns every matching row rather than erroring; pagination composes correctly with
+  an existing filter (every row in a filtered+paginated page still matches the filter).
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 8/8 green, including the new pagination assertions in
+   `ticket-hub-sqlite-integration-tests`.
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations (`-DTICKETHUB_BUILD_SERVER=OFF` in
+   both): both compile cleanly and pass their respective test suites (8/8 and 4/4).
+4. **Live PostgreSQL verification** (this batch's database-layer changes warranted it, unlike several
+   recent Phase 6 batches that made no `IDatabase` changes): found a local PostgreSQL 16 cluster already
+   present in this environment (`pg_lsclusters`), started it (`service postgresql start`), created a
+   throwaway role/database, ran the full server against it with auto-migrate/seed-demo, and repeated
+   every `curl` check below against it -- identical results to SQLite on every check. Dropped the
+   throwaway database/role afterward.
+5. End-to-end HTTP verification via `curl` against locally running servers (both SQLite and, per above,
+   live PostgreSQL, demo-seeded):
+   - No `page`/`pageSize`: `page=1`, `pageSize=200`, `totalItems=8`, `totalPages=1`, all 8 seeded issues
+     returned -- confirming the exact same result set as before this batch.
+   - `pageSize=3&page=1` then `pageSize=3&page=2`: six distinct, non-overlapping issue keys across the
+     two pages, in stable order.
+   - `pageSize=300` (exceeds `MaxPageSize`): clamped to `pageSize: 200` in the response, not rejected.
+   - `page=abc` (non-numeric): `400`.
+   - `project=TH&pageSize=2&page=2`: `totalItems` reflects only the `TH` project's issue count, and the
+     returned page contains only `TH-*` issues -- filtering and pagination compose correctly.
+   - `GET /api/v1/issues/export.csv` and `GET /api/v1/dashboard`: unaffected, confirming the unpaginated
+     `listIssues(filter)` overload and its callers are untouched by this batch.
+6. Browser regression: re-ran the existing `reorder_move_bulk_test.mjs` and `login_browser_test.mjs`
+   Playwright scripts (the demo UI's heaviest consumers of `GET /api/v1/issues`) against the running
+   server; all assertions passed unchanged, confirming the additive response-envelope change (new fields
+   alongside the existing `items` array) does not break the UI's existing `result.items` consumption.
+
 ## 2026-08-02 — Security hardening pass: Phase 6 slice 7
 
 Seventh Phase 6 slice, directly following the fixed request/batch-size constants batch. This is the

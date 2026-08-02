@@ -138,8 +138,7 @@ remain as the long-term aspirational baseline only — do not build against them
   filters.
 - **Fixed request-body/bulk-item constants (Phase 6, D125):** every JSON request body capped at 1 MiB
   (`413` if exceeded); every bulk-action `issueKeys` array capped at 200 items (`400` if exceeded). No
-  admin configuration. Max page size not implemented -- blocked on numbered pagination (D126) not yet
-  existing.
+  admin configuration.
 - **Security hardening pass (Phase 6):** found and fixed a real stored-XSS vulnerability -- an uploaded
   attachment's `Content-Type` is caller-supplied and unvalidated (D98 has no upload-time MIME allow-list),
   and a spoofed `text/html` value could execute an embedded `<script>` via direct download-URL navigation
@@ -150,6 +149,11 @@ remain as the long-term aspirational baseline only — do not build against them
   `Referrer-Policy` on every response; a `Content-Security-Policy` with `script-src 'self'` on the HTML
   document). Dependency review (Crow pinned to a release tag) and session/CSRF cookie review both found
   no other issues.
+- **Numbered/offset pagination (Phase 6, D126):** `GET /api/v1/issues` accepts `page`/`pageSize` (default/
+  max 200, giving D125's "max page size" its concrete value); response gains `page`/`pageSize`/
+  `totalItems`/`totalPages`. Fixed, along the way, a previously-undocumented bug: the route's SQL had
+  always silently capped results at 200 rows with no `total` returned. A deliberate partial rollout --
+  every other list endpoint remains unpaginated, documented as still open. **This closes Phase 6.**
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -157,8 +161,11 @@ remain as the long-term aspirational baseline only — do not build against them
   `issueTypeKey`/`parentIssueKey`).
 - Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
   by any decision.
-- Phase 6: only numbered/offset pagination (D126) remains open. Phase 7 (backup/restore/upgrade) is not
-  started.
+- **Phase 6 is fully complete.** Pagination (D126) covers `GET /api/v1/issues` only so far -- every other
+  list endpoint (projects, comments, worklogs, attachments, notifications, sessions, tokens, audit
+  events, watchers, voters, board-columns, issue-links, comment-reactions) remains unpaginated; extending
+  it further is optional follow-up, not a blocker to Phase 6's exit gate. Phase 7 (backup/restore/
+  upgrade) is not started.
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).
 
 ## Permanently out of V1 scope (do not build these)

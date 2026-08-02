@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — Numbered/offset pagination for issues (D126) — Phase 6 complete
+
+- **Pagination**: `GET /api/v1/issues` now accepts optional `page` (1-based, default 1) and `pageSize`
+  (default/max 200, D125) query parameters. The response gains `page`/`pageSize`/`totalItems`/
+  `totalPages` fields alongside the existing `items` array. A caller sending neither parameter gets
+  exactly the same result set as before.
+- **Bug fix**: the route's underlying query had always silently capped results at 200 rows with no way
+  for a caller to detect truncation. `totalItems` now makes this visible, and `page`/`pageSize` let a
+  caller page past it.
+- No other list endpoint is paginated yet -- this is a deliberate partial rollout of D126, documented as
+  still open for every other list endpoint.
+- New `Domain::Page<T>`, `IDatabase::listIssues(filter, limit, offset)`, `IDatabase::countIssues(filter)`
+  in both database adapters, and `TicketService::listIssuesPaged`. The existing unpaginated
+  `listIssues(filter)` is untouched (still used internally and by CSV export).
+- This closes out Phase 6's entire roadmap list.
+
 ## Unreleased — Security hardening pass — Phase 6 continued
 
 - **Security fix**: an uploaded attachment's `Content-Type` is caller-supplied and unvalidated (D98 has
