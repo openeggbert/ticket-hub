@@ -39,9 +39,10 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   policy denial on the CDN host Docker Hub redirects layer pulls to (see `docs/VERIFICATION.md` for the
   full disclosure). Light and dark theme (D46) is also done: the UI follows the OS-level
   `prefers-color-scheme` signal automatically (no manual toggle), browser-verified in both modes with a
-  real bug found and fixed (`.link-form input` had no dark styling). Still open: the accessibility
-  baseline review (D47), the browser-support note (D139, already satisfied by construction), and the
-  threat-model/security self-review.
+  real bug found and fixed (`.link-form input` had no dark styling). The accessibility baseline pass (D47)
+  and browser-support note (D139) are also done: issue rows/board cards/project cards/inline key links are
+  now keyboard-focusable and operable with Enter/Space (a real gap found and fixed), and D139 was
+  reconfirmed satisfied by construction. Still open: the threat-model/security self-review.
 
 ## Implementation rules
 

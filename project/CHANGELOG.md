@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — Accessibility baseline pass and browser-support note (D47/D139) — Phase 8 continued
+
+- **Accessibility (D47)**: issue table rows, Kanban board cards, project cards, and inline issue-key
+  cross-reference links are now keyboard-focusable and operable with Enter/Space (new
+  `makeKeyboardActivatable` helper in `web/app.js`), closing the one real keyboard-operability gap found
+  in a review of the existing UI. A small CSS rule adds a visible focus ring for the newly-focusable
+  elements. Semantic HTML (landmarks, labeled form controls, `aria-label`/`aria-live`/dialog roles) was
+  already in place from earlier phases. No formal WCAG audit -- not required by D47's reduced V1 scope.
+- **Browser support (D139)**: reconfirmed, no code change -- `web/app.js` uses no framework or transpiled/
+  polyfilled syntax, so the last two major versions of Chrome/Firefox/Edge/Safari are supported by
+  construction.
+- Verified with Playwright/Chromium (keyboard-only activation of each fixed element, confirmed no mouse-
+  click regression) and a full regression re-run.
+
 ## Unreleased — Light and dark theme (D46) — Phase 8 continued
 
 - **Dark theme**: `web/styles.css` now follows the OS-level `prefers-color-scheme` signal automatically

@@ -11,10 +11,11 @@ batch-by-batch detail below. **Phase 8 (Milestone 4, packaging and release harde
 the Docker image and Compose distribution path (D50) are done -- `docker compose up` brings up the full
 instance, verified as far as this environment's network policy allows (see `docs/VERIFICATION.md` for
 the exact disclosure). Light and dark theme (D46) is also done -- the UI now follows the OS-level
-`prefers-color-scheme` signal automatically, browser-verified in both modes. Still open in Phase 8: the
-accessibility baseline review (D47), the browser-support note (D139, already satisfied by construction),
-the threat-model/security self-review, and a final documentation-currency pass. No web UI yet for
-managing tokens or sessions.)
+`prefers-color-scheme` signal automatically, browser-verified in both modes. The accessibility baseline
+pass (D47) and the browser-support note (D139) are also done -- keyboard operability was fixed for issue
+rows/board cards/project cards/inline key links, and D139 was reconfirmed satisfied by construction. Still
+open in Phase 8: the threat-model/security self-review and a final documentation-currency pass. No web UI
+yet for managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -593,6 +594,23 @@ anything from the removed/deferred list without an explicit new product conversa
   browser regression scripts (`login_browser_test.mjs`, `reorder_move_bulk_test.mjs`) re-run clean with no
   functional regression from this CSS-only change. `ctest --output-on-failure`: 8/8 green (no C++ source
   touched). Full detail in `docs/VERIFICATION.md`.
+- **Phase 8 continued (accessibility baseline pass and browser-support note, D47/D139), this batch:**
+  reviewed the existing UI against D47's reduced V1 bar ("reasonable baseline accessibility -- semantic
+  HTML, keyboard operability -- without a formal WCAG audit deliverable"). Semantic HTML was already
+  largely in place; found one real gap: issue table rows, Kanban board cards, project cards, and inline
+  issue-key cross-reference links were only click-bound (`element.addEventListener('click', ...)` on a
+  plain `<tr>`/`<article>`/`<span>`), with no way for a keyboard-only user to reach or activate them.
+  Fixed with a new shared `makeKeyboardActivatable(element, activate)` helper (`tabIndex = 0`,
+  `role="link"`, `Enter`/`Space` keydown handler guarded against bubbling from already-independently-
+  operable nested controls), wired into the existing `bindIssueLinks()` and the project-card binding; a
+  small CSS rule adds a visible focus ring. D139 (browser support) reconfirmed with no code change --
+  `web/app.js`'s vanilla, unpolyfilled/untranspiled syntax satisfies "latest two major Chrome/Firefox/
+  Edge/Safari" by construction. Browser-verified with Playwright/Chromium: keyboard-only `Tab`+`Enter`/
+  `Space` activation confirmed for a table row, a board card, and a project card; confirmed the pre-
+  existing stopPropagation guard on the bulk-select checkbox still holds (no mouse-click regression); both
+  existing regression scripts re-run clean. `ctest --output-on-failure`: 8/8 green (only `web/` touched).
+  Not attempted: a formal WCAG audit, automated contrast-ratio tooling, or screen-reader-software testing
+  -- explicitly out of D47's reduced V1 scope. Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
