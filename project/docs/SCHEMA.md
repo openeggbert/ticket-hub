@@ -75,7 +75,7 @@ The prototype's temporary `username` column was removed in `004_identity.sql`. T
 
 `user_id` PK/FK to `users(id)`, `password_hash` (Argon2id-encoded), `failed_login_count`, `locked_until` nullable, `created_at`, `updated_at`.
 
-Minimal login-attempt lockout only (locks for 15 minutes after `IDatabase::MaxFailedLoginAttempts` consecutive failures). The full configurable rate-limiting policy is a Phase 6 addition (`REDUCED_SCOPE_ROADMAP.md`).
+Minimal login-attempt lockout only (locks for 15 minutes after `IDatabase::MaxFailedLoginAttempts` consecutive failures), per-account. This is now complemented -- not replaced -- by a Phase 6 IP-based fixed rate limiter (D124/D125) on the `/api/auth/login` route itself (20 attempts per IP per 15 minutes), implemented as an in-memory `TicketHub::Web::RateLimiter` in `src/web/RateLimiter.h/.cpp` rather than as database state, since it is process-lifetime-only and keyed by IP rather than by account.
 
 ### `sessions`
 

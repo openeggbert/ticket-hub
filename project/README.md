@@ -215,11 +215,17 @@ Do not put production secrets in shell history. The target product uses a plugga
 ## Prototype API
 
 The current unversioned demo API will evolve into a formal `/api/v1` prefix later in Phase 6 of
-`docs/REDUCED_SCOPE_ROADMAP.md`, alongside fixed rate limits and numbered pagination. PAT authentication
+`docs/REDUCED_SCOPE_ROADMAP.md`, alongside numbered pagination. PAT authentication
 (D39/D40) is already live: every route below marked "session" also accepts an `Authorization: Bearer
 <token>` header from a personal access token instead -- the two are mutually exclusive per request (D54),
 and a Bearer-authenticated write needs no `X-CSRF-Token` header (CSRF only defends against a browser
 silently attaching a session cookie, which a PAT is never subject to).
+
+Fixed rate limits (D124/D125) are also already live and apply to every route in the table below:
+`/api/auth/login` is capped at 20 attempts per IP per 15 minutes (on top of the existing per-account
+10-attempts/15-minutes lockout below), and every write route (POST/PUT/PATCH/DELETE) shares a 120-
+requests-per-minute cap keyed by user id when authenticated, else by IP. Both return `429` with a JSON
+`{"error": "..."}` body on trip; there is no admin configuration for either limit.
 
 | Method | Route | Auth required | Purpose |
 |---|---|---|---|
@@ -720,6 +726,25 @@ marked `isCurrent`, signed out the other from tab A, confirmed tab A stayed auth
 a 401, and confirmed a follow-up list showed only the surviving session. There is no web UI yet for
 viewing or signing out sessions.
 
+A nineteenth batch continued Phase 6 with fixed rate limits (D124/D125). A new in-memory
+`TicketHub::Web::RateLimiter` (`src/web/RateLimiter.h/.cpp`, a thread-safe fixed-window counter with lazy
+sweeping of expired entries) implements exactly D124's "simple fixed rate limit per IP/user ... no admin
+config, no per-endpoint/service-account exceptions": a 20-attempts-per-IP-per-15-minutes limiter on
+`/api/auth/login` (complementing, not replacing, the existing per-account 10-attempts/15-minutes lockout),
+and a 120-requests-per-minute limiter (keyed by user id when authenticated, else by IP) shared across
+every write route (POST/PUT/PATCH/DELETE), both returning 429 on trip. The write limiter reuses the same
+near-universal chokepoint as CSRF checking -- all 43 existing `csrfTokenValid` call sites -- via a single
+scripted text substitution, plus one hand-written overload for the sole route
+(`/api/sessions/sign-out-others`) that resolves a `Domain::Session` instead of a `Domain::Principal`.
+`RateLimiter` has no Crow dependency, so it is covered by its own standalone test binary
+(`ticket-hub-ratelimiter-tests`) that builds and passes even in the SQLite-only and PostgreSQL-only
+configurations. No database/migration changes, so no live-PostgreSQL check applied here. Verified
+end-to-end via `curl` against a running server: 20 wrong-password login attempts all returned 401, the
+21st/22nd returned 429; after a fresh restart, 120 consecutive authenticated `POST /api/projects` requests
+returned non-429 codes and the next 10 all returned 429, while a `GET` issued immediately afterward still
+returned 200 (confirming only writes are limited). There is no web UI change for this batch -- a 429
+response surfaces through the existing generic API-error handling like any other error status.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 
@@ -733,7 +758,7 @@ What **was** compiled and tested in this environment, with all warnings enabled
   personal dashboard widgets, Kanban board WIP limits, and the full attachments vertical, in both database
   adapters), plus `Infrastructure::Storage::LocalAttachmentStorage`,
 - `ticket-hub-cli` (including `create-user`),
-- all seven test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
+- all eight test binaries (`ctest --output-on-failure`): `domain_validation_tests`, `migration_tests`,
   `sqlite_integration_tests` (`editIssue`: every field, label replacement, assignee clearing, the
   stale-version conflict, one `issue_history` row per changed field; issue links: create, list from both
   ends, duplicate/self-link rejection, find-by-id, delete; watch/vote: idempotency, listing,
@@ -770,7 +795,8 @@ What **was** compiled and tested in this environment, with all warnings enabled
   `workflow_integration_tests` (every Epic/Sub-task hierarchy rejection case, resolution
   required/rejected-if-unknown on completion, resolution cleared on reopen, the sub-task-completion gate,
   reopening leaving a sub-task's status untouched, clone field-copy correctness, the
-  sub-task-parent-retention special case, and basic link lifecycle), and `crypto_tests` — all passing.
+  sub-task-parent-retention special case, and basic link lifecycle), `crypto_tests`, and
+  `ratelimiter_tests` (fixed-window trip/reset, independent per-key buckets) — all passing.
 - Additionally, migrations, seed data, `create-user`, and a full login → validate-session → logout cycle
   were manually verified end-to-end against a **live local PostgreSQL 16 server** (not just SQLite) in
   Phase 1; Phase 2 repeated this for the PostgreSQL adapter's authorization/project-lifecycle code

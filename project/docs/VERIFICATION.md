@@ -1,5 +1,68 @@
 # Verification record
 
+## 2026-08-02 — Fixed rate limits (D124/D125): Phase 6 slice 3
+
+Third Phase 6 slice, directly following the active-session-list batch. Still open: the versioned
+`/api/v1` prefix, fixed request/body/batch-size constants, numbered pagination, CSV export, and the
+security hardening pass.
+
+### What changed
+
+- New `TicketHub::Web::RateLimiter` (`src/web/RateLimiter.h/.cpp`): a thread-safe, in-memory, fixed-window
+  counter keyed by an arbitrary string, with lazy periodic sweeping of expired buckets (every 512 calls)
+  so the map does not grow unbounded over a long-running process. Two hardcoded instances, matching D124's
+  "simple fixed rate limit per IP/user ... no admin config, no per-endpoint/service-account exceptions"
+  exactly:
+  - `loginRateLimiter()`: 20 attempts per IP (`remote_ip_address`) per 15 minutes, checked at the top of
+    `POST /api/auth/login` before the request body is even parsed.
+  - `writeRateLimiter()`: 120 requests per minute, keyed by `user:<id>` when `resolvePrincipal` resolves a
+    caller, else `ip:<remote_ip_address>`.
+- The write limiter deliberately reuses the same near-universal chokepoint as CSRF checking: all 43
+  existing `if (!csrfTokenValid(request)) { ... }` blocks across `Api.cpp` are byte-identical (verified via
+  a Python regex scan before editing), so a single scripted text substitution inserted a
+  `writeRateLimitOk(request, principal)` check immediately after each one. The sole exception,
+  `/api/sessions/sign-out-others`, resolves a `Domain::Session` (`current`) rather than a
+  `Domain::Principal`, so it uses a dedicated `writeRateLimitOk(request, const std::string& userId)`
+  overload instead.
+- Deliberately does **not** touch the existing per-account login lockout
+  (`recordFailedLogin`/`resetFailedLogin`/`isLoginLocked`, fixed 10-attempts/15-minutes, in both database
+  adapters) -- the new IP-based limiter is an additional, complementary layer defending against
+  distributed/enumeration attacks spread across many accounts from one source, not a replacement for the
+  per-account lockout.
+- `RateLimiter` is compiled into the `ticket-hub` server executable's own source list (not
+  `ticket-hub-core`), since rate limiting is HTTP-layer-only and the CLI target has no use for it. It has
+  no Crow dependency, so it is also compiled directly (with `src/web/RateLimiter.cpp`, no `ticket-hub-core`
+  link) into a new standalone `ticket-hub-ratelimiter-tests` binary that builds unconditionally under
+  `TICKETHUB_BUILD_TESTS`, independent of `TICKETHUB_BUILD_SERVER`.
+- No new migration; no `IDatabase` changes; no web UI changes (a 429 response surfaces through the
+  existing generic API-error handling like any other error status).
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 8/8 green (the new eighth binary is `ticket-hub-ratelimiter-tests`: a
+   fixed-window limit trips after N requests and rejects further ones within the same window; independent
+   keys get independent buckets; the window rolls over and requests are allowed again after it expires).
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations (`-DTICKETHUB_BUILD_SERVER=OFF` in
+   both): both compile cleanly, and `ticket-hub-ratelimiter-tests` builds and passes in both (8/8 and 4/4
+   respectively, matching each configuration's existing test-binary count plus one) -- confirming
+   `RateLimiter` really has no Crow/database dependency.
+4. No live-PostgreSQL check: this batch made no database or `IDatabase` changes, so there is nothing
+   backend-specific to verify against a live server.
+5. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded):
+   - Login limiter: 20 consecutive `POST /api/auth/login` requests with a wrong password all returned
+     `401`; the 21st and 22nd returned `429` with body `{"error":"Too many login attempts. Try again
+     later."}`.
+   - Write limiter: after restarting the server (a fresh in-memory limiter) and logging in with the demo
+     account, 130 consecutive `POST /api/projects` requests (valid session cookie + `X-CSRF-Token`) were
+     issued back-to-back: the first 120 all returned non-429 status codes and the last 10 all returned
+     `429` with body `{"error":"Too many requests. Try again later."}`.
+   - Confirmed reads are unaffected: a `GET /api/projects` issued immediately after tripping the write
+     limit still returned `200`, confirming the limiter only applies to write methods.
+6. No browser/Playwright verification needed -- this batch touched no `web/` code, and there is no UI
+   surface for a 429 beyond the existing generic fetch-error handling already exercised by prior batches.
+
 ## 2026-08-01 — Active-session list and "sign out everywhere" (D54): Phase 6 slice 2
 
 Second Phase 6 slice, directly following the PAT batch. Still open: the versioned `/api/v1` prefix, rate

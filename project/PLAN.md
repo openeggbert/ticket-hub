@@ -6,7 +6,7 @@ is [docs/REDUCED_SCOPE_ROADMAP.md](docs/REDUCED_SCOPE_ROADMAP.md) (the original
 snapshot status line, kept in sync at each milestone boundary -- see `NEXT.md` for full batch-by-batch
 detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
-## Current status (2026-08-01)
+## Current status (2026-08-02)
 
 - **Milestone 1** (Phases 1-3: identity/sessions, authorization/projects, issue core/fixed workflow) --
   **complete** at the core/CLI/test/server/UI layer, with one deliberate exception: re-typing
@@ -22,10 +22,12 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   Personal access tokens (D39/D40) are done: self-service create/list/revoke, `Authorization: Bearer`
   authentication wired into every existing route, CSRF correctly exempted for non-cookie auth. The
   active-session list and "sign out everywhere" endpoint (D54) are also done (`GET /api/sessions`,
-  `POST /api/sessions/sign-out-others`; keeps the caller's own current session active). Still open: the
-  versioned `/api/v1` prefix itself, fixed rate limits and the full lockout policy, fixed
-  request/body/batch-size constants, numbered pagination, read-only CSV export, the security hardening
-  pass, and all of Phase 7. No web UI yet for managing tokens or sessions.
+  `POST /api/sessions/sign-out-others`; keeps the caller's own current session active). Fixed rate limits
+  (D124/D125) are also done: an in-memory `TicketHub::Web::RateLimiter` caps `/api/auth/login` at 20
+  attempts per IP per 15 minutes (alongside the existing per-account lockout) and every write route at 120
+  requests per minute per user-or-IP, both returning 429. Still open: the versioned `/api/v1` prefix
+  itself, fixed request/body/batch-size constants, numbered pagination, read-only CSV export, the security
+  hardening pass, and all of Phase 7. No web UI yet for managing tokens or sessions.
 - **Milestone 4** (Phase 8: packaging and hardening) -- not started.
 
 ## Implementation rules

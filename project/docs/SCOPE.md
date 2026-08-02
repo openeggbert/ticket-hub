@@ -123,6 +123,11 @@ remain as the long-term aspirational baseline only — do not build against them
 - **Active-session list and "sign out everywhere" (Phase 6, D54):** `GET /api/sessions`,
   `POST /api/sessions/sign-out-others` (session-cookie-only, not usable via PAT). Keeps the caller's own
   current session active -- a conservative default, no decision text specifies this. No web UI yet.
+- **Fixed rate limits (Phase 6, D124/D125):** a new in-memory `TicketHub::Web::RateLimiter` (fixed-window,
+  no admin config) caps `/api/auth/login` at 20 attempts per IP per 15 minutes (on top of, not instead of,
+  the existing per-account 10-attempts/15-minutes lockout) and every write route at 120 requests per
+  minute (keyed by user id when authenticated, else by IP), both returning 429 on trip. Process-lifetime
+  in-memory state only; resets on restart.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -130,10 +135,10 @@ remain as the long-term aspirational baseline only — do not build against them
   `issueTypeKey`/`parentIssueKey`).
 - Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
   by any decision.
-- Phase 6 is underway (PATs and active-session list done). The versioned `/api/v1` prefix itself, fixed
-  rate limits and the full configurable-replacing lockout policy, fixed request/body/batch-size
-  constants, numbered/offset pagination, read-only CSV export, and the security hardening pass are all
-  still open. Phase 7 (backup/restore/upgrade) is not started.
+- Phase 6 is underway (PATs, active-session list, and fixed rate limits done). The versioned `/api/v1`
+  prefix itself, fixed request/body/batch-size constants, numbered/offset pagination, read-only CSV
+  export, and the security hardening pass are all still open. Phase 7 (backup/restore/upgrade) is not
+  started.
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).
 
 ## Permanently out of V1 scope (do not build these)

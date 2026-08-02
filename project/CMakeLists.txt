@@ -101,6 +101,7 @@ if(TICKETHUB_BUILD_SERVER)
         src/main.cpp
         src/web/Api.cpp
         src/web/HttpServer.cpp
+        src/web/RateLimiter.cpp
     )
     target_link_libraries(ticket-hub PRIVATE ticket-hub-core Crow::Crow)
     target_compile_definitions(ticket-hub PRIVATE
@@ -164,4 +165,11 @@ if(TICKETHUB_BUILD_TESTS)
     add_executable(ticket-hub-crypto-tests tests/crypto_tests.cpp)
     target_link_libraries(ticket-hub-crypto-tests PRIVATE ticket-hub-core)
     add_test(NAME ticket-hub-crypto-tests COMMAND ticket-hub-crypto-tests)
+
+    # RateLimiter has no Crow dependency, so it is tested standalone (not
+    # linked into ticket-hub-core, which the CLI target also uses) even when
+    # TICKETHUB_BUILD_SERVER is off.
+    add_executable(ticket-hub-ratelimiter-tests tests/rate_limiter_tests.cpp src/web/RateLimiter.cpp)
+    target_include_directories(ticket-hub-ratelimiter-tests PRIVATE src)
+    add_test(NAME ticket-hub-ratelimiter-tests COMMAND ticket-hub-ratelimiter-tests)
 endif()
