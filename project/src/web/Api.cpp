@@ -29,6 +29,16 @@ crow::response errorResponse(int status, const std::string& message) {
     return jsonResponse(status, std::move(body));
 }
 
+// D124's original description pairs a 429 with a Retry-After header; the V1
+// simplification only dropped the admin-configurable multi-level limits,
+// not this response contract, so both fixed limiters attach it using their
+// own fixed window length.
+crow::response rateLimitedResponse(const std::string& message, int retryAfterSeconds) {
+    auto response = errorResponse(429, message);
+    response.set_header("Retry-After", std::to_string(retryAfterSeconds));
+    return response;
+}
+
 crow::json::wvalue userJson(const Domain::UserSummary& user) {
     crow::json::wvalue json;
     json["id"] = user.id;
@@ -438,7 +448,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     CROW_ROUTE(app, "/api/auth/login")
     .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
         if (!loginRateLimitOk(request)) {
-            return errorResponse(429, "Too many login attempts. Try again later.");
+            return rateLimitedResponse("Too many login attempts. Try again later.", 900);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -524,7 +534,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -553,7 +563,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!authService->revokePersonalAccessToken(tokenId, principal->userId)) {
@@ -605,7 +615,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, current->userId)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const int removed = authService->signOutOtherSessions(current->userId, current->id);
@@ -644,7 +654,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -675,7 +685,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -709,7 +719,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->deleteProject(projectKey, *principal)) {
@@ -756,7 +766,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->restoreProject(projectKey, *principal)) {
@@ -782,7 +792,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->permanentlyDeleteProject(projectKey, *principal)) {
@@ -820,7 +830,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -879,7 +889,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -939,7 +949,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1019,7 +1029,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->deleteIssue(issueKey, *principal)) {
@@ -1045,7 +1055,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->restoreIssue(issueKey, *principal)) {
@@ -1071,7 +1081,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->permanentlyDeleteIssue(issueKey, *principal)) {
@@ -1097,7 +1107,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1147,7 +1157,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1205,7 +1215,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1235,7 +1245,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1272,7 +1282,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->deleteComment(issueKey, commentId, *principal)) {
@@ -1323,7 +1333,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             // The return value only signals whether a row was newly
@@ -1351,7 +1361,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             service->removeCommentReaction(issueKey, commentId, reactionKey, *principal);
@@ -1395,7 +1405,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1427,7 +1437,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1465,7 +1475,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->deleteWorklog(issueKey, worklogId, *principal)) {
@@ -1519,7 +1529,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             crow::multipart::message multipart(request);
@@ -1557,7 +1567,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->deleteAttachment(issueKey, attachmentId, *principal)) {
@@ -1633,7 +1643,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             crow::json::wvalue body;
@@ -1656,7 +1666,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             crow::json::wvalue body;
@@ -1682,7 +1692,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             return jsonResponse(201, issueJson(service->cloneIssue(issueKey, *principal)));
@@ -1707,7 +1717,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1740,7 +1750,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1789,7 +1799,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -1818,7 +1828,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             if (!service->deleteIssueLink(linkId, *principal)) {
@@ -1863,7 +1873,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             service->watchIssue(issueKey, *principal);
@@ -1887,7 +1897,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             service->unwatchIssue(issueKey, *principal);
@@ -1926,7 +1936,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             service->voteIssue(issueKey, *principal);
@@ -1950,7 +1960,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             service->unvoteIssue(issueKey, *principal);
@@ -1977,7 +1987,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -2005,7 +2015,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -2032,7 +2042,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -2059,7 +2069,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             const auto body = crow::json::load(request.body);
@@ -2201,7 +2211,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             crow::json::wvalue body;
@@ -2222,7 +2232,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, "Missing or invalid CSRF token");
         }
         if (!writeRateLimitOk(request, principal)) {
-            return errorResponse(429, "Too many requests. Try again later.");
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
             crow::json::wvalue body;

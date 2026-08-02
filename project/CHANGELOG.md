@@ -3,7 +3,8 @@
 ## Unreleased — Fixed rate limits (D124/D125) — Phase 6 continued
 
 - **Rate limiting**: a new in-memory `TicketHub::Web::RateLimiter` (fixed-window, no admin config)
-  enforces two fixed limits, returning `429` on trip:
+  enforces two fixed limits, returning `429` with a `Retry-After` header (in seconds, matching the
+  limiter's fixed window) on trip:
   - `POST /api/auth/login`: 20 attempts per IP per 15 minutes, complementing (not replacing) the existing
     per-account 10-attempts/15-minutes lockout.
   - Every write route (POST/PUT/PATCH/DELETE): 120 requests per minute, keyed by user id when
