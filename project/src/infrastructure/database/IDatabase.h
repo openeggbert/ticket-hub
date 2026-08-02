@@ -17,6 +17,20 @@ public:
     virtual void migrate() = 0;
     virtual void seedDemoData() = 0;
 
+    // Backup/restore (Phase 7, D106-D108): offline/maintenance-window use
+    // only -- no online consistent-snapshot logic, no manifest, no isolated
+    // staging environment for restore. The admin is expected to stop the
+    // server before running either; neither method itself verifies that.
+    // Writes/reads exactly one database dump file into/from
+    // `directory` (`database.sqlite3` or `database.sql`, backend-specific);
+    // the CLI's `backup`/`restore` commands separately handle copying the
+    // attachments directory alongside it, since that is not a database
+    // concern. `restore` does not run pending migrations afterward -- the
+    // CLI command does that explicitly as a separate, visible step (D109:
+    // "forward migrate older supported backups").
+    virtual void backup(const std::string& directory) = 0;
+    virtual void restore(const std::string& directory) = 0;
+
     // --- Identity (Phase 1) ---
     // `passwordHash` is an already-encoded Argon2id hash (see
     // common/PasswordHash.h); the database layer never sees a plaintext

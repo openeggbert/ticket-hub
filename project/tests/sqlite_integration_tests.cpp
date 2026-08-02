@@ -703,6 +703,45 @@ int main() {
     fs::remove(checksumDatabase.string() + "-shm", removeError);
     fs::remove_all(migrationCopy, removeError);
 
+    // Backup/restore (Phase 7, D106-D108).
+    const fs::path backupSourceDb = fs::temp_directory_path() / "ticket-hub-backup-source.db";
+    const fs::path backupDir = fs::temp_directory_path() / "ticket-hub-backup-output";
+    fs::remove(backupSourceDb, removeError);
+    fs::remove(backupSourceDb.string() + "-wal", removeError);
+    fs::remove(backupSourceDb.string() + "-shm", removeError);
+    fs::remove_all(backupDir, removeError);
+    {
+        SqliteDatabase database(backupSourceDb.string(),
+                                (sourceRoot / "migrations/sqlite").string(),
+                                (sourceRoot / "migrations/sqlite/002_seed_demo.sql").string());
+        database.migrate();
+        database.seedDemoData();
+        require(database.listIssues(IssueFilter{}).size() == 8, "backup source seeded with the demo issue set");
+
+        database.backup(backupDir.string());
+        require(fs::exists(backupDir / "database.sqlite3"), "backup writes database.sqlite3 into the output directory");
+        require(fs::file_size(backupDir / "database.sqlite3") > 0, "the backup file is not empty");
+
+        // Mutate the live database after the backup was taken, so restoring
+        // it is a meaningfully observable change, not a no-op.
+        CreateIssueRequest postBackupIssue;
+        postBackupIssue.projectKey = "TH";
+        postBackupIssue.summary = "Created after the backup was taken";
+        const auto createdAfterBackup = database.createIssue(postBackupIssue, demoUserId);
+        require(database.listIssues(IssueFilter{}).size() == 9,
+               "the live database now has one more issue than the backup captured");
+
+        database.restore(backupDir.string());
+        require(database.listIssues(IssueFilter{}).size() == 8,
+               "restore reverts the live database to exactly what the backup captured");
+        require(!database.findIssueByKey(createdAfterBackup.key).has_value(),
+               "an issue created after the backup was taken does not survive a restore from that backup");
+    }
+    fs::remove(backupSourceDb, removeError);
+    fs::remove(backupSourceDb.string() + "-wal", removeError);
+    fs::remove(backupSourceDb.string() + "-shm", removeError);
+    fs::remove_all(backupDir, removeError);
+
     std::cout << "SQLite integration tests passed\n";
     return 0;
 }

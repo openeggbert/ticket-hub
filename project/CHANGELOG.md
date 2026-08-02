@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — Backup and restore (D106-D108) — Phase 7 started
+
+- **Backup**: `ticket-hub-cli backup <output-directory>` copies the attachments directory and dumps the
+  database into `<output-directory>` (SQLite: online backup API; PostgreSQL: `pg_dump --clean
+  --if-exists`). Offline/maintenance-window use only; refuses to write into a non-empty directory.
+- **Restore**: `ticket-hub-cli restore <backup-directory> --yes` overwrites the current database and
+  attachments directory with the backup's contents, then runs pending migrations. Requires the explicit
+  `--yes` flag; without it, prints a warning and refuses to proceed. Direct restore into the target, no
+  isolated staging environment; the admin is responsible for their own pre-restore backup.
+- Confirmed `ticket-hub-cli migrate` already fully satisfies D111 (upgrades) -- no new command needed.
+- New `IDatabase::backup`/`restore` in both adapters; new SQLite-integration test coverage.
+- Verified end-to-end on both SQLite and a live PostgreSQL server, matching Phase 7's exit gate exactly:
+  seed → backup → destroy → restore, with data and an attachment file round-tripping correctly.
+
 ## Unreleased — Numbered/offset pagination for issues (D126) — Phase 6 complete
 
 - **Pagination**: `GET /api/v1/issues` now accepts optional `page` (1-based, default 1) and `pageSize`

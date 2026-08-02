@@ -1,5 +1,83 @@
 # Verification record
 
+## 2026-08-02 — Backup and restore (D106-D108): Phase 7 slice 1
+
+First Phase 7 slice, directly following the close of Phase 6. Still open in Phase 7: the in-app admin
+banner for available updates (D112) and structured JSON logs to stdout (D133). D111 (upgrades) required
+no new work -- `ticket-hub-cli migrate` already fully satisfies it.
+
+### What changed
+
+- New `IDatabase::backup(directory)`/`restore(directory)` (pure virtual, implemented in both adapters):
+  scoped to the database only -- the CLI commands separately handle copying the attachments directory,
+  since that is not a database concern.
+- **SqliteDatabase**: uses the SQLite online backup API (`sqlite3_backup_init`/`sqlite3_backup_step`/
+  `sqlite3_backup_finish`) rather than a raw file copy. The database runs in WAL mode
+  (`PRAGMA journal_mode = WAL`, set in the constructor); a plain `cp`/`std::filesystem::copy_file` of
+  only the main `.sqlite3` file could silently miss data still sitting in an unmerged `-wal` file. The
+  backup API produces a correct, complete snapshot regardless of WAL/checkpoint state. `restore` runs the
+  same API in reverse: the backup file (opened read-only) is the *source*, and the currently-open
+  `database_` connection is the *destination*, so restoring replaces the live database's content in
+  place through the same handle every other method already uses.
+- **PostgresDatabase**: shells out to the `pg_dump`/`psql` client binaries (both standard PostgreSQL
+  tools, not reimplemented over libpq -- re-deriving dump/restore logic would be substantial, fragile
+  duplication for no benefit). `backup` runs `pg_dump --clean --if-exists <conninfo> -f
+  <directory>/database.sql` -- `--clean --if-exists` makes the dump self-contained for a *direct* restore
+  (D108: no isolated staging environment): replaying it against a non-empty target works, since the dump
+  itself drops each object (if it exists) before recreating it. `restore` runs
+  `psql -v ON_ERROR_STOP=1 <conninfo> -f <directory>/database.sql` -- `ON_ERROR_STOP=1` makes psql abort
+  (non-zero exit, caught and turned into a thrown exception) on the first SQL error instead of continuing
+  and reporting overall success on a partially-failed restore. A local `shellQuote` helper single-quotes
+  the connection string and file paths before interpolating them into the shell command string; both are
+  admin-controlled (from `TICKETHUB_DATABASE_URL` and a CLI argument), not untrusted network input, but
+  quoting is applied regardless for correctness against paths/values containing shell metacharacters or
+  spaces.
+- New `ticket-hub-cli backup <output-directory>`: copies `config.attachmentsRoot` into
+  `<output-directory>/attachments` (if it exists), then calls `database->backup(...)`. Refuses to write
+  into a directory that already exists and is non-empty (a cheap guard against accidentally clobbering an
+  existing backup or writing into an unrelated populated directory).
+- New `ticket-hub-cli restore <backup-directory> --yes`: requires the literal `--yes` flag; without it,
+  prints a clear warning naming the backup directory and exits `2` without touching anything. With
+  `--yes`: calls `database->restore(...)`, then `database->migrate()` as an explicit, separate, visible
+  step (D109: "forward migrate older supported backups" -- so a backup taken on an older schema version
+  is brought current automatically as part of restoring it), then copies `<backup-directory>/attachments`
+  back over `config.attachmentsRoot` (creating it if needed, overwriting existing files).
+- New CLI usage text for both commands in `printUsage`.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 8/8 green, including new `ticket-hub-sqlite-integration-tests` coverage:
+   `backup` writes a non-empty `database.sqlite3` into the output directory; a database mutated (one more
+   issue created) *after* the backup was taken is reverted by `restore` back to exactly the 8-issue state
+   the backup captured, and the post-backup issue does not survive the restore.
+3. Re-ran the SQLite-only and PostgreSQL-only build configurations: both compile cleanly and pass their
+   respective test suites (8/8 and 4/4).
+4. **Live PostgreSQL, full exit-gate cycle**: found the same local PostgreSQL 16 cluster used in the
+   pagination batch (`pg_lsclusters`/`service postgresql start`), created a throwaway database/role, and
+   ran the exact scripted cycle Phase 7's exit gate describes:
+   - `ticket-hub-cli seed-demo` (fresh install → seed).
+   - Added a marker file to the attachments directory.
+   - `ticket-hub-cli backup <dir>`: confirmed `<dir>/database.sql` contains `COPY` blocks with the
+     expected row counts (8 issues, etc. -- `pg_dump`'s default plain-text format uses `COPY`, not
+     `INSERT`, for bulk data) and `<dir>/attachments/` contains the marker file.
+   - Destroyed the live database (`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`) and deleted the
+     attachments directory, simulating total data loss.
+   - `ticket-hub-cli restore <dir>` **without** `--yes`: confirmed it printed the warning and exited `2`
+     without touching anything.
+   - `ticket-hub-cli restore <dir> --yes`: confirmed it succeeded (`psql`'s `COPY N` lines matched the
+     original row counts exactly) and ran migrations afterward with no errors.
+   - Confirmed via `psql`: issue count back to `8`, both project keys (`TH`, `WEB`) present.
+   - Confirmed the marker attachment file's exact byte content survived the round trip.
+   - Dropped the throwaway database/role afterward.
+5. **SQLite, the same exit-gate cycle**, independently via the CLI (not just the integration-test API
+   calls in step 2): seeded a fresh SQLite file, added a marker attachment file, backed up, deleted the
+   database file (plus `-wal`/`-shm`) and the attachments directory entirely, confirmed restore without
+   `--yes` refuses, then restored with `--yes` and confirmed (via Python's `sqlite3` module, since the
+   `sqlite3` CLI binary is not installed in this environment) the issue count, project keys, and the
+   marker attachment file's content all matched exactly.
+
 ## 2026-08-02 — Numbered/offset pagination for issues (D126): Phase 6 slice 8, Phase 6 complete
 
 Eighth and final Phase 6 slice. Every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 6 list is now

@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -336,6 +338,28 @@ FROM board_columns bc JOIN issue_statuses s ON s.id = bc.status_id
 ORDER BY bc.sort_order
 )SQL";
 
+// Backup/restore (D106-D108) shells out to the pg_dump/psql binaries rather
+// than reimplementing dump/restore over libpq -- both are standard
+// PostgreSQL client tools expected to be present alongside any Postgres
+// deployment, and re-deriving their logic would be substantial, fragile
+// duplication for no real benefit. `connectionString_` and the backup/
+// restore directory are both admin-controlled (from `TICKETHUB_DATABASE_URL`
+// and a CLI argument), not untrusted network input, but single-quoting is
+// still applied for correctness against paths/values containing shell
+// metacharacters or spaces.
+std::string shellQuote(const std::string& value) {
+    std::string quoted = "'";
+    for (const char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
 } // namespace
 
 PostgresDatabase::PostgresDatabase(std::string connectionString,
@@ -412,6 +436,38 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 void PostgresDatabase::seedDemoData() {
     auto connection = connect(connectionString_);
     exec(connection.get(), Common::readTextFile(seedPath_), "PostgreSQL demo seed");
+}
+
+// `--clean --if-exists` makes the dump self-contained for a direct restore
+// (D108: "direct restore into the target database ... no isolated staging
+// environment") -- the dump itself drops each object before recreating it,
+// so replaying it against a non-empty target (e.g. restoring the same
+// backup twice, or restoring over an existing installation) works without
+// requiring the admin to manually drop/recreate the database first.
+void PostgresDatabase::backup(const std::string& directory) {
+    std::filesystem::create_directories(directory);
+    const auto outputPath = (std::filesystem::path(directory) / "database.sql").string();
+    const std::string command = "pg_dump --clean --if-exists " + shellQuote(connectionString_)
+        + " -f " + shellQuote(outputPath);
+    if (std::system(command.c_str()) != 0) {
+        throw std::runtime_error("pg_dump failed -- see stderr above for detail");
+    }
+}
+
+// `-v ON_ERROR_STOP=1` makes psql abort (non-zero exit) on the first SQL
+// error instead of continuing and reporting success -- without it, a
+// partially-failed restore could silently leave the database in a mixed
+// state while still looking like it succeeded.
+void PostgresDatabase::restore(const std::string& directory) {
+    const auto inputPath = std::filesystem::path(directory) / "database.sql";
+    if (!std::filesystem::exists(inputPath)) {
+        throw std::runtime_error("database.sql not found in backup directory: " + directory);
+    }
+    const std::string command = "psql -v ON_ERROR_STOP=1 " + shellQuote(connectionString_)
+        + " -f " + shellQuote(inputPath.string());
+    if (std::system(command.c_str()) != 0) {
+        throw std::runtime_error("psql restore failed -- see stderr above for detail");
+    }
 }
 
 // --- Identity ---

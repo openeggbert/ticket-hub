@@ -164,9 +164,24 @@ The CLI builds without Crow and uses the same database adapters:
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli migrate
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli seed-demo
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli create-user "person@example.com" "A Person" "a sufficiently long password" [--admin] [--handle=<handle>]
+TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli backup ./backups/2026-08-02
+TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli restore ./backups/2026-08-02 --yes
 ```
 
 `diagnostics` redacts the PostgreSQL connection string. Installed deployments should set `TICKETHUB_MIGRATIONS_ROOT` to the installed migration directory when it differs from the compiled development default.
+
+`backup`/`restore` (D106-D108, Phase 7) are offline/maintenance-window operations -- stop the server first;
+neither command checks whether it is still running. `backup <output-directory>` copies the attachments
+directory and dumps the database (SQLite: the online backup API, correct regardless of WAL/checkpoint
+state; PostgreSQL: `pg_dump --clean --if-exists`, so the dump is self-contained for a direct restore) into
+`<output-directory>`, refusing to write into a directory that already exists and is non-empty.
+`restore <backup-directory> --yes` permanently overwrites the current database and attachments directory
+with the backup's contents and then runs pending migrations (SQLite: the online backup API in reverse;
+PostgreSQL: `psql -v ON_ERROR_STOP=1`) -- the `--yes` flag is mandatory; without it the command prints a
+warning and refuses to proceed. There is no isolated staging environment and no manifest/checksum file
+(D106-D108); the admin is responsible for their own pre-restore backup of whatever is about to be
+overwritten. `ticket-hub-cli migrate` remains the entire upgrade mechanism (D111) -- already implemented,
+no separate upgrade command.
 
 `create-user` is administrator-only account creation: there is no public registration and no invitation
 flow in V1 (`REDUCED_SCOPE_SPECIFICATION.md` section 3). The password is set directly by whoever runs
@@ -847,6 +862,29 @@ the CSV export and dashboard routes are unaffected. Also re-ran the full three-c
 (the demo UI's heaviest consumer of the issues list), all green -- confirming the additive response shape
 doesn't break the existing UI. This is a deliberate partial rollout of D126: only `GET /api/v1/issues` is
 paginated so far, documented explicitly as still-open for every other list endpoint.
+
+**This closes Phase 6.** A twenty-fifth batch opened Phase 7 with backup and restore (D106-D108). New
+`IDatabase::backup(directory)`/`restore(directory)` in both adapters, alongside a new
+`ticket-hub-cli backup <output-directory>` and `ticket-hub-cli restore <backup-directory> --yes`.
+SQLite uses the SQLite online backup API (`sqlite3_backup_init`/`step`/`finish`) rather than a raw file
+copy, since the database runs in WAL mode and a plain `cp` of only the main file could miss data still
+sitting in an unmerged `-wal` file; PostgreSQL shells out to `pg_dump --clean --if-exists` for backup
+(self-contained for a direct restore into a non-empty target) and `psql -v ON_ERROR_STOP=1` for restore
+(aborts on the first SQL error rather than silently reporting success on a partial failure). The CLI
+commands handle the attachments-directory copy themselves (not a database concern) and `restore` runs
+pending migrations afterward as a visible, separate step (D109: forward-migrate an older backup).
+`restore` requires an explicit `--yes` flag, printing a clear warning and refusing to proceed without it
+(D108: "a confirmation warning"). Confirmed `ticket-hub-cli migrate` already fully satisfies D111 ("the
+existing migrate command suffices") -- no new upgrade command needed. New SQLite-integration test
+coverage (`backup` writes a non-empty file; `restore` reverts a database that was mutated after the
+backup was taken back to exactly the backup's state). Verified end-to-end exactly matching Phase 7's exit
+gate -- "a fresh install → seed → backup → restore cycle is scripted and tested on both databases" -- on
+both SQLite and a real live local PostgreSQL 16 server (`pg_ctlcluster`/`service postgresql start`, a
+throwaway database, dropped afterward): seeded demo data, added a marker attachment file, backed up,
+destroyed the live database and attachments directory entirely (dropped the schema with `CASCADE` for
+Postgres; deleted the file for SQLite), confirmed `restore` without `--yes` refuses, then restored with
+`--yes` and confirmed the issue count, project keys, and the marker attachment file all round-tripped
+correctly on both backends. Also re-ran the full three-configuration build matrix, all green.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
