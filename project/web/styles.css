@@ -71,6 +71,9 @@
 body { margin: 0; min-width: 320px; background: var(--bg); }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
+/* Keyboard-operable rows/cards (D47) -- see makeKeyboardActivatable in app.js. */
+[role="link"][tabindex="0"] { cursor: pointer; }
+[role="link"][tabindex="0"]:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .hidden { display: none !important; }
 
 .app-shell { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }

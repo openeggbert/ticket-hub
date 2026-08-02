@@ -1221,10 +1221,14 @@ async function renderProjectsView(showingDeleted) {
         </article>`).join('') : `<div class="empty-state">${showingDeleted ? 'The recycle bin is empty.' : 'No projects yet.'}</div>`}
     </div>`;
 
-  document.querySelectorAll('[data-project-card]').forEach(card => card.addEventListener('click', () => {
-    state.selectedProject = card.dataset.projectCard;
-    navigate('board');
-  }));
+  document.querySelectorAll('[data-project-card]').forEach(card => {
+    const openProjectBoard = () => {
+      state.selectedProject = card.dataset.projectCard;
+      navigate('board');
+    };
+    card.addEventListener('click', openProjectBoard);
+    makeKeyboardActivatable(card, openProjectBoard);
+  });
   document.querySelector('#toggle-recycle-bin')?.addEventListener('click', () => renderProjectsView(!showingDeleted));
   document.querySelector('#new-project-button')?.addEventListener('click', openProjectModal);
 
@@ -1300,6 +1304,22 @@ function navigate(view) {
 function bindIssueLinks() {
   document.querySelectorAll('[data-issue-key]').forEach(element => {
     element.addEventListener('click', () => openIssue(element.dataset.issueKey));
+    makeKeyboardActivatable(element, () => openIssue(element.dataset.issueKey));
+  });
+}
+
+// Table rows, board cards, and inline key references are clickable but are
+// not natively focusable/keyboard-operable elements (D47) -- this makes them
+// behave like a link for keyboard and assistive-technology users without
+// changing their existing mouse-click behavior or markup structure.
+function makeKeyboardActivatable(element, activate) {
+  element.tabIndex = 0;
+  if (!element.hasAttribute('role')) element.setAttribute('role', 'link');
+  element.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.target !== element) return;
+    event.preventDefault();
+    activate();
   });
 }
 

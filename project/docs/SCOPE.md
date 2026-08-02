@@ -183,6 +183,14 @@ remain as the long-term aspirational baseline only — do not build against them
   "light and dark theme... simple". ~30 hardcoded literal colors converted to the CSS custom-property set
   so the whole UI themes consistently. Browser-verified with Playwright/Chromium in both modes; found and
   fixed one real bug (`.link-form input` had no dark styling and rendered as a stray white box).
+- **Accessibility baseline pass and browser-support note (Phase 8, D47/D139):** found and fixed one real
+  keyboard-operability gap -- issue table rows, Kanban board cards, project cards, and inline issue-key
+  cross-reference links were mouse-click-only, unreachable by keyboard. Fixed with a shared
+  `makeKeyboardActivatable` helper (`tabindex="0"`, `role="link"`, `Enter`/`Space` handling) plus a visible
+  focus-ring CSS rule. No formal WCAG audit -- not required by D47's reduced V1 scope. D139 (browser
+  support) reconfirmed satisfied by construction, no code change. Browser-verified with Playwright/
+  Chromium (keyboard-only activation of each fixed element, no mouse-click regression) plus a clean
+  regression re-run.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -194,9 +202,9 @@ remain as the long-term aspirational baseline only — do not build against them
   so far -- every other list endpoint (projects, comments, worklogs, attachments, notifications,
   sessions, tokens, audit events, watchers, voters, board-columns, issue-links, comment-reactions)
   remains unpaginated; extending it further is optional follow-up, not a blocker to Phase 6's exit gate.
-- Phase 8 (Milestone 4) is underway: Docker packaging (D50) and light/dark theme (D46) are done. The
-  accessibility baseline review (D47), the browser-support note (D139, already satisfied by construction),
-  and the threat-model/security self-review are not.
+- Phase 8 (Milestone 4) is underway: Docker packaging (D50), light/dark theme (D46), the accessibility
+  baseline pass (D47), and the browser-support note (D139) are done. The threat-model/security self-review
+  is not.
 
 ## Permanently out of V1 scope (do not build these)
 

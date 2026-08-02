@@ -985,6 +985,24 @@ views (Issues list, issue drawer, create-issue modal, Kanban board, Projects gri
 re-ran both existing Playwright regression scripts clean to confirm no functional regression from this
 CSS-only change.
 
+A twenty-ninth batch closed out D47 (accessibility baseline) and D139 (browser support). Reviewing the
+existing UI against D47's reduced V1 bar -- "reasonable baseline accessibility (semantic HTML, keyboard
+operability) without... a formal WCAG level or dedicated audit deliverable" -- found that semantic HTML
+was already largely in place (landmark elements, labeled form controls, dialog roles, `aria-label`s on
+icon buttons), but one real gap existed: issue table rows, Kanban board cards, project cards, and inline
+issue-key cross-reference links were only wired up with a plain mouse `click` listener on a non-interactive
+element (`<tr>`/`<article>`/`<span>`), with no way for a keyboard-only user to reach or activate them at
+all. Fixed with a new shared `makeKeyboardActivatable` helper in `web/app.js` (adds `tabindex="0"`,
+`role="link"`, and an `Enter`/`Space` keyboard handler, carefully guarded so it can never double-fire
+alongside the already-independently-operable nested controls like the bulk-select checkbox or the reorder
+buttons), plus a small CSS rule giving the newly-focusable elements a visible focus ring. D139 (browser
+support) needed no code change -- `web/app.js`'s framework-free, unpolyfilled, untranspiled syntax already
+satisfies "latest two major versions of Chrome/Firefox/Edge/Safari" by construction, matching the decision
+register's own reasoning exactly. Verified with Playwright/Chromium: keyboard-only `Tab`-then-`Enter`/
+`Space` activation confirmed for a table row, a board card, and a project card, plus confirmation that the
+pre-existing stopPropagation guard on the bulk-select checkbox still holds (no mouse-click regression from
+the new keyboard wiring); both existing browser regression scripts re-run clean.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 

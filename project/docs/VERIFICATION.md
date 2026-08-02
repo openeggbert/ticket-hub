@@ -1,5 +1,65 @@
 # Verification record
 
+## 2026-08-02 — Accessibility baseline pass and browser-support note (D47/D139): Phase 8 slice 3
+
+Still open in Phase 8: the threat-model/security self-review and a final documentation-currency pass.
+
+### What changed
+
+- **D47 (accessibility):** reviewed `web/index.html`/`web/app.js` against D47's V1 bar -- "reasonable
+  baseline accessibility (semantic HTML, keyboard operability) without committing to or tracking a formal
+  WCAG level or dedicated audit deliverable". Semantic HTML was already largely in place from earlier
+  phases (`<nav aria-label>`, `<main>`/`<aside>`/`<header>` landmarks, `<label>`-wrapped form inputs,
+  `role="dialog" aria-modal aria-labelledby` on both modals, `aria-label` on icon-only buttons,
+  `aria-live="polite"` on the main content region). The one real gap found: several of the most-used
+  click targets in the UI -- issue table rows, Kanban board cards, project cards, and inline issue-key
+  cross-reference links -- were only wired up via a bare `element.addEventListener('click', ...)` on a
+  plain `<tr>`/`<article>`/`<span>`, with no `tabindex`, no `role`, and no keyboard handler, so a
+  keyboard-only user could not reach or activate them at all.
+  - Fixed with a new shared `makeKeyboardActivatable(element, activate)` helper in `web/app.js`: sets
+    `tabIndex = 0`, adds `role="link"` (only if the element doesn't already carry a role), and listens for
+    `Enter`/`Space` on `keydown`, guarded by `event.target !== element` so keydown events bubbling up from
+    an already-independently-operable nested control (the bulk-select checkbox, the reorder up/down
+    buttons, the per-card archive/delete/restore buttons -- all already `stopPropagation()`-guarded against
+    the same accidental-bubbling problem for mouse clicks) can never double-fire. Wired into the existing
+    `bindIssueLinks()` (covers issue rows, board cards, and inline key references in one place, since they
+    already shared one click-binding function) and into the project-card click binding in
+    `renderProjectsView`.
+  - `web/styles.css` gained a small rule (`[role="link"][tabindex="0"]:focus-visible { outline: 2px solid
+    var(--primary); outline-offset: -2px; }`) so the newly-focusable elements get a visible focus
+    indicator consistent with the rest of the UI's `--primary` accent color; nothing pre-existing sets a
+    blanket `outline: none`, so this is additive, not a fix to a suppressed default.
+  - Deliberately not attempted: a formal WCAG 2.2 AA audit, automated contrast-ratio tooling, or a
+    screen-reader-software pass -- D47 explicitly drops that deliverable for V1. Decorative emoji glyphs
+    inside already-`aria-label`led icon buttons and inside plain nav-item text were left as-is (the
+    `aria-label` already provides the accessible name where one is set; where it is not, the emoji is
+    followed by real label text, which is a minor screen-reader verbosity issue, not a blocker).
+- **D139 (browser support):** re-confirmed, no code change needed -- `web/app.js` uses no framework and no
+  polyfilled/transpiled syntax (`fetch`, template literals, arrow functions, `async`/`await`, optional
+  chaining, `classList`, `FormData` -- all supported unmodified by the last two major versions of Chrome/
+  Firefox/Edge/Safari), so D139's "confirmed unchanged... natural consequence of modern vanilla JS without
+  polyfills" is satisfied by construction, matching the decision register's own reasoning exactly. This
+  batch's documentation update is the only artifact for D139.
+
+### Verification
+
+- New Playwright/Chromium script (`a11y_keyboard_test.mjs`, scratchpad-only, not committed): logs in,
+  `Tab`-focuses (via `.focus()`, equivalent to keyboard-only traversal reaching the element) an issue
+  table row and confirms `document.activeElement` is that exact row, presses `Enter`, confirms the issue
+  drawer opens, presses `Escape`, confirms it closes; focuses a Kanban board card and confirms `Space`
+  opens the drawer; focuses a project card and confirms `Enter` navigates to that project's board. Also
+  re-confirmed the pre-existing stopPropagation guard on the bulk-select checkbox still holds (clicking it
+  does not also open the issue drawer) -- i.e. the new keyboard wiring did not introduce a mouse-click
+  regression. All checks passed.
+- Re-ran the existing `login_browser_test.mjs` and `reorder_move_bulk_test.mjs` Playwright regression
+  scripts unchanged -- both passed, confirming no functional regression.
+- `ctest --output-on-failure`: 8/8 green (no application/domain/database code touched, only `web/`).
+
+Not independently verified: a formal automated accessibility scanner (e.g. axe-core) run, or manual
+testing with actual screen-reader software (VoiceOver/NVDA/JAWS) -- consistent with D47's explicitly
+reduced V1 scope, this was a targeted fix for the one concrete keyboard-operability gap found, not a
+certified audit.
+
 ## 2026-08-02 — Light and dark theme (D46): Phase 8 slice 2
 
 CSS-only batch, no C++/schema/route changes. Still open in Phase 8: the baseline accessibility review
