@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — Fixed rate limits (D124/D125) — Phase 6 continued
+
+- **Rate limiting**: a new in-memory `TicketHub::Web::RateLimiter` (fixed-window, no admin config)
+  enforces two fixed limits, returning `429` on trip:
+  - `POST /api/auth/login`: 20 attempts per IP per 15 minutes, complementing (not replacing) the existing
+    per-account 10-attempts/15-minutes lockout.
+  - Every write route (POST/PUT/PATCH/DELETE): 120 requests per minute, keyed by user id when
+    authenticated, else by IP.
+- Process-lifetime in-memory state only (resets on restart) -- no shared cache/job infrastructure exists
+  in V1.
+- No new migration; no database changes.
+- New standalone `ticket-hub-ratelimiter-tests` binary (no Crow dependency), passing in every build
+  configuration including SQLite-only and PostgreSQL-only.
+- No web UI change -- a 429 surfaces through the existing generic API-error handling.
+
 ## Unreleased — Active-session list and "sign out everywhere" (D54) — Phase 6 continued
 
 - **Active sessions**: `GET /api/sessions` lists the caller's own active web sessions;

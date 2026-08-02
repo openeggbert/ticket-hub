@@ -8,9 +8,13 @@ the admin/security audit log (D23) are all done — see below. Phase 5 (Attachme
 (D24), Kanban board WIP limits (D32/D33), and the full attachments vertical (D15/D98-D105) are all done.
 This closes out Milestone 2. Phase 6 (Milestone 3) is **underway**: personal access tokens (D39/D40) --
 PAT-only API authentication, self-service create/list/revoke, Bearer-token auth wired into every existing
-route with a CSRF exemption for non-cookie auth -- and the active-session list / "sign out everywhere"
-endpoint (D54) are both done. Still open in Phase 6: the versioned `/api/v1` prefix itself, fixed rate
-limits and the full lockout policy, CSV export, and the security hardening pass. No web UI yet for
+route with a CSRF exemption for non-cookie auth -- the active-session list / "sign out everywhere"
+endpoint (D54) -- and now fixed rate limiting (D124/D125): a new in-memory `RateLimiter`
+(`src/web/RateLimiter.h/.cpp`) enforces a fixed 20-attempts/15-minutes-per-IP cap on `/api/auth/login`
+(complementing, not replacing, the existing per-account 10-attempts/15-minutes lockout) and a fixed
+120-requests/minute-per-user-or-IP cap shared across every write route (POST/PUT/PATCH/DELETE), returning
+429 on trip. Still open in Phase 6: the versioned `/api/v1` prefix itself, fixed request/body/batch-size
+constants, numbered pagination, CSV export, and the security hardening pass. No web UI yet for
 managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
@@ -409,6 +413,34 @@ anything from the removed/deferred list without an explicit new product conversa
   this batch touched no `web/` code) confirmed ordinary cookie login/CSRF-protected writes still work
   after the prior batch's `resolvePrincipal`/`csrfTokenValid` changes. No web UI yet for viewing/signing
   out sessions. Full detail in `docs/VERIFICATION.md`.
+- **Phase 6 continued (fixed rate limits, D124/D125), this batch:** new `TicketHub::Web::RateLimiter`
+  (`src/web/RateLimiter.h/.cpp`, compiled only into the `ticket-hub` server target plus its own standalone
+  test binary -- it has no Crow dependency) implements a thread-safe, in-memory, fixed-window counter per
+  key (`std::unordered_map` behind a mutex, with lazy periodic sweeping of expired buckets so the map does
+  not grow unbounded). No admin configuration, no per-endpoint/service-account exceptions, matching D124's
+  "simple fixed rate limit" answer exactly. Two fixed limiters: `loginRateLimiter()` (20 attempts per IP
+  per 15 minutes on `/api/auth/login`, checked before body parsing) and `writeRateLimiter()` (120 requests
+  per minute, keyed by `user:<id>` when `resolvePrincipal` resolves a caller else `ip:<remote_ip_address>`)
+  -- reused at all 43 of the existing near-identical `csrfTokenValid` call sites (every POST/PUT/PATCH/
+  DELETE route) via a single scripted text substitution, plus a one-off overload for the sole route
+  (`/api/sessions/sign-out-others`) that resolves a `Domain::Session` (`current`) rather than a
+  `Domain::Principal`. Deliberately does not touch the existing per-account login lockout
+  (`recordFailedLogin`/`resetFailedLogin`/`isLoginLocked` in both database adapters) -- the new IP-based
+  limiter is an additional, complementary layer defending against distributed/enumeration attacks the
+  per-account lockout does not cover, not a replacement for it. Deliberately in-memory/process-lifetime
+  only (resets on restart) since V1 has no shared cache/job infrastructure
+  (`docs/REMOVED_AND_DEFERRED_FEATURES.md`) and this is a single-instance self-hosted install. New
+  standalone `ticket-hub-ratelimiter-tests` binary (fixed-window trip/reset, independent per-key buckets)
+  -- no Crow or database dependency, so it builds and passes in every configuration including
+  SQLite-only and PostgreSQL-only. No database/migration changes, so no live-PostgreSQL check was needed.
+  Verified end-to-end via `curl` against a running server: 20 login attempts with a wrong password all
+  returned 401, the 21st and 22nd returned 429 with `{"error":"Too many login attempts. Try again
+  later."}`; after restarting the server (a fresh in-memory limiter) and logging in, 120 consecutive
+  `POST /api/projects` requests with a valid session+CSRF token returned non-429 status codes and the
+  121st through 130th all returned 429 with `{"error":"Too many requests. Try again later."}`; a `GET`
+  request issued immediately after tripping the write limit still returned 200, confirming only write
+  methods are limited. No web UI change (there is nothing to display -- a 429 surfaces to the existing
+  fetch-error handling like any other API error). Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -440,7 +472,8 @@ drag-drop/paste integration) are all done and fully covered in the UI. This clos
 left:
 
 1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 6 (REST API v1/export, rate limiting, active-
-   session list) and Phase 7 (backup/restore, upgrade command). Not yet started.
+   session list -- rate limiting and the active-session list are now done, the rest is not) and Phase 7
+   (backup/restore, upgrade command, not yet started).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -459,15 +492,16 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   or any children, so this remains the one open path.
 
 Milestone 2 (Phases 4 and 5) is now **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
-backup/restore/upgrade) is underway -- personal access tokens (D39/D40) and the active-session list/
-"sign out everywhere" endpoint (D54) are done; the versioned `/api/v1` prefix, rate limits/the full
-lockout policy, CSV export, and the security hardening pass all remain, then Phase 7, then Milestone 4
-(Phase 8: packaging and hardening). Do not jump ahead to later-phase features early, and do not implement
-anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+backup/restore/upgrade) is underway -- personal access tokens (D39/D40), the active-session list/
+"sign out everywhere" endpoint (D54), and fixed rate limiting (D124/D125) are done; the versioned
+`/api/v1` prefix, fixed request/body/batch-size constants, numbered pagination, CSV export, and the
+security hardening pass all remain, then Phase 7, then Milestone 4 (Phase 8: packaging and hardening). Do
+not jump ahead to later-phase features early, and do not implement anything from
+`docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 
-Core, CLI, all seven test binaries, and the `ticket-hub` server target itself all compile and pass/run
+Core, CLI, all eight test binaries, and the `ticket-hub` server target itself all compile and pass/run
 cleanly on both SQLite and PostgreSQL, in every supported build configuration, including a live HTTP
 smoke test of essentially every route across all three completed phases and, across twelve batches, a
 real-browser (Playwright/Chromium) test of every write route the demo UI now exposes: login/logout,
