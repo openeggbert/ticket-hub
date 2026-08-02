@@ -1,5 +1,51 @@
 # Verification record
 
+## 2026-08-02 — Versioned `/api/v1` prefix (D127): Phase 6 slice 4
+
+Fourth Phase 6 slice, directly following the rate-limiting batch. Still open: fixed request/body/batch-
+size constants, numbered pagination, CSV export, and the security hardening pass.
+
+### What changed
+
+- Every `CROW_ROUTE(app, "/api/...")` registration in `Api.cpp` (70 total) moved to `/api/v1/...`, via a
+  single scripted regex substitution, except `GET /api/health`, deliberately kept unversioned --
+  following the common convention that infra/monitoring health checks live outside API versioning. Not
+  specified by any decision text; a conservative choice documented here explicitly. A handful of
+  in-source comments referencing exact routes were updated to match.
+- `web/app.js`'s ~63 API call sites (there is no single base-URL constant -- every call site hardcodes its
+  own `/api/...` path string, including inside template literals) were updated the same way, via a
+  matching scripted regex substitution over the whole file, again sparing `/api/health`.
+- No server/domain/database logic changed anywhere -- this batch is a pure URL rename with zero behavior
+  change beyond the URL itself.
+- Documentation: updated the *living* current-state references (`README.md`'s API section/route table,
+  `docs/SCOPE.md`, `docs/SCHEMA.md`, `PLAN.md`) to the new `/api/v1/...` paths. Deliberately did **not**
+  rewrite the dated, historical batch narratives in this file or in `CHANGELOG.md`/`NEXT.md`'s
+  per-batch bullets -- those describe what was literally true at the time each entry was written (under
+  whichever prefix was live then), matching this project's existing convention of never retroactively
+  editing past dated log entries.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 8/8 green -- this batch touched no test-relevant logic (the existing
+   integration tests call `TicketService`/`AuthService` directly, never over HTTP, so none of them
+   reference a literal `/api/...` path).
+3. No live-PostgreSQL check: this batch made no database or `IDatabase` changes, and HTTP routing is
+   identical regardless of backend, so there is nothing backend-specific to verify against a live server.
+4. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded):
+   `GET /api/health` still returns `200` unversioned; the old unversioned `GET /api/projects` now returns
+   `404`; `POST /api/v1/auth/login` and an authenticated `GET /api/v1/projects` both work exactly as the
+   unversioned routes did before.
+5. Full browser regression pass with the existing Playwright/Chromium suite (unmodified from prior
+   batches, run against the renamed routes to confirm `web/app.js` has no remaining hardcoded old-prefix
+   paths): login/logout; full project lifecycle (create, duplicate-key rejection, archive, delete,
+   recycle-bin restore/permanent-delete, non-admin 403 on create); issue watch/vote toggling, cloning,
+   issue links (add/click-navigate/delete), full-replacement edit with save/cancel; manual reorder
+   (move-up/move-down with correct renumbering), move-to-another-project, and bulk actions (multi-select,
+   bulk label with a toast reporting succeeded/failed counts). All green, confirming the UI has zero
+   remaining references to the unversioned prefix.
+
 ## 2026-08-02 — Fixed rate limits (D124/D125): Phase 6 slice 3
 
 Third Phase 6 slice, directly following the active-session-list batch. Still open: the versioned

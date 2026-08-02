@@ -75,13 +75,13 @@ The prototype's temporary `username` column was removed in `004_identity.sql`. T
 
 `user_id` PK/FK to `users(id)`, `password_hash` (Argon2id-encoded), `failed_login_count`, `locked_until` nullable, `created_at`, `updated_at`.
 
-Minimal login-attempt lockout only (locks for 15 minutes after `IDatabase::MaxFailedLoginAttempts` consecutive failures), per-account. This is now complemented -- not replaced -- by a Phase 6 IP-based fixed rate limiter (D124/D125) on the `/api/auth/login` route itself (20 attempts per IP per 15 minutes), implemented as an in-memory `TicketHub::Web::RateLimiter` in `src/web/RateLimiter.h/.cpp` rather than as database state, since it is process-lifetime-only and keyed by IP rather than by account.
+Minimal login-attempt lockout only (locks for 15 minutes after `IDatabase::MaxFailedLoginAttempts` consecutive failures), per-account. This is now complemented -- not replaced -- by a Phase 6 IP-based fixed rate limiter (D124/D125) on the `/api/v1/auth/login` route itself (20 attempts per IP per 15 minutes), implemented as an in-memory `TicketHub::Web::RateLimiter` in `src/web/RateLimiter.h/.cpp` rather than as database state, since it is process-lifetime-only and keyed by IP rather than by account.
 
 ### `sessions`
 
 `id`, `user_id` FK to `users(id)`, `token_hash` (SHA-256 hex, unique), `created_at`, `expires_at`.
 
-The raw session token is never stored, only its SHA-256 hash; it is returned to the caller exactly once, at login. 30-day fixed lifetime. The active-session list (`GET /api/sessions`) and "sign out everywhere" (`POST /api/sessions/sign-out-others`) endpoints (Phase 6, D54) are now implemented -- `IDatabase::listSessionsForUser`/`deleteOtherSessionsForUser`, no new migration needed. "Sign out everywhere" keeps the caller's own current session active and only removes the others (a conservative default; no decision text specifies this).
+The raw session token is never stored, only its SHA-256 hash; it is returned to the caller exactly once, at login. 30-day fixed lifetime. The active-session list (`GET /api/v1/sessions`) and "sign out everywhere" (`POST /api/v1/sessions/sign-out-others`) endpoints (Phase 6, D54) are now implemented -- `IDatabase::listSessionsForUser`/`deleteOtherSessionsForUser`, no new migration needed. "Sign out everywhere" keeps the caller's own current session active and only removes the others (a conservative default; no decision text specifies this).
 
 ### `personal_access_tokens`
 
@@ -414,7 +414,7 @@ audit at all to catch files left behind afterward.
 Indexes cover project/status/assignee/update issue access, live issue listing, comment timelines, aliases, label joins, and session lookup/expiry. Full-text indexes are not planned at all for V1 -- search uses a plain `LIKE`/`ILIKE` query (`docs/REDUCED_SCOPE_SPECIFICATION.md` section 10).
 
 `Domain::IssueFilter` (D10/D43, Phase 5) is the ad-hoc, in-UI-only filter model used by `IDatabase::
-listIssues` and `GET /api/issues` -- no saved/shared filters, no JQL, not usable as a webhook/board
+listIssues` and `GET /api/v1/issues` -- no saved/shared filters, no JQL, not usable as a webhook/board
 source. It combines `projectKey`, `statusKey`, `issueTypeKey`, `priorityKey`, `assigneeEmail`, `label`,
 `dueBefore` (inclusive `<=`), and `search` (matches summary, description, and issue key). `label` is
 implemented as an `EXISTS` subquery against `issue_labels`/`labels` rather than a condition on the

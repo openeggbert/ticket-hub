@@ -419,13 +419,13 @@ bool loginRateLimitOk(const crow::request& request) {
 // Shared by every write route (keyed by principal when authenticated) and by
 // the handful of routes that resolve a differently-named principal-like
 // variable instead of calling it `principal` (e.g. `current` for
-// /api/sessions/sign-out-others) via the userId overload below.
+// /api/v1/sessions/sign-out-others) via the userId overload below.
 bool writeRateLimitOk(const crow::request& request, const std::optional<Domain::Principal>& principal) {
     const std::string key = principal ? "user:" + principal->userId : "ip:" + request.remote_ip_address;
     return writeRateLimiter().allow(key);
 }
 
-// Overload for the one write route (/api/sessions/sign-out-others) that
+// Overload for the one write route (/api/v1/sessions/sign-out-others) that
 // resolves a Domain::Session (`current`) instead of a Domain::Principal.
 bool writeRateLimitOk(const crow::request&, const std::string& userId) {
     return writeRateLimiter().allow("user:" + userId);
@@ -445,7 +445,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         return jsonResponse(200, std::move(body));
     });
 
-    CROW_ROUTE(app, "/api/auth/login")
+    CROW_ROUTE(app, "/api/v1/auth/login")
     .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
         if (!loginRateLimitOk(request)) {
             return rateLimitedResponse("Too many login attempts. Try again later.", 900);
@@ -479,7 +479,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/auth/logout")
+    CROW_ROUTE(app, "/api/v1/auth/logout")
     .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
         const auto token = cookieValue(request, SessionCookieName);
         if (token) {
@@ -492,7 +492,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         return response;
     });
 
-    CROW_ROUTE(app, "/api/auth/me")([authService](const crow::request& request) {
+    CROW_ROUTE(app, "/api/v1/auth/me")([authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -505,7 +505,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // tokens. Managing tokens is a web-UI action (session-cookie-
     // authenticated, like every other write in this app), even though the
     // tokens themselves authenticate API calls.
-    CROW_ROUTE(app, "/api/tokens")
+    CROW_ROUTE(app, "/api/v1/tokens")
     .methods(crow::HTTPMethod::Get)([authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -524,7 +524,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/tokens")
+    CROW_ROUTE(app, "/api/v1/tokens")
     .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -553,7 +553,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/tokens/<string>")
+    CROW_ROUTE(app, "/api/v1/tokens/<string>")
     .methods(crow::HTTPMethod::Delete)([authService](const crow::request& request, const std::string& tokenId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -582,7 +582,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // resolvePrincipal (which would also accept a PAT Bearer token) --
     // "your active web sessions" has no meaning for a PAT-authenticated
     // caller, since a PAT is not a session at all.
-    CROW_ROUTE(app, "/api/sessions")
+    CROW_ROUTE(app, "/api/v1/sessions")
     .methods(crow::HTTPMethod::Get)([authService](const crow::request& request) {
         const auto token = cookieValue(request, SessionCookieName);
         const auto current = token ? authService->currentSession(*token) : std::nullopt;
@@ -604,7 +604,7 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Keeps the calling session active -- signing out "everywhere" should
     // never lock the caller out of the request they're currently making.
-    CROW_ROUTE(app, "/api/sessions/sign-out-others")
+    CROW_ROUTE(app, "/api/v1/sessions/sign-out-others")
     .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
         const auto token = cookieValue(request, SessionCookieName);
         const auto current = token ? authService->currentSession(*token) : std::nullopt;
@@ -627,7 +627,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/projects")
+    CROW_ROUTE(app, "/api/v1/projects")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {
             crow::json::wvalue::list items;
@@ -644,7 +644,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/projects")
+    CROW_ROUTE(app, "/api/v1/projects")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -675,7 +675,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/projects/<string>/archived")
+    CROW_ROUTE(app, "/api/v1/projects/<string>/archived")
     .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& projectKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -708,8 +708,8 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Moves a project to the recycle bin (soft delete, D88/D89) -- not a
-    // permanent delete. See DELETE /api/projects/<key>/permanent below.
-    CROW_ROUTE(app, "/api/projects/<string>")
+    // permanent delete. See DELETE /api/v1/projects/<key>/permanent below.
+    CROW_ROUTE(app, "/api/v1/projects/<string>")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& projectKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -735,7 +735,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/projects/deleted")
+    CROW_ROUTE(app, "/api/v1/projects/deleted")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -756,7 +756,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/projects/<string>/restore")
+    CROW_ROUTE(app, "/api/v1/projects/<string>/restore")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& projectKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -782,7 +782,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/projects/<string>/permanent")
+    CROW_ROUTE(app, "/api/v1/projects/<string>/permanent")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& projectKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -809,7 +809,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Installation-wide anonymous read-access toggle (D59, off by default).
-    CROW_ROUTE(app, "/api/settings/anonymous-read")
+    CROW_ROUTE(app, "/api/v1/settings/anonymous-read")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -820,7 +820,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         return jsonResponse(200, std::move(body));
     });
 
-    CROW_ROUTE(app, "/api/settings/anonymous-read")
+    CROW_ROUTE(app, "/api/v1/settings/anonymous-read")
     .methods(crow::HTTPMethod::Put)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -853,7 +853,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // list (same read-access rule as projects/issues), settable only by a
     // global administrator (there is no per-project board admin concept in
     // the reduced-scope model).
-    CROW_ROUTE(app, "/api/board-columns")([service, authService](const crow::request& request) {
+    CROW_ROUTE(app, "/api/v1/board-columns")([service, authService](const crow::request& request) {
         try {
             crow::json::wvalue::list items;
             for (const auto& column : service->listBoardColumns(resolvePrincipal(request, authService))) {
@@ -879,7 +879,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/board-columns/<string>")
+    CROW_ROUTE(app, "/api/v1/board-columns/<string>")
     .methods(crow::HTTPMethod::Put)([service, authService](const crow::request& request, const std::string& statusKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -913,7 +913,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues")
+    CROW_ROUTE(app, "/api/v1/issues")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {
             Domain::IssueFilter filter;
@@ -939,7 +939,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues")
+    CROW_ROUTE(app, "/api/v1/issues")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -985,7 +985,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/deleted")
+    CROW_ROUTE(app, "/api/v1/issues/deleted")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1006,7 +1006,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>")([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/issues/<string>")([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             auto issue = service->findIssue(issueKey, resolvePrincipal(request, authService));
             return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
@@ -1018,8 +1018,8 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Moves an issue to the recycle bin (soft delete, D22) -- not a
-    // permanent delete. See DELETE /api/issues/<key>/permanent below.
-    CROW_ROUTE(app, "/api/issues/<string>")
+    // permanent delete. See DELETE /api/v1/issues/<key>/permanent below.
+    CROW_ROUTE(app, "/api/v1/issues/<string>")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1045,7 +1045,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/restore")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/restore")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1071,7 +1071,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/permanent")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/permanent")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1097,7 +1097,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>")
+    CROW_ROUTE(app, "/api/v1/issues/<string>")
     .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1147,7 +1147,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/status")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/status")
     .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1188,7 +1188,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/comments")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/comments")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             crow::json::wvalue::list items;
@@ -1205,7 +1205,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/comments")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/comments")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1235,7 +1235,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // Comment editing (D81/D83): the author may always edit their own
     // comment; otherwise the actor needs project-Admin-or-above (or global
     // admin). Sets `edited_at` -- there is no stored history of prior text.
-    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>")
     .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1272,7 +1272,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // Tombstone delete (D82): the comment row and original body remain in
     // the database, just excluded from ordinary listing -- there is no
     // separate recycle-bin API for comments, unlike issues and projects.
-    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1304,7 +1304,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // project-role check -- any authenticated user may react to any comment,
     // same reasoning as watch/vote. `reactionKey` is a path segment from the
     // fixed Domain::isValidCommentReactionKey set (e.g. "thumbs_up").
-    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>/reactions")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>/reactions")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
         try {
             crow::json::wvalue::list items;
@@ -1323,7 +1323,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>/reactions/<string>")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>/reactions/<string>")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId, const std::string& reactionKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1351,7 +1351,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/comments/<string>/reactions/<string>")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>/reactions/<string>")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId, const std::string& reactionKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1378,7 +1378,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // Simplified worklogs (D12/D13): no own-vs-others permission split --
     // any project member (the same project-Member-or-above level as any
     // other issue write) may edit or delete any worklog on the issue.
-    CROW_ROUTE(app, "/api/issues/<string>/worklogs")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/worklogs")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             crow::json::wvalue::list items;
@@ -1395,7 +1395,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/worklogs")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/worklogs")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1427,7 +1427,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/worklogs/<string>")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/worklogs/<string>")
     .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& worklogId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1465,7 +1465,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/worklogs/<string>")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/worklogs/<string>")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& worklogId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1495,7 +1495,7 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Attachments (Phase 5, D15/D98-D105). Local filesystem storage only,
     // hardwired -- there is no storage-backend abstraction to route around.
-    CROW_ROUTE(app, "/api/issues/<string>/attachments")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/attachments")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             crow::json::wvalue::list items;
@@ -1519,7 +1519,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // into memory before that check runs (no streaming/early-abort), so an
     // oversized upload is rejected only after being fully received -- an
     // accepted V1 simplification, not a decision-driven choice.
-    CROW_ROUTE(app, "/api/issues/<string>/attachments")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/attachments")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1557,7 +1557,7 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Uploader-or-project-Admin-or-above (see TicketService::deleteAttachment
     // for why this mirrors the comment edit/delete rule).
-    CROW_ROUTE(app, "/api/issues/<string>/attachments/<string>")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/attachments/<string>")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& attachmentId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1585,12 +1585,12 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    // Not nested under /api/issues/{key} like the routes above: a download
+    // Not nested under /api/v1/issues/{key} like the routes above: a download
     // link (and an inline <img>/<audio>/<video>/<embed> preview src) only
     // ever needs the attachment id, e.g. when rendered from an
     // `attachment://<id>` reference inside Markdown (D100) that could be
     // read from any comment on the issue, not just its description.
-    CROW_ROUTE(app, "/api/attachments/<string>/download")
+    CROW_ROUTE(app, "/api/v1/attachments/<string>/download")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& attachmentId) {
         try {
             const auto [attachment, bytes] = service->downloadAttachment(attachmentId, resolvePrincipal(request, authService));
@@ -1612,7 +1612,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // the issue and project recycle bins. Fixed 90-day on-demand retention
     // (checked inside TicketService::listDeletedAttachments, not here, not
     // a background job).
-    CROW_ROUTE(app, "/api/attachments/deleted")
+    CROW_ROUTE(app, "/api/v1/attachments/deleted")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1633,7 +1633,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/attachments/<string>/restore")
+    CROW_ROUTE(app, "/api/v1/attachments/<string>/restore")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& attachmentId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1656,7 +1656,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/attachments/<string>/permanent")
+    CROW_ROUTE(app, "/api/v1/attachments/<string>/permanent")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& attachmentId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1682,7 +1682,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // Simple field-copy clone (D60): summary/description/type/priority/labels
     // into a new issue in the same project, plus a clones/is-cloned-by link
     // back to the original.
-    CROW_ROUTE(app, "/api/issues/<string>/clone")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/clone")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1707,7 +1707,7 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Simple integer manual ordering with renumbering (D31). `beforeIssueKey`
     // omitted or null moves the issue to the end of its project.
-    CROW_ROUTE(app, "/api/issues/<string>/reorder")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/reorder")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1740,7 +1740,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // Rejected if the issue has a parent or any children (see
     // IDatabase::moveIssue). Requires project-Member-or-above on both the
     // source and target projects.
-    CROW_ROUTE(app, "/api/issues/<string>/move")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/move")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1768,7 +1768,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/links")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/links")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             crow::json::wvalue::list items;
@@ -1789,7 +1789,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // Both the source (`issueKey`) and target (`targetIssueKey`) projects
     // must be accessible to the actor, since a link touches two issues that
     // may be in different projects.
-    CROW_ROUTE(app, "/api/issues/<string>/links")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/links")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1818,7 +1818,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issue-links/<string>")
+    CROW_ROUTE(app, "/api/v1/issue-links/<string>")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& linkId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1846,7 +1846,7 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Watching and voting (D20, D79): self-service only, no project-role
     // check -- any authenticated user may watch/vote on any issue.
-    CROW_ROUTE(app, "/api/issues/<string>/watchers")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/watchers")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             crow::json::wvalue::list items;
@@ -1863,7 +1863,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/watch")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/watch")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1887,7 +1887,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/watch")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/watch")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1909,7 +1909,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/voters")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/voters")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
         try {
             crow::json::wvalue::list items;
@@ -1926,7 +1926,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/vote")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/vote")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1950,7 +1950,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/<string>/vote")
+    CROW_ROUTE(app, "/api/v1/issues/<string>/vote")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1977,7 +1977,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // reports which keys went through, since a partial failure does not
     // roll back the ones that already succeeded. No cross-project move and
     // no type change in bulk (D36 explicitly excludes both).
-    CROW_ROUTE(app, "/api/issues/bulk/status")
+    CROW_ROUTE(app, "/api/v1/issues/bulk/status")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2005,7 +2005,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/bulk/assign")
+    CROW_ROUTE(app, "/api/v1/issues/bulk/assign")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2032,7 +2032,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/bulk/label")
+    CROW_ROUTE(app, "/api/v1/issues/bulk/label")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2059,7 +2059,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/issues/bulk/delete")
+    CROW_ROUTE(app, "/api/v1/issues/bulk/delete")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2085,7 +2085,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/dashboard")([service, authService](const crow::request& request) {
+    CROW_ROUTE(app, "/api/v1/dashboard")([service, authService](const crow::request& request) {
         try {
             const auto stats = service->dashboard(resolvePrincipal(request, authService));
             crow::json::wvalue body;
@@ -2124,7 +2124,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // User directory (D80): backs @mention autocomplete. Requires a session
     // -- unlike issue reads, this is never available to an anonymous caller
     // even when the installation-wide anonymous-read toggle is on.
-    CROW_ROUTE(app, "/api/users")([service, authService](const crow::request& request) {
+    CROW_ROUTE(app, "/api/v1/users")([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2145,7 +2145,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     // Simple append-only admin/security audit log (D23): global-admin-only,
     // like the recycle bins. No filtering/export/pagination -- just a
     // capped, newest-first read.
-    CROW_ROUTE(app, "/api/admin/audit-events")([service, authService](const crow::request& request) {
+    CROW_ROUTE(app, "/api/v1/admin/audit-events")([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2167,7 +2167,7 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Fixed in-app notifications (D14): always scoped to the caller's own
     // notifications, never another user's.
-    CROW_ROUTE(app, "/api/notifications")([service, authService](const crow::request& request) {
+    CROW_ROUTE(app, "/api/v1/notifications")([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2187,7 +2187,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/notifications/unread-count")([service, authService](const crow::request& request) {
+    CROW_ROUTE(app, "/api/v1/notifications/unread-count")([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2201,7 +2201,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/notifications/<string>/read")
+    CROW_ROUTE(app, "/api/v1/notifications/<string>/read")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& notificationId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2222,7 +2222,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/notifications/read-all")
+    CROW_ROUTE(app, "/api/v1/notifications/read-all")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {

@@ -9,13 +9,14 @@ the admin/security audit log (D23) are all done — see below. Phase 5 (Attachme
 This closes out Milestone 2. Phase 6 (Milestone 3) is **underway**: personal access tokens (D39/D40) --
 PAT-only API authentication, self-service create/list/revoke, Bearer-token auth wired into every existing
 route with a CSRF exemption for non-cookie auth -- the active-session list / "sign out everywhere"
-endpoint (D54) -- and now fixed rate limiting (D124/D125): a new in-memory `RateLimiter`
-(`src/web/RateLimiter.h/.cpp`) enforces a fixed 20-attempts/15-minutes-per-IP cap on `/api/auth/login`
+endpoint (D54) -- fixed rate limiting (D124/D125): a new in-memory `RateLimiter`
+(`src/web/RateLimiter.h/.cpp`) enforces a fixed 20-attempts/15-minutes-per-IP cap on `/api/v1/auth/login`
 (complementing, not replacing, the existing per-account 10-attempts/15-minutes lockout) and a fixed
-120-requests/minute-per-user-or-IP cap shared across every write route (POST/PUT/PATCH/DELETE), returning
-429 on trip. Still open in Phase 6: the versioned `/api/v1` prefix itself, fixed request/body/batch-size
-constants, numbered pagination, CSV export, and the security hardening pass. No web UI yet for
-managing tokens or sessions.)
+120-requests/minute-per-user-or-IP cap shared across every write route (POST/PUT/PATCH/DELETE), both
+returning 429 with a `Retry-After` header on trip -- and now the versioned `/api/v1` prefix itself (D127):
+every route moved except `GET /api/health`, kept unversioned by convention. Still open in Phase 6: fixed
+request/body/batch-size constants, numbered pagination, CSV export, and the security hardening pass. No
+web UI yet for managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -440,7 +441,22 @@ anything from the removed/deferred list without an explicit new product conversa
   121st through 130th all returned 429 with `{"error":"Too many requests. Try again later."}`; a `GET`
   request issued immediately after tripping the write limit still returned 200, confirming only write
   methods are limited. No web UI change (there is nothing to display -- a 429 surfaces to the existing
-  fetch-error handling like any other API error). Full detail in `docs/VERIFICATION.md`.
+  fetch-error handling like any other API error). A follow-up in the same batch added a `Retry-After`
+  header (900s login / 60s write) to both 429 responses, matching D124's original "429 + Retry-After"
+  description (only the admin-configurable multi-level limits were simplified away, not that response
+  contract). Full detail in `docs/VERIFICATION.md`.
+- **Phase 6 continued (versioned `/api/v1` prefix, D127), this batch:** every route in `Api.cpp` now
+  lives under `/api/v1` (a single scripted regex substitution over all 70 `CROW_ROUTE` registrations),
+  except `GET /api/health`, deliberately kept unversioned -- the common infra/monitoring-convention
+  choice, not specified by any decision text, documented here explicitly. `web/app.js`'s ~63 API call
+  sites were updated the same way (every route has to be hand-specified per call; there is no single base-
+  URL constant to change in one place). No server/domain/database logic changed -- purely a URL rename.
+  Verified via `curl`: the old unversioned `/api/projects` now 404s, `/api/v1/auth/login` and
+  `/api/v1/projects` work as before. Full regression pass with the existing Playwright suite (login/
+  logout, full project lifecycle including recycle bin and role-gating, issue watch/vote/clone/links/
+  edit, reorder/move/bulk actions) all green against the renamed routes, confirming the UI has no
+  remaining hardcoded old-prefix paths. Formal `/api/v2` deprecation policy remains deferred until a real
+  v2 is needed, per D127. Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -472,8 +488,9 @@ drag-drop/paste integration) are all done and fully covered in the UI. This clos
 left:
 
 1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 6 (REST API v1/export, rate limiting, active-
-   session list -- rate limiting and the active-session list are now done, the rest is not) and Phase 7
-   (backup/restore, upgrade command, not yet started).
+   session list -- rate limiting, the active-session list, and the versioned `/api/v1` prefix are now
+   done; CSV export and the request/body/batch-size/pagination items are not) and Phase 7 (backup/
+   restore, upgrade command, not yet started).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -493,8 +510,8 @@ Phase 3's core/CLI/test layer is now complete except for one item:
 
 Milestone 2 (Phases 4 and 5) is now **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
 backup/restore/upgrade) is underway -- personal access tokens (D39/D40), the active-session list/
-"sign out everywhere" endpoint (D54), and fixed rate limiting (D124/D125) are done; the versioned
-`/api/v1` prefix, fixed request/body/batch-size constants, numbered pagination, CSV export, and the
+"sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), and the versioned `/api/v1` prefix
+(D127) are done; fixed request/body/batch-size constants, numbered pagination, CSV export, and the
 security hardening pass all remain, then Phase 7, then Milestone 4 (Phase 8: packaging and hardening). Do
 not jump ahead to later-phase features early, and do not implement anything from
 `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
