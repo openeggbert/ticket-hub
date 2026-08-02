@@ -225,7 +225,8 @@ Fixed rate limits (D124/D125) are also already live and apply to every route in 
 `/api/auth/login` is capped at 20 attempts per IP per 15 minutes (on top of the existing per-account
 10-attempts/15-minutes lockout below), and every write route (POST/PUT/PATCH/DELETE) shares a 120-
 requests-per-minute cap keyed by user id when authenticated, else by IP. Both return `429` with a JSON
-`{"error": "..."}` body on trip; there is no admin configuration for either limit.
+`{"error": "..."}` body and a `Retry-After` header (in seconds, matching that limiter's fixed window) on
+trip; there is no admin configuration for either limit.
 
 | Method | Route | Auth required | Purpose |
 |---|---|---|---|
@@ -732,7 +733,10 @@ sweeping of expired entries) implements exactly D124's "simple fixed rate limit 
 config, no per-endpoint/service-account exceptions": a 20-attempts-per-IP-per-15-minutes limiter on
 `/api/auth/login` (complementing, not replacing, the existing per-account 10-attempts/15-minutes lockout),
 and a 120-requests-per-minute limiter (keyed by user id when authenticated, else by IP) shared across
-every write route (POST/PUT/PATCH/DELETE), both returning 429 on trip. The write limiter reuses the same
+every write route (POST/PUT/PATCH/DELETE), both returning 429 with a `Retry-After` header (900 or 60
+respectively) on trip -- the original (pre-simplification) D124 description paired 429 with Retry-After,
+and the V1 simplification only dropped the admin-configurable multi-level limits, not that response
+contract. The write limiter reuses the same
 near-universal chokepoint as CSRF checking -- all 43 existing `csrfTokenValid` call sites -- via a single
 scripted text substitution, plus one hand-written overload for the sole route
 (`/api/sessions/sign-out-others`) that resolves a `Domain::Session` instead of a `Domain::Principal`.

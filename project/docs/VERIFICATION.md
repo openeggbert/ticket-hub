@@ -34,6 +34,10 @@ security hardening pass.
   no Crow dependency, so it is also compiled directly (with `src/web/RateLimiter.cpp`, no `ticket-hub-core`
   link) into a new standalone `ticket-hub-ratelimiter-tests` binary that builds unconditionally under
   `TICKETHUB_BUILD_TESTS`, independent of `TICKETHUB_BUILD_SERVER`.
+- Both 429 responses carry a `Retry-After` header (900 seconds for the login limiter, 60 for the write
+  limiter) via a small `rateLimitedResponse(message, retryAfterSeconds)` helper -- the original
+  (pre-simplification) description of D124 paired 429 with Retry-After, and the V1 simplification text
+  only drops the admin-configurable multi-level limits, not that response contract.
 - No new migration; no `IDatabase` changes; no web UI changes (a 429 response surfaces through the
   existing generic API-error handling like any other error status).
 
@@ -53,11 +57,11 @@ security hardening pass.
 5. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded):
    - Login limiter: 20 consecutive `POST /api/auth/login` requests with a wrong password all returned
      `401`; the 21st and 22nd returned `429` with body `{"error":"Too many login attempts. Try again
-     later."}`.
+     later."}` and header `Retry-After: 900`.
    - Write limiter: after restarting the server (a fresh in-memory limiter) and logging in with the demo
      account, 130 consecutive `POST /api/projects` requests (valid session cookie + `X-CSRF-Token`) were
      issued back-to-back: the first 120 all returned non-429 status codes and the last 10 all returned
-     `429` with body `{"error":"Too many requests. Try again later."}`.
+     `429` with body `{"error":"Too many requests. Try again later."}` and header `Retry-After: 60`.
    - Confirmed reads are unaffected: a `GET /api/projects` issued immediately after tripping the write
      limit still returned `200`, confirming the limiter only applies to write methods.
 6. No browser/Playwright verification needed -- this batch touched no `web/` code, and there is no UI
