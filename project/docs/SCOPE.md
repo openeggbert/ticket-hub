@@ -169,6 +169,14 @@ remain as the long-term aspirational baseline only — do not build against them
   differs from the running one. No automatic update-check mechanism -- no decision text specifies one and
   no outbound-HTTP-client infrastructure exists in this codebase; an admin sets the value manually.
   **This closes Phase 7's entire roadmap list, and with it, Milestone 3.**
+- **Docker image and Compose distribution (Phase 8, D50):** a two-stage `Dockerfile` (compile with the
+  full toolchain, run on a slim image with only the required shared libraries) and a `ticket-hub` service
+  in `docker-compose.yml` alongside `postgres`, so `docker compose up` alone brings up the full instance.
+  The only supported distribution path for V1 -- no `.deb`/`.rpm`, no Helm/Kubernetes. Verified as far as
+  this environment's network policy allows (`docker build --check`/`docker compose config` pass cleanly;
+  the runtime configuration was verified directly on the host against both SQLite and live PostgreSQL);
+  the actual image build was blocked here by a network-egress policy denial, precisely disclosed in
+  `docs/VERIFICATION.md`, not worked around.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -180,7 +188,8 @@ remain as the long-term aspirational baseline only — do not build against them
   so far -- every other list endpoint (projects, comments, worklogs, attachments, notifications,
   sessions, tokens, audit events, watchers, voters, board-columns, issue-links, comment-reactions)
   remains unpaginated; extending it further is optional follow-up, not a blocker to Phase 6's exit gate.
-- Docker packaging and the hardening/accessibility passes are not done (Phase 8, Milestone 4).
+- Phase 8 (Milestone 4) is underway: Docker packaging (D50) is done. Light/dark theme (D46), the
+  accessibility baseline review (D47), and the threat-model/security self-review are not.
 
 ## Permanently out of V1 scope (do not build these)
 

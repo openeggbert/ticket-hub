@@ -1,5 +1,94 @@
 # Verification record
 
+## 2026-08-02 — Docker image and Compose distribution (D50): Phase 8 slice 1
+
+First Phase 8 (Milestone 4) slice, directly following the close of Phase 7/Milestone 3. Still open in
+Phase 8: light/dark theme (D46, currently light-only), the baseline accessibility review (D47), the
+browser-support note (D139, already satisfied by construction -- modern vanilla JS, no polyfills), the
+threat-model/security self-review, and a final documentation-currency pass.
+
+### What changed
+
+- New two-stage `Dockerfile`. `build` stage: `debian:bookworm-slim` plus the exact build dependencies
+  README.md's own "Building" section already documents (`build-essential cmake libpq-dev libsqlite3-dev
+  libargon2-dev libasio-dev`, plus `git`/`ca-certificates` for Crow's network-fetched CMake
+  `FetchContent`), configures with `-DTICKETHUB_BUILD_SERVER=ON` (which also builds the CLI, since
+  `TICKETHUB_BUILD_CLI` defaults `ON`), and runs `cmake --install build --prefix /opt/ticket-hub`.
+  `runtime` stage: the same base image with only the shared libraries needed at runtime (`libpq5
+  libsqlite3-0 libargon2-1`) plus `curl` (for the `HEALTHCHECK` below), a non-root `ticket-hub` system
+  user, and `COPY --from=build /opt/ticket-hub /opt/ticket-hub`.
+- `src/config/Config.cpp`'s compiled-in defaults for `TICKETHUB_WEB_ROOT`/`TICKETHUB_MIGRATIONS_ROOT`
+  point at the *build machine's* source checkout (`TICKETHUB_SOURCE_DIR`, a compile-time macro) -- this
+  does not exist in the runtime image, so the Dockerfile sets both explicitly via `ENV` to the installed
+  `share/ticket-hub/...` paths (README.md already flags this exact gap: "installed deployments should set
+  `TICKETHUB_MIGRATIONS_ROOT`..."). `TICKETHUB_ATTACHMENTS_DIR` is similarly set to `/data/attachments`
+  (a dedicated `VOLUME`), since its default is also cwd-relative.
+- `HEALTHCHECK` runs `curl -fsS http://127.0.0.1:$TICKETHUB_PORT/api/health` -- a real end-to-end check
+  that the HTTP server is actually accepting connections and can talk to its database, not just that the
+  process exists.
+- New `.dockerignore` (`build/`, `build-*/`, `.git/`, `*.db`/`*.sqlite3`, `data/`) to keep the build
+  context small and avoid ever accidentally baking a local SQLite file or build artifacts into an image
+  layer.
+- `docker-compose.yml` gained a `ticket-hub` service: `build: .` (the new Dockerfile), `depends_on:
+  postgres: condition: service_healthy` (waits for Postgres's existing `pg_isready` healthcheck before
+  starting), `TICKETHUB_DATABASE_URL` pointed at the `postgres` service by its Compose-internal DNS name
+  (not `127.0.0.1`, since from inside the `ticket-hub` container the database is a separate container),
+  `TICKETHUB_SEED_DEMO: "false"` by default (a real deployment should not ship pre-seeded demo accounts;
+  documented alongside how to create the first real admin or flip the flag for demo data), a
+  `ticket-hub-attachments` named volume mounted at `/data`, and its own `HEALTHCHECK`. The existing
+  `postgres` service (and its host-published port 5432) is otherwise unchanged, preserving the
+  `docker compose up -d postgres`-only workflow README.md's "Run with PostgreSQL" section already
+  documents (build from source, run only the database in Docker).
+
+### Verification -- and an explicit disclosure of what could not be tested here
+
+This environment's outbound network access goes through a policy-enforcing agent proxy
+(`/root/.ccr/README.md`). Attempting `docker compose build ticket-hub` got past Dockerfile parsing and
+manifest resolution for `debian:bookworm-slim` (proving DNS/registry-auth reachability through the proxy
+works), but failed pulling the actual image layer blobs with `403 Forbidden` from
+`production.cloudfront.docker.com` -- the CDN host Docker Hub's registry redirects layer downloads to.
+Confirmed via `curl -sS http://127.0.0.1:39727/__agentproxy/status` that this request *did* reach the
+proxy (`recentRelayFailures` shows `connect_rejected` / `gateway answered 403 to CONNECT (policy denial
+or upstream failure)` for that exact host, twice, matching two build attempts) -- this is a genuine
+organization egress-policy denial on that specific CDN host, not a proxy misconfiguration, a TLS/CA
+problem, or a bug in the Dockerfile. Per this environment's own explicit operating rule ("do not retry
+organization policy denials (403/407) — report them instead"), this was not retried or routed around
+(e.g. no attempt to switch base images, mirror registries, or disable the proxy). This is a report-only
+environmental limitation of this specific development sandbox, not a defect in what was written.
+
+Given that constraint, verification focused on everything that *could* be checked without an actual image
+build:
+
+1. `docker compose config`: the full merged Compose configuration (both services, healthchecks, the new
+   volume, environment variables) parses and resolves cleanly -- confirms YAML/schema correctness.
+2. `docker build --check .`: Docker's built-in Dockerfile linter reports "Check complete, no warnings
+   found" -- confirms Dockerfile syntax and best-practice conformance (this check runs entirely locally,
+   without pulling any image).
+3. **Runtime-configuration equivalence test**, run directly on the host: `cmake --install build --prefix
+   <dir>` was run standalone and its output tree inspected -- confirmed it produces exactly
+   `bin/ticket-hub`, `bin/ticket-hub-cli`, `share/ticket-hub/web/...`, and
+   `share/ticket-hub/migrations/{sqlite,postgresql}/...`, i.e. exactly the paths the Dockerfile's `ENV`
+   lines assume. The installed `bin/ticket-hub` binary was then run twice with the *exact* environment
+   variables the Dockerfile/Compose file set (`TICKETHUB_WEB_ROOT`/`TICKETHUB_MIGRATIONS_ROOT` pointed at
+   the installed tree, `TICKETHUB_ATTACHMENTS_DIR` pointed at a fresh directory simulating the `/data`
+   volume): once against a fresh SQLite file (confirmed `/api/health` responds, `/` serves the installed
+   `index.html`, and the attachments directory is created at the configured path), and once against a
+   **live PostgreSQL database** using the *exact* connection-string shape `docker-compose.yml` uses
+   (`host=... port=5432 dbname=tickethub user=tickethub password=tickethub-dev`, differing only in
+   `host=127.0.0.1` vs `host=postgres` -- purely a DNS-name difference Docker's internal networking
+   resolves automatically between Compose services) -- confirmed `/api/health` responds correctly there
+   too. Also ran `bin/ticket-hub-cli create-user ... --admin` against the installed binary with the same
+   environment, confirming the exact `docker compose exec ticket-hub ticket-hub-cli create-user ...`
+   workflow documented in README.md's new "Run with Docker" section actually works end-to-end.
+4. `ctest --output-on-failure`: 8/8 green -- this batch added no new C++ source files and changed no
+   application code, only packaging files, so the existing suite is unaffected by construction; still run
+   to confirm nothing else regressed.
+
+Taken together, this is strong indirect evidence the Dockerfile/Compose file are correct and would build
+and run successfully in any environment with ordinary Docker Hub network access -- but it is explicitly
+**not** the same as having actually run `docker compose up` end-to-end in a container, and this record
+says so precisely rather than implying otherwise.
+
 ## 2026-08-02 — Structured JSON logs and admin version banner (D112/D133): Phase 7 slice 2, Phase 7 complete
 
 Second and final Phase 7 slice. Every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 7 list is now

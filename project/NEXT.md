@@ -7,8 +7,12 @@ batch-size constants, a security hardening pass that found and fixed a real stor
 partial pagination for `GET /api/v1/issues`) and the entire backup/restore/upgrade/observability list
 (backup/restore live-verified on both databases, the existing `migrate` command confirmed to satisfy the
 upgrade requirement, structured JSON logs to stdout, and an in-app admin version banner). Full
-batch-by-batch detail below. **Next up: Phase 8 (Milestone 4, packaging and release hardening)** -- not
-yet started. No web UI yet for managing tokens or sessions.)
+batch-by-batch detail below. **Phase 8 (Milestone 4, packaging and release hardening) is now underway**:
+the Docker image and Compose distribution path (D50) are done -- `docker compose up` brings up the full
+instance, verified as far as this environment's network policy allows (see `docs/VERIFICATION.md` for
+the exact disclosure). Still open in Phase 8: light/dark theme (D46), the accessibility baseline review
+(D47), the threat-model/security self-review, and a final documentation-currency pass. No web UI yet for
+managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -557,6 +561,22 @@ anything from the removed/deferred list without an explicit new product conversa
   with a configured newer version sees the exact expected banner text; a non-admin sees nothing), plus a
   project-management regression pass and the full three-configuration build matrix, all green. Full
   detail in `docs/VERIFICATION.md`.
+- **Phase 8 started (Docker image and Compose distribution, D50), this batch:** new two-stage `Dockerfile`
+  (build with the full toolchain, run on a slim `debian:bookworm-slim` image with only the required
+  shared libraries plus a non-root user and a real `/api/health`-hitting `HEALTHCHECK`); new
+  `.dockerignore`; `docker-compose.yml` gained a `ticket-hub` app service alongside the existing
+  `postgres` one, so `docker compose up` alone brings up the full instance -- the prior
+  `docker compose up -d postgres`-only workflow is untouched. Explicitly disclosed verification boundary:
+  this sandboxed environment's network policy blocks the specific CDN host Docker Hub redirects
+  image-layer pulls to (confirmed via the agent proxy's own status log as a policy decision, correctly
+  not retried or routed around per this environment's rules), so the actual `docker build` could not run
+  here. Verified everything that could be checked without it: `docker build --check`/`docker compose
+  config` both pass cleanly, and the exact runtime configuration the container sets was verified directly
+  on the host (`cmake --install`'s output tree matches what the Dockerfile's `ENV` lines assume; the
+  installed binary runs correctly with that exact configuration against both a fresh SQLite file and a
+  live PostgreSQL database using the Compose file's exact connection-string shape; the documented
+  `ticket-hub-cli create-user ... --admin` workflow works against the installed binaries). Full detail,
+  including the precise proxy-log evidence, in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -588,7 +608,8 @@ drag-drop/paste integration) are all done and fully covered in the UI. This clos
 left:
 
 1. **Milestone 3 (Phases 6 and 7) is now fully complete** per `docs/REDUCED_SCOPE_ROADMAP.md`. Milestone
-   4 (Phase 8: packaging and release hardening) has not been started.
+   4 (Phase 8: packaging and release hardening) is underway: Docker/Compose (D50) is done; light/dark
+   theme (D46), the accessibility baseline review (D47), and the threat-model/security self-review remain.
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -614,8 +635,11 @@ versioned `/api/v1` prefix (D127), read-only CSV export (D48), fixed request-bod
 rollout -- every other list endpoint remains open and documented as such). Phase 7: backup/restore
 (D106-D108, live-verified on both databases), the upgrade mechanism (D111, already satisfied by
 `ticket-hub-cli migrate`), structured JSON logs to stdout (D133), and the in-app admin version banner
-(D112). Next: Milestone 4 (Phase 8: packaging and release hardening), not yet started. Do not jump ahead
-to later-phase features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+(D112). **Milestone 4 (Phase 8: packaging and release hardening) is underway**: the Docker image and
+Compose distribution path (D50) are done -- `docker compose up` brings up the full instance. Still open:
+light/dark theme (D46), the accessibility baseline review (D47), and the threat-model/security
+self-review. Do not jump ahead to later-phase features early, and do not implement anything from
+`docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — Docker image and Compose distribution (D50) — Phase 8 started
+
+- **Docker**: new two-stage `Dockerfile` (build with the full toolchain, run on a slim
+  `debian:bookworm-slim` image with just the required shared libraries), the only supported distribution
+  path for V1 -- no `.deb`/`.rpm`, no Helm/Kubernetes.
+- **Compose**: `docker-compose.yml` gained a `ticket-hub` app service alongside the existing `postgres`
+  one; `docker compose up` alone now brings up the full instance at `http://127.0.0.1:8080`. The existing
+  `docker compose up -d postgres`-only workflow is unchanged.
+- New `.dockerignore` to keep the build context small.
+- Verified as far as this development environment's network policy allows: `docker build --check` and
+  `docker compose config` both pass; the exact runtime configuration the container sets was verified
+  directly on the host against both SQLite and a live PostgreSQL database. The base-image layer pull
+  itself could not be executed here due to a network-egress policy block unrelated to the Dockerfile.
+
 ## Unreleased — Structured JSON logs and admin version banner (D112/D133) — Phase 7 complete
 
 - **Structured JSON logs**: every log line Crow produces (server startup, per-request logs, warnings/

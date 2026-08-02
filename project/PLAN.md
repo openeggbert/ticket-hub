@@ -30,7 +30,15 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   `ticket-hub-cli migrate`), structured JSON logs to stdout (D133, a new `JsonLogHandler` replacing
   Crow's default stderr logger), and an in-app admin version banner (D112, admin-configured, no outbound
   network calls). No web UI yet for managing tokens or sessions.
-- **Milestone 4** (Phase 8: packaging and release hardening) -- not started.
+- **Milestone 4** (Phase 8: packaging and release hardening) -- **started**. Docker image + Compose
+  distribution (D50) done: a two-stage `Dockerfile` and a `ticket-hub` service added to
+  `docker-compose.yml` alongside `postgres`, so `docker compose up` alone brings up the full instance.
+  Verified as far as this environment's network policy allows -- `docker build --check`/
+  `docker compose config` pass cleanly and the runtime configuration was verified directly on the host
+  against both SQLite and live PostgreSQL, but the actual image build was blocked by a network-egress
+  policy denial on the CDN host Docker Hub redirects layer pulls to (see `docs/VERIFICATION.md` for the
+  full disclosure). Still open: light/dark theme (D46), the accessibility baseline review (D47), and the
+  threat-model/security self-review.
 
 ## Implementation rules
 
