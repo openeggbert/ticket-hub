@@ -19,18 +19,14 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   sortable list, 90-day recycle bin) are all implemented, tested on both PostgreSQL and SQLite, and
   browser-verified end-to-end with Playwright/Chromium.
 - **Milestone 3** (Phase 6: API/security hardening/export; Phase 7: backup/restore/upgrade) -- **started**.
-  Personal access tokens (D39/D40) are done: self-service create/list/revoke, `Authorization: Bearer`
-  authentication wired into every existing route, CSRF correctly exempted for non-cookie auth. The
-  active-session list and "sign out everywhere" endpoint (D54) are also done (`GET /api/v1/sessions`,
-  `POST /api/v1/sessions/sign-out-others`; keeps the caller's own current session active). Fixed rate
-  limits (D124/D125) are also done: an in-memory `TicketHub::Web::RateLimiter` caps `/api/v1/auth/login`
-  at 20 attempts per IP per 15 minutes (alongside the existing per-account lockout) and every write route
-  at 120 requests per minute per user-or-IP, both returning 429 with a `Retry-After` header. The versioned
-  `/api/v1` prefix itself (D127) is also done -- every route moved except `GET /api/health`, kept
-  unversioned by convention. Read-only CSV export of issues (D48) is done:
-  `GET /api/v1/issues/export.csv`, same filters/authorization as the JSON list route, plus an "Export
-  CSV" link in the web UI. Still open: fixed request/body/batch-size constants, numbered pagination, the
-  security hardening pass, and all of Phase 7. No web UI yet for managing tokens or sessions.
+  Done so far: personal access tokens (D39/D40, self-service create/list/revoke, `Authorization: Bearer`
+  wired into every route); the active-session list/"sign out everywhere" endpoint (D54); fixed rate
+  limits (D124/D125, `TicketHub::Web::RateLimiter` -- 20 login attempts/IP/15min, 120 writes/min/
+  user-or-IP, both with a `Retry-After` header); the versioned `/api/v1` prefix (D127, every route except
+  `GET /api/health`); read-only CSV export of issues (D48, `GET /api/v1/issues/export.csv` plus a web UI
+  link); and fixed request-body/bulk-item constants (D125, 1 MiB JSON body cap, 200-item bulk cap). Still
+  open: numbered pagination (D126, which also unblocks D125's undefined "max page size"), the security
+  hardening pass, and all of Phase 7. No web UI yet for managing tokens or sessions.
 - **Milestone 4** (Phase 8: packaging and hardening) -- not started.
 
 ## Implementation rules

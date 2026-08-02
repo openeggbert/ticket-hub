@@ -1,5 +1,54 @@
 # Verification record
 
+## 2026-08-02 — Fixed request/batch-size constants (D125): Phase 6 slice 6
+
+Sixth Phase 6 slice, directly following the CSV export batch. Still open: numbered pagination (D126,
+which max page size from D125 is coupled to and remains blocked on) and the security hardening pass.
+
+### What changed
+
+- New `MaxJsonRequestBodyBytes` (1 MiB) constant in `Api.cpp`, enforced via a scripted substitution at
+  all 20 `const auto body = crow::json::load(request.body);` call sites (a single exact-text pattern,
+  confirmed identical via the same kind of pre-edit regex scan used for the CSRF/rate-limit chokepoints
+  in earlier batches): a `request.body.size() > MaxJsonRequestBodyBytes` check immediately precedes the
+  parse, returning `413 Payload Too Large` before any JSON parsing happens. Enforced against the already-
+  buffered `request.body.size()`, not against the `Content-Length` header pre-buffer -- Crow's SimpleApp
+  has no built-in hook for the latter, so this caps what the application processes rather than what the
+  socket layer buffers. Documented as a known, honest limitation: a real internet-facing deployment
+  should also enforce a body-size limit at a reverse proxy in front of this server. The multipart
+  attachment upload route is untouched -- it already enforces its own stricter, purpose-built 25MB/file
+  limit (D98) via `Domain::validateAttachmentUpload`, unrelated to this constant.
+- New `MaxBulkItems` (200) constant, enforced in the single shared `requiredIssueKeys(body)` helper that
+  all four `POST /api/v1/issues/bulk/*` routes already called -- one chokepoint, no route-by-route
+  changes needed. Throws `std::invalid_argument` (mapped to the existing `400` handler in all four
+  routes) when `issueKeys.size() > MaxBulkItems`.
+- Max page size intentionally not implemented: it has no meaning until numbered/offset pagination (D126)
+  exists, and faking a page-size cap on today's fully-unpaginated list endpoints would not match D125's
+  intent. Documented in-source and here rather than silently skipped.
+- No admin configuration for either enforced limit, matching D125's "no admin exceptions."
+- No database/migration changes.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 8/8 green -- unchanged; this batch adds size checks ahead of existing
+   logic and does not change behavior for any request within the limits, which is what every existing
+   test exercises.
+3. No live-PostgreSQL check: no database or `IDatabase` changes in this batch.
+4. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded):
+   - A ~1.05MB JSON issue-creation body returned `413` with body `{"error":"Request body too large"}`.
+   - A bulk-label request with 201 `issueKeys` returned `400` with body
+     `{"error":"issueKeys must not contain more than 200 items"}`; the same request with exactly 200
+     `issueKeys` returned `200` (confirming the boundary is `> 200`, not `>= 200`).
+   - A normal-sized issue-creation request (well under 1 MiB) still returned `201` as before, confirming
+     no regression for ordinary traffic.
+5. Browser regression: re-ran the existing `reorder_move_bulk_test.mjs` Playwright script (reorder,
+   move-to-another-project, and bulk actions -- the write paths most directly touched by this batch,
+   since bulk actions now flow through the new `MaxBulkItems` check) against the running server; all
+   assertions passed unchanged, confirming ordinary-sized traffic through the newly-touched call sites is
+   unaffected.
+
 ## 2026-08-02 — Read-only CSV export of issues (D48): Phase 6 slice 5
 
 Fifth Phase 6 slice, directly following the `/api/v1` versioning batch. Still open: fixed request/body/

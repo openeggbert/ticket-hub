@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Fixed request/batch-size constants (D125) — Phase 6 continued
+
+- **Max request body size**: every JSON request body (20 call sites) is now capped at 1 MiB, returning
+  `413` before parsing if exceeded. The multipart attachment upload route is unaffected (it already has
+  its own stricter 25MB/file limit, D98).
+- **Max bulk items**: every `POST /api/v1/issues/bulk/*` route's `issueKeys` array is now capped at 200
+  items, returning `400` if exceeded.
+- Max page size not implemented -- has no meaning until numbered/offset pagination (D126) exists.
+- No admin configuration for either limit, per D125.
+
 ## Unreleased — Read-only CSV export of issues (D48) — Phase 6 continued
 
 - **CSV export**: `GET /api/v1/issues/export.csv` returns the same issues `GET /api/v1/issues` would,

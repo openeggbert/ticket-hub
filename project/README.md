@@ -217,7 +217,10 @@ Do not put production secrets in shell history. The target product uses a plugga
 The API now lives under a formal `/api/v1` prefix (D127) -- every route below except `GET /api/health`
 (kept unversioned, following the common convention that infra/monitoring health checks live outside API
 versioning; not specified by any decision text, a conservative choice documented here explicitly).
-Numbered/offset pagination (D126) is still open. PAT authentication (D39/D40) is already live: every
+Numbered/offset pagination (D126) is still open, so "max page size" (D125) has no meaning yet either.
+Every JSON request body is capped at 1 MiB (`413` if exceeded) and every bulk-action `issueKeys` array is
+capped at 200 items (`400` if exceeded) -- fixed constants, no admin configuration, per D125. PAT
+authentication (D39/D40) is already live: every
 route below marked "session" also accepts an `Authorization: Bearer <token>` header from a personal
 access token instead -- the two are mutually exclusive per request (D54), and a Bearer-authenticated
 write needs no `X-CSRF-Token` header (CSRF only defends against a browser silently attaching a session
@@ -778,6 +781,18 @@ via `curl` (correct `Content-Type`/`Content-Disposition`, correct CSV body, filt
 unauthenticated) and Playwright (clicked the link, captured the actual browser download, confirmed the
 suggested filename and row count, then filtered by project and confirmed the re-downloaded CSV contains
 only that project's issues).
+
+A twenty-second batch continued Phase 6 with fixed request/batch-size constants (D125). Every JSON
+request body (20 call sites) is now capped at 1 MiB, enforced against `request.body.size()` immediately
+before parsing, returning `413` if exceeded -- via the same single-scripted-substitution technique used
+for the CSRF/rate-limit chokepoints in earlier batches. Every `POST /api/v1/issues/bulk/*` route's
+`issueKeys` array is capped at 200 items via the one shared `requiredIssueKeys` helper all four routes
+already called, returning `400` if exceeded. Max page size is intentionally not implemented -- it has no
+meaning until numbered/offset pagination (D126) exists, and is documented as still open rather than
+faked. No admin configuration for either limit, per D125. No database changes. Verified via `curl` (a
+~1.05MB body returns 413; 201 bulk `issueKeys` returns 400 with the exact boundary at 200; a normal-sized
+request is unaffected) and a Playwright regression pass of the reorder/move/bulk-actions flow (the write
+paths most directly touched, since bulk actions now flow through the new limit).
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
