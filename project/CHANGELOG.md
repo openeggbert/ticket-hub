@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — Security hardening pass — Phase 6 continued
+
+- **Security fix**: an uploaded attachment's `Content-Type` is caller-supplied and unvalidated (D98 has
+  no upload-time MIME allow-list). A file uploaded with a spoofed `text/html` Content-Type could
+  previously execute an embedded `<script>` payload same-origin, either via direct download-URL
+  navigation (served as `Content-Disposition: inline`) or via the app's own text/PDF preview (rendered in
+  an unsandboxed `<iframe>`) -- a real stored-XSS/CSRF-bypass chain reachable by any project member
+  against any other user who previewed the attachment. Fixed with two independent layers: the preview
+  `<iframe>`s now carry `sandbox=""`, and the download route now serves `Content-Disposition: attachment`
+  (forced download, not rendered) for any content type that could execute script as a document
+  (text/html, xhtml, svg, xml, javascript variants), leaving normal image/audio/video/PDF/plain-text
+  previews unaffected.
+- **Security headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and
+  `Referrer-Policy: same-origin` on every response; a `Content-Security-Policy` (`script-src 'self'`,
+  among other directives) on the HTML document.
+- Dependency review: Crow is pinned to release tag `v1.3.3`, not a floating branch (no change needed).
+- Session/CSRF review: confirmed no regressions to cookie flags (`HttpOnly`/`Secure`/`SameSite=Strict`)
+  or CSRF enforcement from earlier Phase 6 batches.
+
 ## Unreleased — Fixed request/batch-size constants (D125) — Phase 6 continued
 
 - **Max request body size**: every JSON request body (20 call sites) is now capped at 1 MiB, returning

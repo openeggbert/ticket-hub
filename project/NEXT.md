@@ -5,10 +5,12 @@ Current version: 0.2.0. Phase 3 is complete at every layer (core, tests, server,
 -- see below for detail. Phase 6 (Milestone 3) is **underway**: done so far are personal access tokens
 (D39/D40), the active-session list / "sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125,
 including a `Retry-After` header on 429), the versioned `/api/v1` prefix (D127, every route except
-`GET /api/health`), read-only CSV export of issues (D48), and fixed request-body/bulk-item-count
-constants (D125: 1 MiB JSON body cap, 200-item bulk cap). Still open in Phase 6: numbered/offset
-pagination (D126, which also unblocks D125's still-undefined "max page size"), and the security hardening
-pass. No web UI yet for managing tokens or sessions.)
+`GET /api/health`), read-only CSV export of issues (D48), fixed request-body/bulk-item-count constants
+(D125: 1 MiB JSON body cap, 200-item bulk cap), and the security hardening pass -- which found and fixed a
+real stored-XSS vulnerability in attachment preview/download (spoofed `Content-Type` + unsandboxed
+`<iframe>`/`Content-Disposition: inline`), plus added standard security headers and a CSP. Phase 6's only
+remaining item is numbered/offset pagination (D126, which also unblocks D125's still-undefined "max page
+size"). No web UI yet for managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -476,6 +478,29 @@ anything from the removed/deferred list without an explicit new product conversa
   are unaffected) and a Playwright regression pass of reorder/move/bulk actions (the write paths most
   directly touched, since bulk actions now flow through the new limit). Full detail in
   `docs/VERIFICATION.md`.
+- **Phase 6 continued (security hardening pass), this batch, closing out the last non-pagination Phase 6
+  item:** while reviewing response headers, found a real vulnerability: an attachment's `contentType` is
+  caller-supplied and unvalidated (D98 has no upload-time MIME allow-list), and the download route always
+  served `Content-Disposition: inline`, and the app's text/PDF preview rendered inside an unsandboxed
+  `<iframe>` -- so a file uploaded with a spoofed `Content-Type: text/html` and a `<script>` payload could
+  execute same-origin, either via direct download-URL navigation or via the app's own preview UI. A real
+  stored-XSS/CSRF-bypass chain (the readable `th_csrf` cookie would let injected script forge write
+  requests), reachable by any project member against any other user including a global admin. Fixed in
+  two independent layers: `web/app.js`'s PDF/text `<iframe>` previews now carry `sandbox=""` (the
+  load-bearing fix); `Api.cpp`'s download route now serves `Content-Disposition: attachment` for any
+  content type matching a new `contentTypeSafeToRenderInline` deny-list (html/xhtml/svg/xml/javascript
+  variants), leaving `<img>`/`<audio>`/`<video>`/PDF/plain-text previews unaffected (those elements don't
+  honor `Content-Disposition` anyway). Also added standard security headers (`X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin` on every response; a
+  `Content-Security-Policy` with `script-src 'self'` on the HTML document only). Dependency review: Crow
+  is pinned to release tag `v1.3.3` already (no change). Session/CSRF review: confirmed no regressions to
+  cookie flags or CSRF enforcement across this session's earlier batches. Note: the roadmap's referenced
+  `handoff/KNOWN_CONSTRAINTS_AND_RISKS.md` does not exist in this repo; reviewed via direct code audit
+  instead. Verified via `curl` (headers present correctly; spoofed-`text/html` upload now downloads
+  instead of rendering; real PNG still previews inline) and Playwright (all four preview kinds still work
+  through the sandboxed iframes; a targeted XSS-reproduction test confirms the payload's `alert()` no
+  longer fires -- a regression guard against this fix being reverted). Full detail in
+  `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -507,9 +532,8 @@ drag-drop/paste integration) are all done and fully covered in the UI. This clos
 left:
 
 1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: Phase 6 (REST API v1/export, rate limiting, active-
-   session list -- rate limiting, the active-session list, the versioned `/api/v1` prefix, CSV export,
-   and fixed request-body/bulk-item constants are now done; numbered pagination and the security
-   hardening pass are not) and Phase 7 (backup/restore, upgrade command, not yet started).
+   session list -- everything except numbered/offset pagination (D126) is now done, including the
+   security hardening pass) and Phase 7 (backup/restore, upgrade command, not yet started).
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -530,10 +554,10 @@ Phase 3's core/CLI/test layer is now complete except for one item:
 Milestone 2 (Phases 4 and 5) is now **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
 backup/restore/upgrade) is underway -- personal access tokens (D39/D40), the active-session list/
 "sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), the versioned `/api/v1` prefix
-(D127), read-only CSV export of issues (D48), and fixed request-body/bulk-item constants (D125) are done;
-numbered pagination (D126) and the security hardening pass remain, then Phase 7, then Milestone 4 (Phase
-8: packaging and hardening). Do not jump ahead to later-phase features early, and do not implement anything
-from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+(D127), read-only CSV export of issues (D48), fixed request-body/bulk-item constants (D125), and the
+security hardening pass are all done; numbered pagination (D126) is the only Phase 6 item remaining, then
+Phase 7, then Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to later-phase features
+early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 

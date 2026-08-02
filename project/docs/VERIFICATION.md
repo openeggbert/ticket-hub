@@ -1,5 +1,114 @@
 # Verification record
 
+## 2026-08-02 — Security hardening pass: Phase 6 slice 7
+
+Seventh Phase 6 slice, directly following the fixed request/batch-size constants batch. This is the
+roadmap's "security hardening pass: dependency review, header review, session/CSRF review against
+`handoff/KNOWN_CONSTRAINTS_AND_RISKS.md`" item. **Note:** `handoff/KNOWN_CONSTRAINTS_AND_RISKS.md` does
+not exist anywhere in this repository -- only `docs/HANDOFF_NOTES.md` (a general onboarding doc, not a
+risk register) exists. The review below was performed as a direct code-level audit instead of against
+that (missing) file. With this batch done, Phase 6's only remaining item is numbered/offset pagination
+(D126).
+
+### What changed -- a real vulnerability found and fixed
+
+While reviewing response headers, found that `GET /api/v1/attachments/{id}/download` always served
+`Content-Disposition: inline`, and that an attachment's `contentType` is entirely caller-supplied and
+unvalidated (D98 deliberately has no upload-time MIME allow-list, and the blocked-extension list only
+blocks executable-ish extensions like `.exe`/`.bat`, not `.txt`/other safe-looking names). Concretely: any
+project member could upload a file named e.g. `notes.txt` with its multipart `Content-Type` part spoofed
+to `text/html` and a `<script>` payload as the body. Two exploitable paths followed from this:
+
+1. **Direct download-URL navigation**: `Content-Disposition: inline` + `Content-Type: text/html` means a
+   browser navigating straight to the download URL renders the attacker's HTML as a same-origin document,
+   executing the embedded script with access to the app's origin (including the readable, non-HttpOnly
+   `th_csrf` cookie -- enough to forge CSRF-protected write requests).
+2. **The app's own "text" preview**: `attachmentPreviewKind` classifies anything with a `text/*`
+   content-type (which includes a spoofed `text/html`) as `'text'`, and the issue drawer rendered that
+   preview inside an `<iframe src="...">` with **no `sandbox` attribute** -- so even a user who never
+   directly visits the download URL, but simply clicks "preview" on the malicious attachment inside the
+   app's own UI, would trigger same-origin script execution.
+
+This is a real stored-XSS / CSRF-bypass chain reachable by any project member against any other user
+(including a global administrator) who previews or opens the malicious attachment -- a genuine privilege-
+escalation path, not a theoretical one. Fixed with two independent, complementary layers:
+
+- **`web/app.js`**: both the PDF and text `<iframe>` previews now carry `sandbox=""` (no flags at all --
+  disables script execution, plugins, forms, and top-level navigation from inside the iframe
+  unconditionally, regardless of what content-type/disposition the server ever serves). This is the
+  load-bearing fix, since it closes the vulnerability regardless of any Content-Disposition subtlety.
+- **`src/web/Api.cpp`**: new `contentTypeSafeToRenderInline(contentType)` — an explicit deny-list of
+  document/script-capable MIME prefixes (`text/html`, `application/xhtml*`, `image/svg*`,
+  `application/xml`, `text/xml`, `application/xslt`, `application/javascript`, `text/javascript`,
+  `application/ecmascript`). The download route now serves `Content-Disposition: attachment` (forced
+  download, never rendered as a document) for anything matching that deny-list, and `inline` (unchanged
+  behavior) for everything else -- closing the direct-URL-navigation path independently of the iframe fix.
+  `<img>`/`<audio>`/`<video>` tag rendering is unaffected either way, since those elements do not honor
+  `Content-Disposition` (confirmed: a real PNG upload still serves `inline` and previews via `<img>`
+  exactly as before).
+
+### What changed -- standard security headers
+
+- New `applySecurityHeaders(response)` in `Api.cpp`, called from every response-construction chokepoint
+  (`jsonResponse`, and the two routes that build a `crow::response` directly -- the CSV export and the
+  attachment download): `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: same-origin`.
+- New `applyStaticSecurityHeaders(response)` in `HttpServer.cpp`, applied to every static asset response
+  (`/`, `/app.js`, `/styles.css`, `/favicon.svg`): the same three headers.
+- New `applyHtmlSecurityHeaders(response)`, applied only to `/` (the HTML document itself, the only
+  response type where a CSP is meaningful): adds
+  `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+  img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'`.
+  `script-src 'self'` is the load-bearing clause -- it blocks any injected/inline `<script>` from
+  executing at all, a second layer of defense behind the app's own Markdown-HTML sanitization and the
+  now-sandboxed attachment-preview iframes. `style-src` allows `'unsafe-inline'` deliberately: `web/app.js`
+  renders many inline `style="..."` attributes for layout (not user-controlled content), and reworking
+  that to CSS classes is out of scope for this pass -- inline styles cannot execute script, so this is a
+  low-risk, explicit exception, not an oversight.
+
+### Dependency review
+
+Crow (the only fetched third-party dependency, via `FetchContent`) is pinned to release tag `v1.3.3`, not
+a floating branch -- already good practice, no change needed. SQLite3/PostgreSQL/Argon2 are resolved via
+`find_package` against system-installed libraries, not vendored/fetched, so there is no supply-chain
+pinning concern to add there either. No dependency changes in this batch.
+
+### Session/CSRF review
+
+Re-confirmed (unchanged from prior batches, no regressions introduced by the PAT/rate-limiting/versioning
+work earlier this session): the session cookie is `HttpOnly; Secure; SameSite=Strict`; the CSRF cookie is
+`Secure; SameSite=Strict` (deliberately not `HttpOnly`, since client-side JS must read it to echo as the
+`X-CSRF-Token` header); `csrfTokenValid` still correctly requires an exact cookie/header match and is
+still correctly exempted only when no session cookie is present at all (PAT/Bearer-authenticated
+requests). No changes needed here; already matches CLAUDE.md's security rules.
+
+### Verification
+
+1. `cmake --build` (full config, `-DTICKETHUB_BUILD_SERVER=ON`): zero warnings/errors from Ticket Hub's
+   own files.
+2. `ctest --output-on-failure`: 8/8 green -- this batch is header/response-shape changes plus one
+   deny-list function with no domain/database surface, so the existing suite (which never asserts on
+   response headers) is unaffected and still exercises every write-path behavior unchanged.
+3. No live-PostgreSQL check: no database or `IDatabase` changes in this batch.
+4. End-to-end HTTP verification via `curl` against a locally running server (SQLite, demo-seeded):
+   - Confirmed `X-Content-Type-Options`/`X-Frame-Options`/`Referrer-Policy` present on `/`, `/app.js`, and
+     `/api/health` responses; confirmed `Content-Security-Policy` present only on `/`.
+   - Uploaded a file named `evil.txt` with a spoofed `Content-Type: text/html` multipart part; confirmed
+     the download response now serves `Content-Disposition: attachment` (previously `inline`).
+   - Uploaded a real PNG with `Content-Type: image/png`; confirmed the download response still serves
+     `Content-Disposition: inline` exactly as before (no regression for legitimate image previews).
+5. Browser verification via Playwright/Chromium:
+   - Re-ran the existing attachment-preview-kinds test (PDF/text/audio/video) against the sandboxed
+     iframes: all four preview kinds still render their expected tag (`<iframe>` for pdf/text,
+     `<audio>`/`<video>` for the others) exactly as before -- confirming `sandbox=""` does not break the
+     legitimate preview functionality.
+   - New targeted XSS-reproduction test: uploaded a `text/html`-spoofed `evil.txt` containing
+     `<script>alert("XSS-MARKER: " + document.cookie)</script>`, clicked its preview in the issue drawer
+     (the exact vulnerable path found above), and confirmed **no `dialog` event fired** (Playwright's
+     `page.on('dialog')` would catch an `alert()` call) -- the payload did not execute. Before the
+     `sandbox=""` fix this same script would have fired the dialog; this test is the regression guard
+     against the fix being accidentally reverted.
+
 ## 2026-08-02 — Fixed request/batch-size constants (D125): Phase 6 slice 6
 
 Sixth Phase 6 slice, directly following the CSV export batch. Still open: numbered pagination (D126,

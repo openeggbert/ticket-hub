@@ -24,9 +24,13 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   limits (D124/D125, `TicketHub::Web::RateLimiter` -- 20 login attempts/IP/15min, 120 writes/min/
   user-or-IP, both with a `Retry-After` header); the versioned `/api/v1` prefix (D127, every route except
   `GET /api/health`); read-only CSV export of issues (D48, `GET /api/v1/issues/export.csv` plus a web UI
-  link); and fixed request-body/bulk-item constants (D125, 1 MiB JSON body cap, 200-item bulk cap). Still
-  open: numbered pagination (D126, which also unblocks D125's undefined "max page size"), the security
-  hardening pass, and all of Phase 7. No web UI yet for managing tokens or sessions.
+  link); fixed request-body/bulk-item constants (D125, 1 MiB JSON body cap, 200-item bulk cap); and the
+  security hardening pass, which found and fixed a real stored-XSS vulnerability (an uploaded
+  attachment's spoofed `Content-Type` could execute script via the unsandboxed preview `<iframe>`/
+  `Content-Disposition: inline` -- both fixed), plus added standard security headers and a CSP, and
+  reviewed dependencies/session/CSRF cookies (no other issues found). Phase 6's only remaining item:
+  numbered pagination (D126, which also unblocks D125's undefined "max page size"). Then Phase 7. No web
+  UI yet for managing tokens or sessions.
 - **Milestone 4** (Phase 8: packaging and hardening) -- not started.
 
 ## Implementation rules
