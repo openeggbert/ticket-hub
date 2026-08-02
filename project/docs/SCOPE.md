@@ -70,7 +70,7 @@ remain as the long-term aspirational baseline only — do not build against them
   are scanned once, at creation, for `@handle` tokens, notifying each resolved user; three fixed
   notification types only -- assigned, mentioned, comment on a watched issue -- no email, no
   admin-configurable schemes, no per-user preferences/digests; a recipient who is both mentioned and
-  watching the same comment gets one notification, not two. `GET /api/users` backs @mention autocomplete
+  watching the same comment gets one notification, not two. `GET /api/v1/users` backs @mention autocomplete
   in the comment textarea; a notification bell with an unread badge in the UI opens a panel that marks
   notifications read on click and navigates to the related issue.
 - **Rendered Markdown, visual toolbar, and live preview (Phase 4, D16):** comment bodies and issue
@@ -91,23 +91,23 @@ remain as the long-term aspirational baseline only — do not build against them
   general-purpose hook on every write. Global-administrator-only read access, via a new "Audit log" nav
   item in `web/`. **This closes out Phase 4 (Collaboration) -- every item in
   `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 4 list is now implemented.**
-- **Ad-hoc issue filter/search widening (Phase 5, D10/D43):** `GET /api/issues` and `Domain::IssueFilter`
+- **Ad-hoc issue filter/search widening (Phase 5, D10/D43):** `GET /api/v1/issues` and `Domain::IssueFilter`
   now also support type/priority/assignee/label/due-date filters (in addition to project/status/search),
   and search now also matches issue description, not just summary/key. Still ad-hoc, in-UI-only filters
   (no saved/shared filters, no JQL, not usable as a webhook/board source) and still a plain `LIKE`/`ILIKE`
   substring match (no full-text index). This is the first Phase 5 slice.
-- **Personal dashboard widgets (Phase 5, D24):** `GET /api/dashboard` now returns `assignedToMe`,
+- **Personal dashboard widgets (Phase 5, D24):** `GET /api/v1/dashboard` now returns `assignedToMe`,
   `watchedIssues`, and `upcomingDeadlines` for an authenticated caller (empty for anonymous). Matches
   D24's fixed widget set (assigned issues, watched issues, recent activity, deadlines, simple stats) minus
   the active-sprint widget, dropped since Scrum was removed for V1. `assignedToMe`/`upcomingDeadlines`
   exclude Done-category issues.
-- **Kanban board WIP limits (Phase 5, D32/D33):** `GET /api/board-columns` and
-  `PUT /api/board-columns/{statusKey}` (global-administrator-only). A single flat, installation-wide
+- **Kanban board WIP limits (Phase 5, D32/D33):** `GET /api/v1/board-columns` and
+  `PUT /api/v1/board-columns/{statusKey}` (global-administrator-only). A single flat, installation-wide
   table -- one row per fixed workflow status, no per-project scoping at all, following
   `docs/REDUCED_SCOPE_DATA_MODEL.md`'s target schema literally. Soft, display-time-only: an over-limit
   column is highlighted in `web/`'s Board view, never blocked from receiving more issues.
 - **Attachments (Phase 5, D15/D98-D105):** the full vertical -- upload, download, delete, and a recycle
-  bin, all via `/api/issues/{key}/attachments` plus `/api/attachments/{id}/...`. Local filesystem storage
+  bin, all via `/api/v1/issues/{key}/attachments` plus `/api/v1/attachments/{id}/...`. Local filesystem storage
   only, hardwired (D15, no S3/pluggable backend). Fixed limits (D98): 25MB/file, 20/issue, a blocked-
   extension denylist, no admin configuration. All four native-element previews (D99): image, PDF, text,
   audio/video. Full upload + drag/drop + paste in the Markdown editor (D100), referencing
@@ -115,19 +115,23 @@ remain as the long-term aspirational baseline only — do not build against them
   Upload-time SHA-256/size verification only, no periodic integrity audit (D105). **This closes out Phase
   5 -- every item in `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 5 list is now implemented, and Milestone 2 is
   fully closed.**
-- **Personal access tokens (Phase 6, D39/D40):** self-service `GET`/`POST /api/tokens`,
-  `DELETE /api/tokens/{id}`. Hashed storage, mandatory expiration, revocation, last-used tracking; no
+- **Personal access tokens (Phase 6, D39/D40):** self-service `GET`/`POST /api/v1/tokens`,
+  `DELETE /api/v1/tokens/{id}`. Hashed storage, mandatory expiration, revocation, last-used tracking; no
   scopes/rotation/admin-configurable lifetime. `Authorization: Bearer <token>` now authenticates any
   route (mutually exclusive with the session cookie per request, D54); Bearer-authenticated requests are
   exempt from the CSRF check. No web UI yet for managing tokens.
-- **Active-session list and "sign out everywhere" (Phase 6, D54):** `GET /api/sessions`,
-  `POST /api/sessions/sign-out-others` (session-cookie-only, not usable via PAT). Keeps the caller's own
+- **Active-session list and "sign out everywhere" (Phase 6, D54):** `GET /api/v1/sessions`,
+  `POST /api/v1/sessions/sign-out-others` (session-cookie-only, not usable via PAT). Keeps the caller's own
   current session active -- a conservative default, no decision text specifies this. No web UI yet.
 - **Fixed rate limits (Phase 6, D124/D125):** a new in-memory `TicketHub::Web::RateLimiter` (fixed-window,
-  no admin config) caps `/api/auth/login` at 20 attempts per IP per 15 minutes (on top of, not instead of,
+  no admin config) caps `/api/v1/auth/login` at 20 attempts per IP per 15 minutes (on top of, not instead of,
   the existing per-account 10-attempts/15-minutes lockout) and every write route at 120 requests per
-  minute (keyed by user id when authenticated, else by IP), both returning 429 on trip. Process-lifetime
-  in-memory state only; resets on restart.
+  minute (keyed by user id when authenticated, else by IP), both returning 429 with a `Retry-After` header
+  on trip. Process-lifetime in-memory state only; resets on restart.
+- **Versioned `/api/v1` prefix (Phase 6, D127):** every route now lives under `/api/v1` except
+  `GET /api/health`, deliberately kept unversioned (common infra/monitoring convention; not specified by
+  any decision text, documented here explicitly). Formal `/api/v2` deprecation policy deferred until a
+  real v2 is needed, per D127.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
@@ -135,8 +139,8 @@ remain as the long-term aspirational baseline only — do not build against them
   `issueTypeKey`/`parentIssueKey`).
 - Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
   by any decision.
-- Phase 6 is underway (PATs, active-session list, and fixed rate limits done). The versioned `/api/v1`
-  prefix itself, fixed request/body/batch-size constants, numbered/offset pagination, read-only CSV
+- Phase 6 is underway (PATs, active-session list, fixed rate limits, and the versioned `/api/v1` prefix
+  done). Fixed request/body/batch-size constants, numbered/offset pagination, read-only CSV
   export, and the security hardening pass are all still open. Phase 7 (backup/restore/upgrade) is not
   started.
 - Docker packaging and the hardening/accessibility passes are not done (Phase 8).

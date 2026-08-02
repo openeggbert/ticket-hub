@@ -107,7 +107,7 @@ function escapeHtml(value) {
 // applied to javascript:-scheme links below.
 function attachmentDownloadUrl(url) {
   const match = /^attachment:\/\/([a-zA-Z0-9-]+)$/.exec(url);
-  return match ? `/api/attachments/${match[1]}/download` : null;
+  return match ? `/api/v1/attachments/${match[1]}/download` : null;
 }
 
 function renderMarkdownInline(text) {
@@ -409,7 +409,7 @@ async function uploadAttachmentFile(issueKey, file) {
   const formData = new FormData();
   formData.append('file', file);
   const csrfToken = getCookie('th_csrf');
-  const response = await fetch(`/api/issues/${encodeURIComponent(issueKey)}/attachments`, {
+  const response = await fetch(`/api/v1/issues/${encodeURIComponent(issueKey)}/attachments`, {
     method: 'POST',
     headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
     body: formData
@@ -432,7 +432,7 @@ async function api(path, options = {}) {
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   }
   const response = await fetch(path, { headers, ...options });
-  if (response.status === 401 && path !== '/api/auth/login' && path !== '/api/auth/me') {
+  if (response.status === 401 && path !== '/api/v1/auth/login' && path !== '/api/v1/auth/me') {
     showLoginScreen();
     throw new Error('Your session expired. Please sign in again.');
   }
@@ -483,7 +483,7 @@ function renderCurrentUser() {
 // generic "session expired" error -- this is the initial, silent probe.
 async function checkExistingSession() {
   try {
-    state.principal = await api('/api/auth/me');
+    state.principal = await api('/api/v1/auth/me');
     return true;
   } catch {
     return false;
@@ -595,7 +595,7 @@ function pageHeader(title, subtitle, eyebrow = 'Ticket Hub') {
 }
 
 async function loadBaseData() {
-  const [health, projects, users] = await Promise.all([api('/api/health'), api('/api/projects'), api('/api/users')]);
+  const [health, projects, users] = await Promise.all([api('/api/health'), api('/api/v1/projects'), api('/api/v1/users')]);
   state.projects = projects.items;
   state.selectedProject ||= state.projects[0]?.key || null;
   state.users = users.items;
@@ -607,7 +607,7 @@ async function loadBaseData() {
 // --- Fixed in-app notifications (D14) ---
 
 async function refreshNotificationBadge() {
-  const { count } = await api('/api/notifications/unread-count');
+  const { count } = await api('/api/v1/notifications/unread-count');
   const badge = document.querySelector('#notification-badge');
   badge.textContent = count > 99 ? '99+' : String(count);
   badge.classList.toggle('hidden', count === 0);
@@ -626,7 +626,7 @@ function notificationSummary(notification) {
 async function renderNotificationPanel() {
   const panel = document.querySelector('#notification-panel');
   panel.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  const { items } = await api('/api/notifications');
+  const { items } = await api('/api/v1/notifications');
   panel.innerHTML = `
     <div class="notification-panel-header">
       <strong>Notifications</strong>
@@ -642,12 +642,12 @@ async function renderNotificationPanel() {
       : '<div class="empty-state">No notifications yet.</div>'}`;
 
   panel.querySelector('#notification-mark-all-read')?.addEventListener('click', async () => {
-    await api('/api/notifications/read-all', { method: 'POST' });
+    await api('/api/v1/notifications/read-all', { method: 'POST' });
     await refreshNotificationBadge();
     await renderNotificationPanel();
   });
   panel.querySelectorAll('[data-notification-id]').forEach(item => item.addEventListener('click', async () => {
-    await api(`/api/notifications/${encodeURIComponent(item.dataset.notificationId)}/read`, { method: 'POST' });
+    await api(`/api/v1/notifications/${encodeURIComponent(item.dataset.notificationId)}/read`, { method: 'POST' });
     panel.classList.add('hidden');
     await refreshNotificationBadge();
     if (item.dataset.issueKey) {
@@ -737,7 +737,7 @@ function renderProjectSelectors() {
 
 async function renderDashboard() {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  state.dashboard = await api('/api/dashboard');
+  state.dashboard = await api('/api/v1/dashboard');
   const stats = state.dashboard;
   content.innerHTML = `
     ${pageHeader('Dashboard', 'A focused overview of work across all projects.', 'Workspace')}
@@ -759,7 +759,7 @@ async function renderDashboard() {
 // events the server already caps the response to.
 async function renderAuditLog() {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  const { items } = await api('/api/admin/audit-events');
+  const { items } = await api('/api/v1/admin/audit-events');
   content.innerHTML = `
     ${pageHeader('Audit log', 'Append-only record of admin and security events. Never purged or exported.', 'Administration')}
     <div class="panel">
@@ -789,7 +789,7 @@ async function renderAuditLog() {
 // already be looking at a specific issue.
 async function renderAttachmentRecycleBin() {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  const { items } = await api('/api/attachments/deleted');
+  const { items } = await api('/api/v1/attachments/deleted');
   content.innerHTML = `
     ${pageHeader('Attachment recycle bin', 'Deleted attachments, retained for 90 days.', 'Administration')}
     <div class="panel">
@@ -812,14 +812,14 @@ async function renderAttachmentRecycleBin() {
   bindIssueLinks();
   document.querySelectorAll('[data-restore-attachment]').forEach(button => button.addEventListener('click', async () => {
     try {
-      await api(`/api/attachments/${encodeURIComponent(button.dataset.restoreAttachment)}/restore`, { method: 'POST' });
+      await api(`/api/v1/attachments/${encodeURIComponent(button.dataset.restoreAttachment)}/restore`, { method: 'POST' });
       showToast('Attachment restored');
       await renderAttachmentRecycleBin();
     } catch (error) { showToast(error.message); }
   }));
   document.querySelectorAll('[data-permanent-attachment]').forEach(button => button.addEventListener('click', async () => {
     try {
-      await api(`/api/attachments/${encodeURIComponent(button.dataset.permanentAttachment)}/permanent`, { method: 'DELETE' });
+      await api(`/api/v1/attachments/${encodeURIComponent(button.dataset.permanentAttachment)}/permanent`, { method: 'DELETE' });
       showToast('Attachment permanently deleted');
       await renderAttachmentRecycleBin();
     } catch (error) { showToast(error.message); }
@@ -836,7 +836,7 @@ async function fetchIssues() {
   if (state.filterLabel) params.set('label', state.filterLabel);
   if (state.filterDueBefore) params.set('dueBefore', state.filterDueBefore);
   if (state.search) params.set('q', state.search);
-  const result = await api(`/api/issues?${params}`);
+  const result = await api(`/api/v1/issues?${params}`);
   state.issues = result.items;
 }
 
@@ -858,7 +858,7 @@ async function renderIssuesView(showingDeleted) {
   let issues;
   if (showingDeleted) {
     try {
-      issues = (await api('/api/issues/deleted')).items;
+      issues = (await api('/api/v1/issues/deleted')).items;
     } catch (error) {
       showError(error);
       return;
@@ -953,7 +953,7 @@ async function renderIssuesView(showingDeleted) {
     document.querySelectorAll('[data-restore-issue]').forEach(button => button.addEventListener('click', async () => {
       const key = button.dataset.restoreIssue;
       try {
-        await api(`/api/issues/${encodeURIComponent(key)}/restore`, { method: 'POST' });
+        await api(`/api/v1/issues/${encodeURIComponent(key)}/restore`, { method: 'POST' });
         showToast(`${key} restored`);
         await renderIssuesView(true);
       } catch (error) { showToast(error.message); }
@@ -961,7 +961,7 @@ async function renderIssuesView(showingDeleted) {
     document.querySelectorAll('[data-permanent-issue]').forEach(button => button.addEventListener('click', async () => {
       const key = button.dataset.permanentIssue;
       try {
-        await api(`/api/issues/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
+        await api(`/api/v1/issues/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
         showToast(`${key} permanently deleted`);
         await renderIssuesView(true);
       } catch (error) { showToast(error.message); }
@@ -1020,7 +1020,7 @@ async function renderIssuesView(showingDeleted) {
       const index = issues.findIndex(candidate => candidate.key === key);
       if (index <= 0) return;
       try {
-        await api(`/api/issues/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeIssueKey: issues[index - 1].key }) });
+        await api(`/api/v1/issues/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeIssueKey: issues[index - 1].key }) });
         await renderIssuesView(false);
       } catch (error) { showToast(error.message); }
     }));
@@ -1031,7 +1031,7 @@ async function renderIssuesView(showingDeleted) {
       if (index === -1 || index >= issues.length - 1) return;
       const beforeIssueKey = index + 2 < issues.length ? issues[index + 2].key : null;
       try {
-        await api(`/api/issues/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeIssueKey }) });
+        await api(`/api/v1/issues/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeIssueKey }) });
         await renderIssuesView(false);
       } catch (error) { showToast(error.message); }
     }));
@@ -1061,14 +1061,14 @@ async function renderIssuesView(showingDeleted) {
       await renderIssuesView(false);
     } catch (error) { showToast(error.message); }
   };
-  document.querySelector('#bulk-status-apply')?.addEventListener('click', () => runBulk('/api/issues/bulk/status', { statusKey: document.querySelector('#bulk-status-select').value }, 'Bulk status change'));
-  document.querySelector('#bulk-assign-apply')?.addEventListener('click', () => runBulk('/api/issues/bulk/assign', { assigneeEmail: document.querySelector('#bulk-assignee-select').value || null }, 'Bulk assign'));
+  document.querySelector('#bulk-status-apply')?.addEventListener('click', () => runBulk('/api/v1/issues/bulk/status', { statusKey: document.querySelector('#bulk-status-select').value }, 'Bulk status change'));
+  document.querySelector('#bulk-assign-apply')?.addEventListener('click', () => runBulk('/api/v1/issues/bulk/assign', { assigneeEmail: document.querySelector('#bulk-assignee-select').value || null }, 'Bulk assign'));
   document.querySelector('#bulk-label-apply')?.addEventListener('click', () => {
     const label = document.querySelector('#bulk-label-input').value.trim();
     if (!label) return;
-    runBulk('/api/issues/bulk/label', { label }, 'Bulk add label');
+    runBulk('/api/v1/issues/bulk/label', { label }, 'Bulk add label');
   });
-  document.querySelector('#bulk-delete-apply')?.addEventListener('click', () => runBulk('/api/issues/bulk/delete', {}, 'Bulk delete'));
+  document.querySelector('#bulk-delete-apply')?.addEventListener('click', () => runBulk('/api/v1/issues/bulk/delete', {}, 'Bulk delete'));
 
   bindIssueLinks();
 }
@@ -1083,7 +1083,7 @@ async function renderBoard() {
   state.filterLabel = '';
   state.filterDueBefore = '';
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  const [, boardColumns] = await Promise.all([fetchIssues(), api('/api/board-columns')]);
+  const [, boardColumns] = await Promise.all([fetchIssues(), api('/api/v1/board-columns')]);
   const isAdmin = Boolean(state.principal?.isAdmin);
   const selected = state.projects.find(project => project.key === state.selectedProject);
   const columns = STATUSES.map(status => {
@@ -1138,7 +1138,7 @@ async function renderBoard() {
     const raw = input.value.trim();
     const wipLimit = raw === '' ? null : Number(raw);
     try {
-      await api(`/api/board-columns/${encodeURIComponent(statusKey)}`, { method: 'PUT', body: JSON.stringify({ wipLimit }) });
+      await api(`/api/v1/board-columns/${encodeURIComponent(statusKey)}`, { method: 'PUT', body: JSON.stringify({ wipLimit }) });
       showToast('WIP limit updated');
       await renderBoard();
     } catch (error) { showToast(error.message); }
@@ -1160,7 +1160,7 @@ async function renderProjectsView(showingDeleted) {
   let projects = state.projects;
   if (showingDeleted) {
     try {
-      projects = (await api('/api/projects/deleted')).items;
+      projects = (await api('/api/v1/projects/deleted')).items;
     } catch (error) {
       showError(error);
       return;
@@ -1203,7 +1203,7 @@ async function renderProjectsView(showingDeleted) {
     const key = button.dataset.archiveProject;
     const archived = button.dataset.archived !== 'true';
     try {
-      await api(`/api/projects/${encodeURIComponent(key)}/archived`, { method: 'PATCH', body: JSON.stringify({ archived }) });
+      await api(`/api/v1/projects/${encodeURIComponent(key)}/archived`, { method: 'PATCH', body: JSON.stringify({ archived }) });
       showToast(`${key} ${archived ? 'archived' : 'unarchived'}`);
       await loadBaseData();
       await renderProjectsView(false);
@@ -1212,7 +1212,7 @@ async function renderProjectsView(showingDeleted) {
   document.querySelectorAll('[data-delete-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
     const key = button.dataset.deleteProject;
     try {
-      await api(`/api/projects/${encodeURIComponent(key)}`, { method: 'DELETE' });
+      await api(`/api/v1/projects/${encodeURIComponent(key)}`, { method: 'DELETE' });
       showToast(`${key} moved to the recycle bin`);
       await loadBaseData();
       await renderProjectsView(false);
@@ -1221,7 +1221,7 @@ async function renderProjectsView(showingDeleted) {
   document.querySelectorAll('[data-restore-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
     const key = button.dataset.restoreProject;
     try {
-      await api(`/api/projects/${encodeURIComponent(key)}/restore`, { method: 'POST' });
+      await api(`/api/v1/projects/${encodeURIComponent(key)}/restore`, { method: 'POST' });
       showToast(`${key} restored`);
       await loadBaseData();
       await renderProjectsView(true);
@@ -1230,7 +1230,7 @@ async function renderProjectsView(showingDeleted) {
   document.querySelectorAll('[data-permanent-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
     const key = button.dataset.permanentProject;
     try {
-      await api(`/api/projects/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
+      await api(`/api/v1/projects/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
       showToast(`${key} permanently deleted`);
       await renderProjectsView(true);
     } catch (error) { showToast(error.message); }
@@ -1280,7 +1280,7 @@ async function applyStatusChange(issueKey, statusKey, resolution, expectedVersio
   try {
     const payload = { statusKey, expectedVersion };
     if (resolution) payload.resolution = resolution;
-    await api(`/api/issues/${encodeURIComponent(issueKey)}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
+    await api(`/api/v1/issues/${encodeURIComponent(issueKey)}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
     showToast(`${issueKey} status updated`);
     await renderCurrentView();
     await openIssue(issueKey);
@@ -1311,13 +1311,13 @@ async function openIssue(issueKey) {
   issueDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   try {
     const [issue, comments, links, watchers, voters, worklogs, attachments] = await Promise.all([
-      api(`/api/issues/${encodeURIComponent(issueKey)}`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/comments`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/links`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/watchers`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/voters`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/worklogs`),
-      api(`/api/issues/${encodeURIComponent(issueKey)}/attachments`)
+      api(`/api/v1/issues/${encodeURIComponent(issueKey)}`),
+      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/comments`),
+      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/links`),
+      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/watchers`),
+      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/voters`),
+      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/worklogs`),
+      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/attachments`)
     ]);
     state.currentIssue = issue;
     let attachmentSort = 'date';
@@ -1326,7 +1326,7 @@ async function openIssue(issueKey) {
     // alongside everything else -- fine at demo scale, mirrors the
     // watchers/voters fetch-once-per-open pattern above.
     const reactionLists = await Promise.all(comments.items.map(comment =>
-      api(`/api/issues/${encodeURIComponent(issueKey)}/comments/${encodeURIComponent(comment.id)}/reactions`)));
+      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/comments/${encodeURIComponent(comment.id)}/reactions`)));
     const reactionsByComment = new Map(comments.items.map((comment, index) => [comment.id, reactionLists[index].items]));
 
     const isWatching = watchers.items.some(user => user.id === state.principal?.userId);
@@ -1499,7 +1499,7 @@ async function openIssue(issueKey) {
       document.querySelector('#move-issue-button')?.addEventListener('click', async () => {
         const targetProjectKey = document.querySelector('#move-target-project').value;
         try {
-          const moved = await api(`/api/issues/${encodeURIComponent(issue.key)}/move`, { method: 'POST', body: JSON.stringify({ targetProjectKey }) });
+          const moved = await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/move`, { method: 'POST', body: JSON.stringify({ targetProjectKey }) });
           showToast(`${issue.key} moved to ${moved.key}`);
           await loadBaseData();
           await renderCurrentView();
@@ -1512,19 +1512,19 @@ async function openIssue(issueKey) {
 
       document.querySelector('#watch-toggle').addEventListener('click', async () => {
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}/watch`, { method: isWatching ? 'DELETE' : 'POST' });
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/watch`, { method: isWatching ? 'DELETE' : 'POST' });
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
       });
       document.querySelector('#vote-toggle').addEventListener('click', async () => {
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}/vote`, { method: isVoting ? 'DELETE' : 'POST' });
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/vote`, { method: isVoting ? 'DELETE' : 'POST' });
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
       });
       document.querySelector('#clone-issue').addEventListener('click', async () => {
         try {
-          const cloned = await api(`/api/issues/${encodeURIComponent(issue.key)}/clone`, { method: 'POST' });
+          const cloned = await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/clone`, { method: 'POST' });
           showToast(`${issue.key} cloned as ${cloned.key}`);
           await renderCurrentView();
           await openIssue(cloned.key);
@@ -1532,7 +1532,7 @@ async function openIssue(issueKey) {
       });
       document.querySelector('#delete-issue')?.addEventListener('click', async () => {
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}`, { method: 'DELETE' });
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}`, { method: 'DELETE' });
           showToast(`${issue.key} moved to the recycle bin`);
           closeDrawer();
           await renderCurrentView();
@@ -1542,7 +1542,7 @@ async function openIssue(issueKey) {
         event.preventDefault();
         const values = Object.fromEntries(new FormData(event.currentTarget).entries());
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}/links`, {
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/links`, {
             method: 'POST',
             body: JSON.stringify({ targetIssueKey: values.targetIssueKey.trim(), linkType: values.linkType })
           });
@@ -1552,7 +1552,7 @@ async function openIssue(issueKey) {
       document.querySelectorAll('[data-delete-link]').forEach(button => {
         button.addEventListener('click', async () => {
           try {
-            await api(`/api/issue-links/${encodeURIComponent(button.dataset.deleteLink)}`, { method: 'DELETE' });
+            await api(`/api/v1/issue-links/${encodeURIComponent(button.dataset.deleteLink)}`, { method: 'DELETE' });
             await openIssue(issue.key);
           } catch (error) { showToast(error.message); }
         });
@@ -1585,7 +1585,7 @@ async function openIssue(issueKey) {
           return;
         }
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}/worklogs`, {
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/worklogs`, {
             method: 'POST',
             body: JSON.stringify({ workDate: values.workDate, timeSpentSeconds, comment: values.comment || null })
           });
@@ -1595,7 +1595,7 @@ async function openIssue(issueKey) {
       });
       document.querySelectorAll('[data-delete-worklog]').forEach(button => button.addEventListener('click', async () => {
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}/worklogs/${encodeURIComponent(button.dataset.deleteWorklog)}`, { method: 'DELETE' });
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/worklogs/${encodeURIComponent(button.dataset.deleteWorklog)}`, { method: 'DELETE' });
           showToast('Worklog deleted');
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
@@ -1610,7 +1610,7 @@ async function openIssue(issueKey) {
         const kind = button.dataset.previewKind;
         const container = document.querySelector(`#attachment-preview-${CSS.escape(id)}`);
         if (!kind) {
-          window.open(`/api/attachments/${encodeURIComponent(id)}/download`, '_blank');
+          window.open(`/api/v1/attachments/${encodeURIComponent(id)}/download`, '_blank');
           return;
         }
         if (!container.classList.contains('hidden')) {
@@ -1618,7 +1618,7 @@ async function openIssue(issueKey) {
           container.innerHTML = '';
           return;
         }
-        const url = `/api/attachments/${encodeURIComponent(id)}/download`;
+        const url = `/api/v1/attachments/${encodeURIComponent(id)}/download`;
         const markup = {
           image: `<img src="${url}" alt="">`,
           pdf: `<iframe src="${url}" title="PDF preview"></iframe>`,
@@ -1631,7 +1631,7 @@ async function openIssue(issueKey) {
       }));
       document.querySelectorAll('[data-delete-attachment]').forEach(button => button.addEventListener('click', async () => {
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}/attachments/${encodeURIComponent(button.dataset.deleteAttachment)}`, { method: 'DELETE' });
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/attachments/${encodeURIComponent(button.dataset.deleteAttachment)}`, { method: 'DELETE' });
           showToast('Attachment deleted');
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
@@ -1668,14 +1668,14 @@ async function openIssue(issueKey) {
         const body = new FormData(event.currentTarget).get('body').trim();
         if (!body) return;
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
           showToast('Comment added');
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
       });
       document.querySelectorAll('[data-delete-comment]').forEach(button => button.addEventListener('click', async () => {
         try {
-          await api(`/api/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(button.dataset.deleteComment)}`, { method: 'DELETE' });
+          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(button.dataset.deleteComment)}`, { method: 'DELETE' });
           showToast('Comment deleted');
           await openIssue(issue.key);
         } catch (error) { showToast(error.message); }
@@ -1683,7 +1683,7 @@ async function openIssue(issueKey) {
       document.querySelectorAll('[data-toggle-reaction]').forEach(button => button.addEventListener('click', async () => {
         const commentId = button.dataset.toggleReaction;
         const reactionKey = button.dataset.reactionKey;
-        const path = `/api/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(commentId)}/reactions/${encodeURIComponent(reactionKey)}`;
+        const path = `/api/v1/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(commentId)}/reactions/${encodeURIComponent(reactionKey)}`;
         try {
           await api(path, { method: button.classList.contains('reaction-button--active') ? 'DELETE' : 'POST' });
           await openIssue(issue.key);
@@ -1707,7 +1707,7 @@ async function openIssue(issueKey) {
           const newBody = article.querySelector('.comment-edit-textarea').value.trim();
           if (!newBody) return;
           try {
-            await api(`/api/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(commentId)}`, {
+            await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(commentId)}`, {
               method: 'PATCH',
               body: JSON.stringify({ body: newBody, expectedVersion: comment.version })
             });
@@ -1734,7 +1734,7 @@ async function openIssue(issueKey) {
             expectedVersion: issue.version
           };
           try {
-            await api(`/api/issues/${encodeURIComponent(issue.key)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+            await api(`/api/v1/issues/${encodeURIComponent(issue.key)}`, { method: 'PATCH', body: JSON.stringify(payload) });
             showToast(`${issue.key} updated`);
             await renderCurrentView();
             await openIssue(issue.key);
@@ -1789,7 +1789,7 @@ async function refreshCreateParentOptions() {
 
   const wantedLevel = level === -1 ? 0 : 1;
   try {
-    const result = await api(`/api/issues?project=${encodeURIComponent(projectKey)}`);
+    const result = await api(`/api/v1/issues?project=${encodeURIComponent(projectKey)}`);
     if (requestId !== createParentRequestId) return; // a newer call already superseded this one
     const candidates = result.items.filter(candidate => issueTypeHierarchyLevel(candidate.type.key) === wantedLevel);
     select.innerHTML += candidates.map(candidate => `<option value="${escapeHtml(candidate.key)}">${escapeHtml(candidate.key)} — ${escapeHtml(candidate.summary)}</option>`).join('');
@@ -1869,7 +1869,7 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
   };
   const errorElement = document.querySelector('#create-error');
   try {
-    const created = await api('/api/issues', { method: 'POST', body: JSON.stringify(payload) });
+    const created = await api('/api/v1/issues', { method: 'POST', body: JSON.stringify(payload) });
     state.selectedProject = created.projectKey;
     form.reset();
     closeCreateModal();
@@ -1893,7 +1893,7 @@ document.querySelector('#project-form').addEventListener('submit', async event =
   };
   const errorElement = document.querySelector('#project-error');
   try {
-    const created = await api('/api/projects', { method: 'POST', body: JSON.stringify(payload) });
+    const created = await api('/api/v1/projects', { method: 'POST', body: JSON.stringify(payload) });
     form.reset();
     closeProjectModal();
     showToast(`${created.key} created`);
@@ -1916,9 +1916,9 @@ loginForm.addEventListener('submit', async event => {
   loginError.classList.add('hidden');
   const values = Object.fromEntries(new FormData(loginForm).entries());
   try {
-    await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: values.email.trim(), password: values.password }) });
+    await api('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email: values.email.trim(), password: values.password }) });
     loginForm.reset();
-    state.principal = await api('/api/auth/me');
+    state.principal = await api('/api/v1/auth/me');
     renderCurrentUser();
     showAppShell();
     await loadBaseData();
@@ -1931,7 +1931,7 @@ loginForm.addEventListener('submit', async event => {
 
 document.querySelector('#logout-button').addEventListener('click', async () => {
   try {
-    await api('/api/auth/logout', { method: 'POST' });
+    await api('/api/v1/auth/logout', { method: 'POST' });
   } catch {
     // Best-effort: show the login screen regardless of the response.
   }

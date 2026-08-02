@@ -212,17 +212,19 @@ Do not put production secrets in shell history. The target product uses a plugga
 | `TICKETHUB_MIGRATIONS_ROOT` | source `migrations/` | backend migration root |
 | `TICKETHUB_ATTACHMENTS_DIR` | source `data/attachments/` | local filesystem attachment storage root (D15) -- point this at a persistent, backed-up volume in a real deployment |
 
-## Prototype API
+## API
 
-The current unversioned demo API will evolve into a formal `/api/v1` prefix later in Phase 6 of
-`docs/REDUCED_SCOPE_ROADMAP.md`, alongside numbered pagination. PAT authentication
-(D39/D40) is already live: every route below marked "session" also accepts an `Authorization: Bearer
-<token>` header from a personal access token instead -- the two are mutually exclusive per request (D54),
-and a Bearer-authenticated write needs no `X-CSRF-Token` header (CSRF only defends against a browser
-silently attaching a session cookie, which a PAT is never subject to).
+The API now lives under a formal `/api/v1` prefix (D127) -- every route below except `GET /api/health`
+(kept unversioned, following the common convention that infra/monitoring health checks live outside API
+versioning; not specified by any decision text, a conservative choice documented here explicitly).
+Numbered/offset pagination (D126) is still open. PAT authentication (D39/D40) is already live: every
+route below marked "session" also accepts an `Authorization: Bearer <token>` header from a personal
+access token instead -- the two are mutually exclusive per request (D54), and a Bearer-authenticated
+write needs no `X-CSRF-Token` header (CSRF only defends against a browser silently attaching a session
+cookie, which a PAT is never subject to).
 
 Fixed rate limits (D124/D125) are also already live and apply to every route in the table below:
-`/api/auth/login` is capped at 20 attempts per IP per 15 minutes (on top of the existing per-account
+`/api/v1/auth/login` is capped at 20 attempts per IP per 15 minutes (on top of the existing per-account
 10-attempts/15-minutes lockout below), and every write route (POST/PUT/PATCH/DELETE) shares a 120-
 requests-per-minute cap keyed by user id when authenticated, else by IP. Both return `429` with a JSON
 `{"error": "..."}` body and a `Retry-After` header (in seconds, matching that limiter's fixed window) on
@@ -231,79 +233,79 @@ trip; there is no admin configuration for either limit.
 | Method | Route | Auth required | Purpose |
 |---|---|---|---|
 | `GET` | `/api/health` | no | health, version and backend |
-| `POST` | `/api/auth/login` | no | `{email,password}` → sets session + CSRF cookies |
-| `POST` | `/api/auth/logout` | no | clears session (safe to call unauthenticated) |
-| `GET` | `/api/auth/me` | session or PAT | current principal, or 401 |
-| `GET` | `/api/tokens` | session | list the caller's own personal access tokens (D39/D40) |
-| `POST` | `/api/tokens` | session + CSRF | `{name, expiresInDays}` → `{token, ...}`; raw token shown only once |
-| `DELETE` | `/api/tokens/{id}` | session + CSRF | revoke one of the caller's own tokens |
-| `GET` | `/api/sessions` | session (not PAT) | the caller's own active web sessions, with `isCurrent` marked (D54) |
-| `POST` | `/api/sessions/sign-out-others` | session + CSRF (not PAT) | signs out every other session for the caller, keeps the current one |
-| `GET` | `/api/dashboard` | session, or anon if enabled | counts, recent issues, and (authenticated only, D24) assigned-to-me/watched/upcoming-deadline issues |
-| `GET` | `/api/board-columns` | session, or anon if enabled | one entry per fixed workflow status with its optional soft WIP limit (D32/D33) |
-| `PUT` | `/api/board-columns/{statusKey}` | session + CSRF, global admin | `{wipLimit}` (number or null); installation-wide, not per-project |
-| `GET` | `/api/users` | session | user directory (id/displayName/email/handle) for @mention autocomplete (D80) |
-| `GET` | `/api/notifications` | session | `?unread=true` filters; fixed set (D14) |
-| `GET` | `/api/notifications/unread-count` | session | `{count}` |
-| `POST` | `/api/notifications/{id}/read` | session + CSRF | scoped to the caller's own notifications |
-| `POST` | `/api/notifications/read-all` | session + CSRF | scoped to the caller's own notifications |
-| `GET` | `/api/admin/audit-events` | session, global admin | newest 200 admin/security events (D23) |
-| `GET` | `/api/projects` | session, or anon if enabled | active project summaries |
-| `POST` | `/api/projects` | session + CSRF, global admin | create project |
-| `PATCH` | `/api/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |
-| `DELETE` | `/api/projects/{key}` | session + CSRF, project admin | move to recycle bin |
-| `GET` | `/api/projects/deleted` | session, global admin | list recycle bin |
-| `POST` | `/api/projects/{key}/restore` | session + CSRF, global admin | restore from recycle bin |
-| `DELETE` | `/api/projects/{key}/permanent` | session + CSRF, global admin | permanently delete |
-| `GET` | `/api/settings/anonymous-read` | session | current toggle value |
-| `PUT` | `/api/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
-| `GET` | `/api/issues` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description) |
-| `POST` | `/api/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
-| `GET` | `/api/issues/{key}` | session, or anon if enabled | current key or permanent alias |
-| `PATCH` | `/api/issues/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
-| `PATCH` | `/api/issues/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
-| `GET` | `/api/issues/{key}/comments` | session, or anon if enabled | live comments |
-| `POST` | `/api/issues/{key}/comments` | session + CSRF, project member | add comment |
-| `PATCH` | `/api/issues/{key}/comments/{id}` | session + CSRF, author or project admin | `{body, expectedVersion?}` — full-replacement edit (D81) |
-| `DELETE` | `/api/issues/{key}/comments/{id}` | session + CSRF, author or project admin | tombstone delete (D82) |
-| `GET` | `/api/issues/{key}/comments/{id}/reactions` | session, or anon if enabled | current reactions |
-| `POST`/`DELETE` | `/api/issues/{key}/comments/{id}/reactions/{key}` | session + CSRF | react/un-react (no project role required, D84) |
-| `GET` | `/api/issues/{key}/worklogs` | session, or anon if enabled | logged time entries |
-| `POST` | `/api/issues/{key}/worklogs` | session + CSRF, project member | `{workDate, timeSpentSeconds, comment?}` (D12/D13) |
-| `PATCH` | `/api/issues/{key}/worklogs/{id}` | session + CSRF, project member | full-replacement edit, no own-vs-others split |
-| `DELETE` | `/api/issues/{key}/worklogs/{id}` | session + CSRF, project member | tombstone delete, no own-vs-others split |
-| `GET` | `/api/issues/{key}/attachments` | session, or anon if enabled | active attachments (D15/D98-D105) |
-| `POST` | `/api/issues/{key}/attachments` | session + CSRF, project member | `multipart/form-data`, one `file` part; fixed 25MB/20-per-issue limits, D98 |
-| `DELETE` | `/api/issues/{key}/attachments/{id}` | session + CSRF, uploader or project admin | tombstone delete (D101) |
-| `GET` | `/api/attachments/{id}/download` | session, or anon if enabled | raw bytes with `Content-Type`/`Content-Disposition`; not nested under `/issues/{key}`, since a download/preview URL only ever needs the id |
-| `GET` | `/api/attachments/deleted` | session, global admin | recycle bin, 90-day on-demand retention (D102) |
-| `POST` | `/api/attachments/{id}/restore` | session + CSRF, global admin | restore from recycle bin |
-| `DELETE` | `/api/attachments/{id}/permanent` | session + CSRF, global admin | permanently delete (and its file) |
-| `POST` | `/api/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
-| `POST` | `/api/issues/{key}/reorder` | session + CSRF, project member | `{beforeIssueKey?}` — manual ordering (D31) |
-| `POST` | `/api/issues/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
-| `GET` | `/api/issues/{key}/links` | session, or anon if enabled | links from both ends |
-| `POST` | `/api/issues/{key}/links` | session + CSRF, member of both projects | `{targetIssueKey, linkType}` |
-| `DELETE` | `/api/issue-links/{id}` | session + CSRF, member of both projects | remove a link |
-| `GET` | `/api/issues/{key}/watchers` | session, or anon if enabled | current watchers |
-| `POST`/`DELETE` | `/api/issues/{key}/watch` | session + CSRF | watch/unwatch (no project role required) |
-| `GET` | `/api/issues/{key}/voters` | session, or anon if enabled | current voters |
-| `POST`/`DELETE` | `/api/issues/{key}/vote` | session + CSRF | vote/unvote (no project role required) |
-| `DELETE` | `/api/issues/{key}` | session + CSRF, project admin | move issue to recycle bin |
-| `GET` | `/api/issues/deleted` | session, global admin | list issue recycle bin |
-| `POST` | `/api/issues/{key}/restore` | session + CSRF, global admin | restore issue from recycle bin |
-| `DELETE` | `/api/issues/{key}/permanent` | session + CSRF, global admin | permanently delete issue |
-| `POST` | `/api/issues/bulk/status` | session + CSRF, project member per issue | `{issueKeys[], statusKey, resolution?}` |
-| `POST` | `/api/issues/bulk/assign` | session + CSRF, project member per issue | `{issueKeys[], assigneeEmail?}` |
-| `POST` | `/api/issues/bulk/label` | session + CSRF, project member per issue | `{issueKeys[], label}` |
-| `POST` | `/api/issues/bulk/delete` | session + CSRF, project admin per issue | `{issueKeys[]}` |
+| `POST` | `/api/v1/auth/login` | no | `{email,password}` → sets session + CSRF cookies |
+| `POST` | `/api/v1/auth/logout` | no | clears session (safe to call unauthenticated) |
+| `GET` | `/api/v1/auth/me` | session or PAT | current principal, or 401 |
+| `GET` | `/api/v1/tokens` | session | list the caller's own personal access tokens (D39/D40) |
+| `POST` | `/api/v1/tokens` | session + CSRF | `{name, expiresInDays}` → `{token, ...}`; raw token shown only once |
+| `DELETE` | `/api/v1/tokens/{id}` | session + CSRF | revoke one of the caller's own tokens |
+| `GET` | `/api/v1/sessions` | session (not PAT) | the caller's own active web sessions, with `isCurrent` marked (D54) |
+| `POST` | `/api/v1/sessions/sign-out-others` | session + CSRF (not PAT) | signs out every other session for the caller, keeps the current one |
+| `GET` | `/api/v1/dashboard` | session, or anon if enabled | counts, recent issues, and (authenticated only, D24) assigned-to-me/watched/upcoming-deadline issues |
+| `GET` | `/api/v1/board-columns` | session, or anon if enabled | one entry per fixed workflow status with its optional soft WIP limit (D32/D33) |
+| `PUT` | `/api/v1/board-columns/{statusKey}` | session + CSRF, global admin | `{wipLimit}` (number or null); installation-wide, not per-project |
+| `GET` | `/api/v1/users` | session | user directory (id/displayName/email/handle) for @mention autocomplete (D80) |
+| `GET` | `/api/v1/notifications` | session | `?unread=true` filters; fixed set (D14) |
+| `GET` | `/api/v1/notifications/unread-count` | session | `{count}` |
+| `POST` | `/api/v1/notifications/{id}/read` | session + CSRF | scoped to the caller's own notifications |
+| `POST` | `/api/v1/notifications/read-all` | session + CSRF | scoped to the caller's own notifications |
+| `GET` | `/api/v1/admin/audit-events` | session, global admin | newest 200 admin/security events (D23) |
+| `GET` | `/api/v1/projects` | session, or anon if enabled | active project summaries |
+| `POST` | `/api/v1/projects` | session + CSRF, global admin | create project |
+| `PATCH` | `/api/v1/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |
+| `DELETE` | `/api/v1/projects/{key}` | session + CSRF, project admin | move to recycle bin |
+| `GET` | `/api/v1/projects/deleted` | session, global admin | list recycle bin |
+| `POST` | `/api/v1/projects/{key}/restore` | session + CSRF, global admin | restore from recycle bin |
+| `DELETE` | `/api/v1/projects/{key}/permanent` | session + CSRF, global admin | permanently delete |
+| `GET` | `/api/v1/settings/anonymous-read` | session | current toggle value |
+| `PUT` | `/api/v1/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
+| `GET` | `/api/v1/issues` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description) |
+| `POST` | `/api/v1/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
+| `GET` | `/api/v1/issues/{key}` | session, or anon if enabled | current key or permanent alias |
+| `PATCH` | `/api/v1/issues/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
+| `PATCH` | `/api/v1/issues/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
+| `GET` | `/api/v1/issues/{key}/comments` | session, or anon if enabled | live comments |
+| `POST` | `/api/v1/issues/{key}/comments` | session + CSRF, project member | add comment |
+| `PATCH` | `/api/v1/issues/{key}/comments/{id}` | session + CSRF, author or project admin | `{body, expectedVersion?}` — full-replacement edit (D81) |
+| `DELETE` | `/api/v1/issues/{key}/comments/{id}` | session + CSRF, author or project admin | tombstone delete (D82) |
+| `GET` | `/api/v1/issues/{key}/comments/{id}/reactions` | session, or anon if enabled | current reactions |
+| `POST`/`DELETE` | `/api/v1/issues/{key}/comments/{id}/reactions/{key}` | session + CSRF | react/un-react (no project role required, D84) |
+| `GET` | `/api/v1/issues/{key}/worklogs` | session, or anon if enabled | logged time entries |
+| `POST` | `/api/v1/issues/{key}/worklogs` | session + CSRF, project member | `{workDate, timeSpentSeconds, comment?}` (D12/D13) |
+| `PATCH` | `/api/v1/issues/{key}/worklogs/{id}` | session + CSRF, project member | full-replacement edit, no own-vs-others split |
+| `DELETE` | `/api/v1/issues/{key}/worklogs/{id}` | session + CSRF, project member | tombstone delete, no own-vs-others split |
+| `GET` | `/api/v1/issues/{key}/attachments` | session, or anon if enabled | active attachments (D15/D98-D105) |
+| `POST` | `/api/v1/issues/{key}/attachments` | session + CSRF, project member | `multipart/form-data`, one `file` part; fixed 25MB/20-per-issue limits, D98 |
+| `DELETE` | `/api/v1/issues/{key}/attachments/{id}` | session + CSRF, uploader or project admin | tombstone delete (D101) |
+| `GET` | `/api/v1/attachments/{id}/download` | session, or anon if enabled | raw bytes with `Content-Type`/`Content-Disposition`; not nested under `/issues/{key}`, since a download/preview URL only ever needs the id |
+| `GET` | `/api/v1/attachments/deleted` | session, global admin | recycle bin, 90-day on-demand retention (D102) |
+| `POST` | `/api/v1/attachments/{id}/restore` | session + CSRF, global admin | restore from recycle bin |
+| `DELETE` | `/api/v1/attachments/{id}/permanent` | session + CSRF, global admin | permanently delete (and its file) |
+| `POST` | `/api/v1/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
+| `POST` | `/api/v1/issues/{key}/reorder` | session + CSRF, project member | `{beforeIssueKey?}` — manual ordering (D31) |
+| `POST` | `/api/v1/issues/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
+| `GET` | `/api/v1/issues/{key}/links` | session, or anon if enabled | links from both ends |
+| `POST` | `/api/v1/issues/{key}/links` | session + CSRF, member of both projects | `{targetIssueKey, linkType}` |
+| `DELETE` | `/api/v1/issue-links/{id}` | session + CSRF, member of both projects | remove a link |
+| `GET` | `/api/v1/issues/{key}/watchers` | session, or anon if enabled | current watchers |
+| `POST`/`DELETE` | `/api/v1/issues/{key}/watch` | session + CSRF | watch/unwatch (no project role required) |
+| `GET` | `/api/v1/issues/{key}/voters` | session, or anon if enabled | current voters |
+| `POST`/`DELETE` | `/api/v1/issues/{key}/vote` | session + CSRF | vote/unvote (no project role required) |
+| `DELETE` | `/api/v1/issues/{key}` | session + CSRF, project admin | move issue to recycle bin |
+| `GET` | `/api/v1/issues/deleted` | session, global admin | list issue recycle bin |
+| `POST` | `/api/v1/issues/{key}/restore` | session + CSRF, global admin | restore issue from recycle bin |
+| `DELETE` | `/api/v1/issues/{key}/permanent` | session + CSRF, global admin | permanently delete issue |
+| `POST` | `/api/v1/issues/bulk/status` | session + CSRF, project member per issue | `{issueKeys[], statusKey, resolution?}` |
+| `POST` | `/api/v1/issues/bulk/assign` | session + CSRF, project member per issue | `{issueKeys[], assigneeEmail?}` |
+| `POST` | `/api/v1/issues/bulk/label` | session + CSRF, project member per issue | `{issueKeys[], label}` |
+| `POST` | `/api/v1/issues/bulk/delete` | session + CSRF, project admin per issue | `{issueKeys[]}` |
 
-Every `POST /api/issues/bulk/*` route returns `{succeeded: [...], failed: [...]}` — issue keys, not a
+Every `POST /api/v1/issues/bulk/*` route returns `{succeeded: [...], failed: [...]}` — issue keys, not a
 single status code — since each key is authorized and processed independently and a partial failure
 (unknown key, insufficient role for that particular issue, a workflow-rule violation) does not roll back
 the keys that already succeeded.
 
-`PATCH /api/issues/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
+`PATCH /api/v1/issues/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
 priorityKey, assigneeEmail?, storyPoints?, dueDate?, labels?, expectedVersion?}`. Every editable field
 is always the caller's intended final value (e.g. omitting `assigneeEmail` unassigns the issue, it does
 not leave the current assignee alone) -- the caller is expected to pre-populate the request from the
@@ -318,23 +320,23 @@ against the fixed Epic/Sub-task hierarchy (a Sub-task requires a same-project St
 Epic may not have one, a Story/Task/Bug's optional parent must be a same-project Epic); a violation
 returns HTTP 400, same as any other invalid request field.
 
-`POST /api/issues/{key}/reorder` moves the issue to immediately before `beforeIssueKey` (which must be in
+`POST /api/v1/issues/{key}/reorder` moves the issue to immediately before `beforeIssueKey` (which must be in
 the same project), or to the end of the project if `beforeIssueKey` is omitted/null; the response is the
 reordered issue, with the whole project's `rankOrder` values renumbered in one pass. `POST
-/api/issues/{key}/move` moves the issue to `targetProjectKey`, allocating a new key/number there; the
-vacated key becomes a permanent alias (`GET /api/issues/{oldKey}` keeps resolving to it). Both return
+/api/v1/issues/{key}/move` moves the issue to `targetProjectKey`, allocating a new key/number there; the
+vacated key becomes a permanent alias (`GET /api/v1/issues/{oldKey}` keeps resolving to it). Both return
 HTTP 400 for an unknown/cross-project anchor, an unknown target project, moving to the issue's current
 project, or moving an issue that has a parent or any children.
 
-`linkType` on `POST /api/issues/{key}/links` must be one of the fixed catalog (`blocks`, `relates_to`,
+`linkType` on `POST /api/v1/issues/{key}/links` must be one of the fixed catalog (`blocks`, `relates_to`,
 `duplicates`, `clones`); there is no admin-configurable link-type list. Both the source and target
 issue's projects must be accessible to the actor (project-Member-or-above), not just the source's.
 
-`PATCH /api/issues/{key}/comments/{id}` is a full-replacement edit of `body` (D81), sharing the same
+`PATCH /api/v1/issues/{key}/comments/{id}` is a full-replacement edit of `body` (D81), sharing the same
 `expectedVersion`/409 optimistic-locking contract as issue edits, and sets an `editedAt` timestamp on the
 response -- there is no stored history of the comment's prior text, just the fact that it was edited.
-`DELETE /api/issues/{key}/comments/{id}` is a tombstone delete (D82): the row and original body stay in
-the database, simply excluded from `GET /api/issues/{key}/comments` afterward -- there is no separate
+`DELETE /api/v1/issues/{key}/comments/{id}` is a tombstone delete (D82): the row and original body stay in
+the database, simply excluded from `GET /api/v1/issues/{key}/comments` afterward -- there is no separate
 recycle-bin API for comments, unlike issues and projects. Permissions on both are simplified (D83): the
 comment's own author may always edit/delete it; otherwise the actor needs project-Admin-or-above (or
 global admin) — not the edit-own/edit-all/delete-own/delete-all matrix the original spec described.
@@ -344,7 +346,7 @@ session, not project-Member-or-above, since watching/voting is self-referential 
 issue itself. `POST` is idempotent (watching/voting twice is a no-op, still `200`); `DELETE` on a watch/
 vote that doesn't exist is also `200`, not `404`.
 
-`{key}` in `POST`/`DELETE /api/issues/{key}/comments/{id}/reactions/{key}` is a path segment from the
+`{key}` in `POST`/`DELETE /api/v1/issues/{key}/comments/{id}/reactions/{key}` is a path segment from the
 fixed eight-reaction catalog (D84: `thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`,
 `rocket`, `eyes` -- GitHub's well-known reaction set, chosen as a conservative default since the decision
 register calls for "a fixed reaction set" without enumerating one). Reactions are self-service like
@@ -353,18 +355,18 @@ watch/vote (no project-role check), and each user may add each reaction key at m
 `{items: [{reactionKey, user}, ...]}` -- the caller groups by `reactionKey` for counts/highlighting, the
 same "server stays dumb, client aggregates" split used for issue links.
 
-`GET /api/users` is a directory listing (id/displayName/email/handle only -- no isAdmin/active/timeZone),
+`GET /api/v1/users` is a directory listing (id/displayName/email/handle only -- no isAdmin/active/timeZone),
 requiring a session even when the installation-wide anonymous-read toggle is on, since the user directory
 is more sensitive than issue data. It backs @mention autocomplete (D80) and is the only way the demo UI
 discovers handles.
 
 The fixed in-app notification set (D14) is created as a side effect of three existing writes, never
-directly by an API caller: `POST`/`PATCH /api/issues` notifies a newly-set or changed assignee (skipping
-self-assignment and a no-op re-save with the same assignee); `POST /api/issues/{key}/comments` notifies
+directly by an API caller: `POST`/`PATCH /api/v1/issues` notifies a newly-set or changed assignee (skipping
+self-assignment and a no-op re-save with the same assignee); `POST /api/v1/issues/{key}/comments` notifies
 every `@handle` mention resolved in the body (D80) and every watcher of the issue except the comment's
 own author, with mentioned taking priority over watched for a recipient who is both (one notification,
-not two). `GET /api/notifications` and `GET /api/notifications/unread-count` are always scoped to the
-caller's own notifications; `POST /api/notifications/{id}/read` returns `{ok: false}` rather than 404 for
+not two). `GET /api/v1/notifications` and `GET /api/v1/notifications/unread-count` are always scoped to the
+caller's own notifications; `POST /api/v1/notifications/{id}/read` returns `{ok: false}` rather than 404 for
 an unknown id or someone else's notification (there is no cross-user notification management, so there is
 nothing more specific to report). Mentions are parsed only when a comment is created, not on every edit,
 to avoid re-notifying on every save of an already-mentioning comment.
@@ -374,9 +376,9 @@ set at login (double-submit pattern) — see `src/web/Api.cpp`. **This file has 
 smoke-tested against a live server** (see "Server verification" below).
 
 The demo UI now has a login screen (`web/index.html`/`app.js`): on load it silently probes
-`GET /api/auth/me`; if that returns 401 it shows a sign-in form instead of the app shell. A successful
-`POST /api/auth/login` reveals the app shell and shows the signed-in user's name/email/initials in the
-sidebar footer, alongside a sign-out button (`POST /api/auth/logout`) that returns to the login screen.
+`GET /api/v1/auth/me`; if that returns 401 it shows a sign-in form instead of the app shell. A successful
+`POST /api/v1/auth/login` reveals the app shell and shows the signed-in user's name/email/initials in the
+sidebar footer, alongside a sign-out button (`POST /api/v1/auth/logout`) that returns to the login screen.
 Every non-`GET` request the UI makes now reads the `th_csrf` cookie and attaches it as `X-CSRF-Token`
 automatically, and any `401` response from any API call redirects back to the login screen (handles the
 session expiring mid-use). Browser-verified end-to-end with Playwright/Chromium against
@@ -403,7 +405,7 @@ with `curl` against a running instance: login/logout/session validation, CSRF en
 → 403), project-role enforcement (non-member → 403), the fixed workflow's resolution-required/cleared and
 409-conflict rules, full-replacement edit, cloning, issue links, watching/voting, the issue recycle bin,
 all four bulk actions, comments, the full project lifecycle, the anonymous-read-access toggle, and the two
-newest routes — `POST /api/issues/{key}/reorder` and `POST /api/issues/{key}/move` — including confirming
+newest routes — `POST /api/v1/issues/{key}/reorder` and `POST /api/v1/issues/{key}/move` — including confirming
 a moved issue's vacated key still resolves via `issue_key_aliases` through the real HTTP/JSON layer.
 **Zero bugs were found** in `Api.cpp` across this sweep — every route, written blind against established
 patterns over many prior batches, behaved exactly as documented on the first real test. Full detail is in
@@ -499,11 +501,11 @@ seeded demo accounts now have handles (`demo`/`alex`/`sam`). `TicketService::cre
 notify a newly-set or changed assignee; `addComment` parses `@handle` tokens out of the body (once, at
 creation) and notifies each resolved user, plus every watcher of the issue except the comment's own
 author -- a recipient who is both mentioned and watching gets exactly one notification, the more specific
-reason winning. New `GET /api/users` (directory listing for autocomplete) and the four
-`/api/notifications*` routes above. `web/` gained a notification bell with an unread-count badge in the
+reason winning. New `GET /api/v1/users` (directory listing for autocomplete) and the four
+`/api/v1/notifications*` routes above. `web/` gained a notification bell with an unread-count badge in the
 top bar (clicking a notification marks it read and opens the related issue, with a "mark all read"
 button) and an @mention autocomplete dropdown under the comment textarea (both add and edit), backed by
-the cached `/api/users` directory. Browser-verified end-to-end: creating an issue assigned to a second
+the cached `/api/v1/users` directory. Browser-verified end-to-end: creating an issue assigned to a second
 user shows exactly one unread notification for them; typing `@sa` in the comment box shows a matching
 autocomplete suggestion that inserts the full handle on click; posting a comment that mentions a user
 notifies them with the correct issue reference; opening the notification panel, clicking an item, and
@@ -545,8 +547,8 @@ entirely, so `TicketService::addWorklog`/`editWorklog`/`deleteWorklog` all requi
 project-Member-or-above on the issue's project -- any project member may edit or delete *any* worklog on
 an issue they can access, not just the one they logged themselves (unlike D83's author-or-admin rule for
 comments). `editWorklog` shares the same `expectedVersion` -> `Domain::ConcurrencyConflict` (409)
-optimistic-locking contract as comment/issue edits. New `GET`/`POST /api/issues/{key}/worklogs` and
-`PATCH`/`DELETE /api/issues/{key}/worklogs/{id}` routes. `web/` gained a "Time tracking" section in the
+optimistic-locking contract as comment/issue edits. New `GET`/`POST /api/v1/issues/{key}/worklogs` and
+`PATCH`/`DELETE /api/v1/issues/{key}/worklogs/{id}` routes. `web/` gained a "Time tracking" section in the
 issue drawer: a list of logged entries (duration formatted as e.g. "1h 30m", author, date, optional
 comment) each with a Delete button shown unconditionally (no client-side author check, since the server
 itself allows any project member to delete any entry), and a log-time form accepting a free-text duration
@@ -569,7 +571,7 @@ runs outside any web session), and `TicketService::setAnonymousReadEnabled`/`per
 `permanentlyDeleteIssue` (all `admin`-category). `IDatabase::recordAuditEvent` is fire-and-forget (`void`,
 unlike `createNotification`, whose result the notification list feature reads back immediately);
 `listAuditEvents(limit)` is newest-first with no pagination or filtering. New
-`GET /api/admin/audit-events` route and `TicketService::listAuditEvents`, both global-administrator-only,
+`GET /api/v1/admin/audit-events` route and `TicketService::listAuditEvents`, both global-administrator-only,
 the same access level as the recycle bins. `web/` gained a new "Audit log" nav item (hidden for
 non-admins, shown and hidden again on logout to avoid leaking it to whoever logs in next in the same
 browser tab) rendering a simple read-only table. Browser-verified: the nav item is invisible to a
@@ -587,7 +589,7 @@ joins against already-present query aliases; `dueBefore` is an inclusive `<=`; `
 subquery against `issue_labels`/`labels` rather than a condition on the already-joined/aggregated
 label-list column used to display an issue's labels, so a label filter narrows matches without truncating
 a matching issue's own label list; `search` now also matches the issue description, not just summary/
-issue key, per D43's plain-substring, no-full-text-index scope. `GET /api/issues` accepts matching new
+issue key, per D43's plain-substring, no-full-text-index scope. `GET /api/v1/issues` accepts matching new
 query parameters; `TicketService::listIssues` needed no change. `web/`'s Issues view filter bar gained
 type/priority/assignee dropdowns, a label input, and a due-date picker; the "Clear" button and the
 Board-view/global-search transitions all reset the new fields too, so a lingering ad-hoc filter can't leak
@@ -607,7 +609,7 @@ direction of the existing `listWatchers`. `TicketService::dashboard` personalize
 actor -- `assignedToMe` reuses the existing `listIssues` assignee filter and excludes Done-category
 issues, `upcomingDeadlines` is derived from that same result set app-side rather than a second database
 round trip, `watchedIssues` calls the new method -- and all three stay empty for an anonymous viewer.
-`GET /api/dashboard` gained the three new arrays. `web/`'s Dashboard view gained "Assigned to me", "Issues
+`GET /api/v1/dashboard` gained the three new arrays. `web/`'s Dashboard view gained "Assigned to me", "Issues
 I'm watching", and "Upcoming deadlines" panels, shown only when a principal is present. New
 SQLite-integration coverage for `listWatchedIssues` and authorization-integration coverage for the
 dashboard personalization (anonymous gets empty widgets even with anonymous read enabled; Done-category
@@ -633,7 +635,7 @@ project's board, since there is no per-project board identity in the reduced-sco
 `setBoardColumnWipLimit(statusKey, optional<int>)` (`false` for an unknown status key) in both adapters;
 matching `TicketService` methods (read is the same access rule as projects/issues, set is
 global-administrator-only like the anonymous-read toggle, an unknown status key throws
-`std::invalid_argument`). New `GET /api/board-columns` and `PUT /api/board-columns/{statusKey}` routes.
+`std::invalid_argument`). New `GET /api/v1/board-columns` and `PUT /api/v1/board-columns/{statusKey}` routes.
 `web/`'s Board view shows each column's live count as `N / limit` (or plain `N` when unlimited) with a
 soft, display-time-only highlight when over limit -- never blocking a status change or issue creation into
 that column -- and gives global admins an inline editor to set/clear each column's limit. Drag-and-drop
@@ -669,8 +671,8 @@ read-access rule; `deleteAttachment` is uploader-or-project-Admin-or-above (mirr
 the closest precedent); `listDeletedAttachments` implements D102's fixed 90-day on-demand retention
 itself, one layer above the SQL adapter, since purging an attachment also means deleting its file.
 `permanentlyDeleteIssue`/`permanentlyDeleteProject` were both extended to collect and delete affected
-attachment files before the database cascade runs. New `GET`/`POST /api/issues/{key}/attachments`,
-`DELETE /api/issues/{key}/attachments/{id}`, `GET /api/attachments/{id}/download` (not nested under
+attachment files before the database cascade runs. New `GET`/`POST /api/v1/issues/{key}/attachments`,
+`DELETE /api/v1/issues/{key}/attachments/{id}`, `GET /api/v1/attachments/{id}/download` (not nested under
 `/issues/{key}`, since a download/preview URL only ever needs the id), and the recycle-bin routes (all
 global-admin-only). `web/`'s issue drawer gained a sortable Attachments section (D101: name/size/date/
 uploader/type), drag-and-drop upload, and native-element previews for all four D99 kinds (`<img>` for
@@ -704,20 +706,20 @@ layer, exactly like session lookup does; `revokePersonalAccessToken` is ownershi
 `resolvePrincipal` now also accepts an `Authorization: Bearer <token>` header when no session cookie is
 present; `csrfTokenValid` now exempts any request with no session cookie in play, since CSRF only
 defends against a browser silently attaching a cookie -- this needed zero changes to the ~50 existing
-route handlers that already call it. New self-service `GET`/`POST /api/tokens` and
-`DELETE /api/tokens/{id}` routes. New identity-integration test coverage. Verified against live
+route handlers that already call it. New self-service `GET`/`POST /api/v1/tokens` and
+`DELETE /api/v1/tokens/{id}` routes. New identity-integration test coverage. Verified against live
 PostgreSQL directly, and end-to-end via `curl` against a running server: created a token via cookie auth,
-used it as a Bearer header with no cookies at all to both read `/api/auth/me` and **write** via
-`POST /api/projects` with no CSRF header (confirming the exemption through the real HTTP layer), watched
+used it as a Bearer header with no cookies at all to both read `/api/v1/auth/me` and **write** via
+`POST /api/v1/projects` with no CSRF header (confirming the exemption through the real HTTP layer), watched
 `lastUsedAt` update, revoked it, and confirmed the same token then gets a 401. There is no web UI yet for
-managing tokens -- `/api/tokens` is fully functional but reachable only via `curl`/scripts today.
+managing tokens -- `/api/v1/tokens` is fully functional but reachable only via `curl`/scripts today.
 
 An eighteenth batch continued Phase 6 with the active-session list and "sign out everywhere" endpoint
 (D54, resequenced from Phase 1). No new migration -- `sessions` already had everything needed. New
 `IDatabase::listSessionsForUser(userId)`/`deleteOtherSessionsForUser(userId, keepSessionId)` in both
 adapters; new `AuthService::currentSession(sessionToken)` (resolves the session row itself, not just the
-`Principal`), `listActiveSessions`, and `signOutOtherSessions`. New `GET /api/sessions` and
-`POST /api/sessions/sign-out-others` routes, deliberately session-cookie-only (not `resolvePrincipal`,
+`Principal`), `listActiveSessions`, and `signOutOtherSessions`. New `GET /api/v1/sessions` and
+`POST /api/v1/sessions/sign-out-others` routes, deliberately session-cookie-only (not `resolvePrincipal`,
 which would also accept a PAT) since "your active web sessions" has no meaning for a PAT-authenticated
 caller. "Sign out everywhere" keeps the caller's own current session active and only removes the others
 -- a conservative default, since no decision text specifies this, documented explicitly in
@@ -731,7 +733,7 @@ A nineteenth batch continued Phase 6 with fixed rate limits (D124/D125). A new i
 `TicketHub::Web::RateLimiter` (`src/web/RateLimiter.h/.cpp`, a thread-safe fixed-window counter with lazy
 sweeping of expired entries) implements exactly D124's "simple fixed rate limit per IP/user ... no admin
 config, no per-endpoint/service-account exceptions": a 20-attempts-per-IP-per-15-minutes limiter on
-`/api/auth/login` (complementing, not replacing, the existing per-account 10-attempts/15-minutes lockout),
+`/api/v1/auth/login` (complementing, not replacing, the existing per-account 10-attempts/15-minutes lockout),
 and a 120-requests-per-minute limiter (keyed by user id when authenticated, else by IP) shared across
 every write route (POST/PUT/PATCH/DELETE), both returning 429 with a `Retry-After` header (900 or 60
 respectively) on trip -- the original (pre-simplification) D124 description paired 429 with Retry-After,
@@ -739,12 +741,12 @@ and the V1 simplification only dropped the admin-configurable multi-level limits
 contract. The write limiter reuses the same
 near-universal chokepoint as CSRF checking -- all 43 existing `csrfTokenValid` call sites -- via a single
 scripted text substitution, plus one hand-written overload for the sole route
-(`/api/sessions/sign-out-others`) that resolves a `Domain::Session` instead of a `Domain::Principal`.
+(`/api/v1/sessions/sign-out-others`) that resolves a `Domain::Session` instead of a `Domain::Principal`.
 `RateLimiter` has no Crow dependency, so it is covered by its own standalone test binary
 (`ticket-hub-ratelimiter-tests`) that builds and passes even in the SQLite-only and PostgreSQL-only
 configurations. No database/migration changes, so no live-PostgreSQL check applied here. Verified
 end-to-end via `curl` against a running server: 20 wrong-password login attempts all returned 401, the
-21st/22nd returned 429; after a fresh restart, 120 consecutive authenticated `POST /api/projects` requests
+21st/22nd returned 429; after a fresh restart, 120 consecutive authenticated `POST /api/v1/projects` requests
 returned non-429 codes and the next 10 all returned 429, while a `GET` issued immediately afterward still
 returned 200 (confirming only writes are limited). There is no web UI change for this batch -- a 429
 response surfaces through the existing generic API-error handling like any other error status.
@@ -825,15 +827,15 @@ What **was** compiled and tested in this environment, with all warnings enabled
 `src/web/Api.cpp`, `src/web/HttpServer.cpp`, and `src/main.cpp` (the `ticket-hub` server target) are now
 built and live-verified as described in "Server verification" above — including every route added across
 Phases 1-3: the session-cookie/CSRF wiring, the project-CRUD and anonymous-read-toggle routes, the
-`parentIssueKey`/`resolution` request fields, the `PATCH /api/issues/{key}` full-edit route, the HTTP 422
-mapping for `Domain::WorkflowViolation`, `POST /api/issues/{key}/clone`,
-`GET`/`POST /api/issues/{key}/links`, `POST`/`DELETE /api/issues/{key}/watch`,
-`GET /api/issues/{key}/watchers`, `POST`/`DELETE /api/issues/{key}/vote`,
-`GET /api/issues/{key}/voters`, `DELETE /api/issue-links/{id}`, `DELETE /api/issues/{key}`,
-`GET /api/issues/deleted`, `POST /api/issues/{key}/restore`, `DELETE /api/issues/{key}/permanent`,
-`POST /api/issues/bulk/{status,assign,label,delete}`, `POST /api/issues/{key}/reorder`, and
-`POST /api/issues/{key}/move`. (Earlier, while adding the edit route, three existing routes --
-`POST /api/issues`, `PATCH /api/issues/{key}/status`, `POST /api/issues/{key}/comments` -- were found by
+`parentIssueKey`/`resolution` request fields, the `PATCH /api/v1/issues/{key}` full-edit route, the HTTP 422
+mapping for `Domain::WorkflowViolation`, `POST /api/v1/issues/{key}/clone`,
+`GET`/`POST /api/v1/issues/{key}/links`, `POST`/`DELETE /api/v1/issues/{key}/watch`,
+`GET /api/v1/issues/{key}/watchers`, `POST`/`DELETE /api/v1/issues/{key}/vote`,
+`GET /api/v1/issues/{key}/voters`, `DELETE /api/v1/issue-links/{id}`, `DELETE /api/v1/issues/{key}`,
+`GET /api/v1/issues/deleted`, `POST /api/v1/issues/{key}/restore`, `DELETE /api/v1/issues/{key}/permanent`,
+`POST /api/v1/issues/bulk/{status,assign,label,delete}`, `POST /api/v1/issues/{key}/reorder`, and
+`POST /api/v1/issues/{key}/move`. (Earlier, while adding the edit route, three existing routes --
+`POST /api/v1/issues`, `PATCH /api/v1/issues/{key}/status`, `POST /api/v1/issues/{key}/comments` -- were found by
 inspection to be missing a `catch (const Domain::Forbidden&)` handler, which would have surfaced a
 project-role authorization failure as HTTP 500 instead of 403; fixed before this verification pass, and
 the live sweep confirms the fix actually works end-to-end.)

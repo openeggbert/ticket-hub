@@ -21,13 +21,15 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 - **Milestone 3** (Phase 6: API/security hardening/export; Phase 7: backup/restore/upgrade) -- **started**.
   Personal access tokens (D39/D40) are done: self-service create/list/revoke, `Authorization: Bearer`
   authentication wired into every existing route, CSRF correctly exempted for non-cookie auth. The
-  active-session list and "sign out everywhere" endpoint (D54) are also done (`GET /api/sessions`,
-  `POST /api/sessions/sign-out-others`; keeps the caller's own current session active). Fixed rate limits
-  (D124/D125) are also done: an in-memory `TicketHub::Web::RateLimiter` caps `/api/auth/login` at 20
-  attempts per IP per 15 minutes (alongside the existing per-account lockout) and every write route at 120
-  requests per minute per user-or-IP, both returning 429. Still open: the versioned `/api/v1` prefix
-  itself, fixed request/body/batch-size constants, numbered pagination, read-only CSV export, the security
-  hardening pass, and all of Phase 7. No web UI yet for managing tokens or sessions.
+  active-session list and "sign out everywhere" endpoint (D54) are also done (`GET /api/v1/sessions`,
+  `POST /api/v1/sessions/sign-out-others`; keeps the caller's own current session active). Fixed rate
+  limits (D124/D125) are also done: an in-memory `TicketHub::Web::RateLimiter` caps `/api/v1/auth/login`
+  at 20 attempts per IP per 15 minutes (alongside the existing per-account lockout) and every write route
+  at 120 requests per minute per user-or-IP, both returning 429 with a `Retry-After` header. The versioned
+  `/api/v1` prefix itself (D127) is also done -- every route moved except `GET /api/health`, kept
+  unversioned by convention. Still open: fixed request/body/batch-size constants, numbered pagination,
+  read-only CSV export, the security hardening pass, and all of Phase 7. No web UI yet for managing
+  tokens or sessions.
 - **Milestone 4** (Phase 8: packaging and hardening) -- not started.
 
 ## Implementation rules

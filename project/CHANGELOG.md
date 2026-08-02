@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — Versioned `/api/v1` prefix (D127) — Phase 6 continued
+
+- **API versioning**: every route now lives under `/api/v1` (e.g. `POST /api/v1/auth/login`,
+  `GET /api/v1/issues`), except `GET /api/health`, deliberately kept unversioned (common infra/
+  monitoring convention; not specified by any decision text).
+- Pure URL rename -- no server/domain/database logic changed. `web/app.js`'s API call sites were updated
+  to match.
+- Formal `/api/v2` deprecation policy remains deferred until a real v2 is needed, per D127.
+
 ## Unreleased — Fixed rate limits (D124/D125) — Phase 6 continued
 
 - **Rate limiting**: a new in-memory `TicketHub::Web::RateLimiter` (fixed-window, no admin config)
