@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Light and dark theme (D46) — Phase 8 continued
+
+- **Dark theme**: `web/styles.css` now follows the OS-level `prefers-color-scheme` signal automatically
+  (`color-scheme: light dark` plus a full `@media (prefers-color-scheme: dark)` variable-override block).
+  No manual in-app toggle or persisted preference -- not called for by D46's "light and dark theme...
+  simple" wording.
+- Converted ~30 hardcoded literal colors to the existing/new CSS custom-property set so the whole UI
+  (chips, banners, modals, the board, tables, buttons) themes consistently; fixed one bug found during
+  verification (`.link-form input` had no dark-mode styling and rendered as a stray white box).
+- Verified with Playwright/Chromium: light mode confirmed unchanged, dark mode confirmed via computed
+  styles plus a five-view screenshot review, and both existing browser regression scripts re-run clean.
+
 ## Unreleased — Docker image and Compose distribution (D50) — Phase 8 started
 
 - **Docker**: new two-stage `Dockerfile` (build with the full toolchain, run on a slim
