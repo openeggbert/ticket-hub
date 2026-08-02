@@ -309,7 +309,7 @@ std::optional<Domain::Comment> TicketService::editComment(const std::string& iss
         throw std::invalid_argument("Unknown issue key: " + normalizedKey);
     }
     const auto comment = database_->findCommentById(commentId);
-    if (!comment) {
+    if (!comment || comment->issueId != issue->id) {
         return std::nullopt;
     }
     if (comment->author.id != actor.userId) {
@@ -325,7 +325,7 @@ bool TicketService::deleteComment(const std::string& issueKey, const std::string
         throw std::invalid_argument("Unknown issue key: " + normalizedKey);
     }
     const auto comment = database_->findCommentById(commentId);
-    if (!comment) {
+    if (!comment || comment->issueId != issue->id) {
         return false;
     }
     if (comment->author.id != actor.userId) {
@@ -412,6 +412,10 @@ std::optional<Domain::Worklog> TicketService::editWorklog(const std::string& iss
         throw std::invalid_argument("Unknown issue key: " + normalizedKey);
     }
     requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    const auto worklog = database_->findWorklogById(worklogId);
+    if (!worklog || worklog->issueId != issue->id) {
+        return std::nullopt;
+    }
     Domain::EditWorklogRequest request{workDate, timeSpentSeconds, std::move(comment)};
     const auto errors = Domain::validateEditWorklog(request);
     if (!errors.empty()) {
@@ -427,6 +431,10 @@ bool TicketService::deleteWorklog(const std::string& issueKey, const std::string
         throw std::invalid_argument("Unknown issue key: " + normalizedKey);
     }
     requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    const auto worklog = database_->findWorklogById(worklogId);
+    if (!worklog || worklog->issueId != issue->id) {
+        return false;
+    }
     return database_->deleteWorklog(worklogId, actor.userId);
 }
 
@@ -488,7 +496,7 @@ bool TicketService::deleteAttachment(const std::string& issueKey, const std::str
         throw std::invalid_argument("Unknown issue key: " + normalizedKey);
     }
     const auto attachment = database_->findAttachmentById(attachmentId);
-    if (!attachment) {
+    if (!attachment || attachment->issueId != issue->id) {
         return false;
     }
     // The uploader may always delete their own attachment; otherwise the

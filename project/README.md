@@ -9,8 +9,13 @@ Main namespace: `TicketHub`.
 
 The current build target is the **reduced-scope V1** (see `REDUCED_SCOPE_SPECIFICATION.md`), not the
 original full Jira-like plan in `SPECIFICATION.md`, which remains only as a long-term aspirational
-reference. It is **not yet production-ready**: the Kanban board and attachments are future phases
-(`docs/REDUCED_SCOPE_ROADMAP.md`).
+reference. **The entire reduced-scope V1 roadmap is now complete** (`docs/REDUCED_SCOPE_ROADMAP.md`,
+Milestones 1-4 / Phases 1-8), including Docker/Compose packaging, light/dark theme, an accessibility
+baseline pass, and a threat-model/security self-review (`docs/THREAT_MODEL.md`) that found and fixed a
+real access-control bug. See `NEXT.md`'s "The roadmap is now complete" section for the exact closing
+detail, `docs/VERIFICATION.md` for exactly what was tested and how, and the one deliberate scope
+exception (re-typing/re-parenting an issue after creation is not implemented) plus a short list of
+optional, non-roadmap follow-up items.
 
 Implemented now:
 
@@ -1002,6 +1007,29 @@ register's own reasoning exactly. Verified with Playwright/Chromium: keyboard-on
 `Space` activation confirmed for a table row, a board card, and a project card, plus confirmation that the
 pre-existing stopPropagation guard on the bulk-select checkbox still holds (no mouse-click regression from
 the new keyboard wiring); both existing browser regression scripts re-run clean.
+
+A thirtieth batch closed out the last open Phase 8 item -- and with it, the entire reduced-scope V1
+roadmap -- with a dedicated threat-model/security self-review (`docs/THREAT_MODEL.md`), covering every
+route in `Api.cpp`, every `TicketService`/`AuthService` authorization check, both database adapters' query
+construction, attachment storage, and `web/app.js`'s escaping/CSRF handling. It found and fixed a real
+**broken access control (IDOR)** issue: `editComment`/`deleteComment`/`editWorklog`/`deleteWorklog`/
+`deleteAttachment` checked the caller's project role against the issue named in the request URL but looked
+up the target comment/worklog/attachment purely by its own id, never confirming the resource actually
+belonged to that issue -- since every project is readable by every authenticated user (D58), this let a
+user with a role on *one* project reach and mutate a comment/worklog/attachment belonging to a *different*
+project they had no role on, simply by routing the request through one of their own issues' URLs. Fixed by
+requiring the looked-up resource's `issueId` to match the URL-resolved issue before proceeding. Four lower-
+severity issues were fixed alongside it: the CSRF cookie was an unnecessary literal prefix of the
+`HttpOnly` session token (now generated independently); a login response-time gap let an unauthenticated
+caller distinguish "unknown email" from "wrong password" (now equalized with a dummy Argon2id verify);
+`/api/v1/auth/logout` was the one mutating route out of 46 missing a CSRF check (added for defense in
+depth); and the CSV export was vulnerable to spreadsheet formula injection (fixed with the standard
+leading-apostrophe mitigation). Every fix was reproduced live over HTTP before the change and confirmed
+fixed after, and new regression tests cover the IDOR fix in `tests/authorization_integration_tests.cpp`.
+`docs/THREAT_MODEL.md` also documents what was reviewed and already correct, and three residual risks that
+are deliberate consequences of earlier fixed-scope decisions (unscoped PATs, reverse-proxy-unaware rate
+limiting, no socket-level body-size cap) rather than new gaps. **This closes Phase 8, Milestone 4, and the
+entire reduced-scope V1 roadmap** -- see `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 8 exit gate, now met.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

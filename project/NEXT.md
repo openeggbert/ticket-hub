@@ -7,15 +7,21 @@ batch-size constants, a security hardening pass that found and fixed a real stor
 partial pagination for `GET /api/v1/issues`) and the entire backup/restore/upgrade/observability list
 (backup/restore live-verified on both databases, the existing `migrate` command confirmed to satisfy the
 upgrade requirement, structured JSON logs to stdout, and an in-app admin version banner). Full
-batch-by-batch detail below. **Phase 8 (Milestone 4, packaging and release hardening) is now underway**:
-the Docker image and Compose distribution path (D50) are done -- `docker compose up` brings up the full
-instance, verified as far as this environment's network policy allows (see `docs/VERIFICATION.md` for
-the exact disclosure). Light and dark theme (D46) is also done -- the UI now follows the OS-level
-`prefers-color-scheme` signal automatically, browser-verified in both modes. The accessibility baseline
-pass (D47) and the browser-support note (D139) are also done -- keyboard operability was fixed for issue
-rows/board cards/project cards/inline key links, and D139 was reconfirmed satisfied by construction. Still
-open in Phase 8: the threat-model/security self-review and a final documentation-currency pass. No web UI
-yet for managing tokens or sessions.)
+batch-by-batch detail below.
+
+**Milestone 4 (Phase 8, packaging and release hardening) is now fully complete, which closes the entire
+reduced-scope V1 roadmap:** the Docker image and Compose distribution path (D50) -- `docker compose up`
+brings up the full instance, verified as far as this environment's network policy allows (see
+`docs/VERIFICATION.md` for the exact disclosure); light and dark theme (D46) -- the UI follows the
+OS-level `prefers-color-scheme` signal automatically, browser-verified in both modes; the accessibility
+baseline pass (D47) and browser-support note (D139) -- keyboard operability fixed for issue rows/board
+cards/project cards/inline key links, D139 reconfirmed satisfied by construction; and the threat-model/
+security self-review (`docs/THREAT_MODEL.md`), which found and fixed a real broken-access-control (IDOR)
+bug plus four lower-severity issues (an unnecessarily session-derived CSRF cookie, a login timing side
+channel, a missing CSRF check on logout, and CSV formula injection) -- see the "Threat-model/security
+self-review" batch entry below for full detail. See "The roadmap is now complete" near the end of this
+file for what remains only as optional, non-roadmap follow-up (there is no web UI yet for managing tokens
+or sessions, for example).
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -611,6 +617,33 @@ anything from the removed/deferred list without an explicit new product conversa
   existing regression scripts re-run clean. `ctest --output-on-failure`: 8/8 green (only `web/` touched).
   Not attempted: a formal WCAG audit, automated contrast-ratio tooling, or screen-reader-software testing
   -- explicitly out of D47's reduced V1 scope. Full detail in `docs/VERIFICATION.md`.
+- **Phase 8 complete (threat-model / security self-review), this batch:** a dedicated read of the entire
+  HTTP attack surface (every route in `Api.cpp`, every `TicketService`/`AuthService` authorization check,
+  both database adapters' query construction, attachment storage, and `web/app.js`'s escaping/CSRF
+  handling) found and fixed five issues, written up in full in the new `docs/THREAT_MODEL.md`. The real
+  one: `editComment`/`deleteComment`/`editWorklog`/`deleteWorklog`/`deleteAttachment` in
+  `TicketService.cpp` checked the project-role requirement against the issue named in the URL but looked
+  up the target resource purely by its own id, never confirming it actually belonged to that issue --
+  since every project is readable by every authenticated user (D58), this let a user with a role on *any*
+  one project reach and mutate a comment/worklog/attachment belonging to a *different* project they have
+  no role on, by routing the request through one of their own issues' URLs. Fixed by comparing the
+  resource's `issueId` against the URL-resolved issue's `id`, treating a mismatch as "not found" (matches
+  the existing unknown-id convention). Four lower-severity fixes alongside it: the CSRF cookie was an
+  unnecessary literal prefix of the session token (now generated independently via
+  `Common::randomTokenHex(16)`); a login response-time gap let an unauthenticated caller distinguish
+  "unknown email" from "wrong password" (now equalized with a lazily-computed dummy-password Argon2id
+  verify on the not-found path); `/api/v1/auth/logout` was the one mutating route out of 46 missing a CSRF
+  check (added, defense in depth -- `SameSite=Strict` already prevented exploitation); and the CSV export
+  was vulnerable to spreadsheet formula injection (fixed with the standard leading-apostrophe mitigation).
+  New regression tests in `tests/authorization_integration_tests.cpp` cover the IDOR fix across all three
+  resource types. Every fix was reproduced live over HTTP before the change and confirmed fixed after.
+  `docs/THREAT_MODEL.md` also records what was reviewed and already correct (password hashing, secret
+  storage, SQL parameterization, consistent XSS escaping, path-traversal-proof attachment storage, shell-
+  escaped backup/restore commands, and the anonymous-read toggle never weakening write authorization) and
+  three deliberate residual risks already implied by earlier fixed-scope decisions (unscoped PATs per
+  D39/D40, reverse-proxy-unaware per-IP rate limiting per D124/D125, no socket-level request-body cap).
+  `ctest --output-on-failure`: 8/8 green; the default, SQLite-only, and PostgreSQL-only build
+  configurations all reconfirmed to compile clean. Full detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -641,39 +674,53 @@ native-element previews, sortable list/recycle bin/90-day retention, and full Ma
 drag-drop/paste integration) are all done and fully covered in the UI. This closes out Milestone 2. What's
 left:
 
-1. **Milestone 3 (Phases 6 and 7) is now fully complete** per `docs/REDUCED_SCOPE_ROADMAP.md`. Milestone
-   4 (Phase 8: packaging and release hardening) is underway: Docker/Compose (D50) is done; light/dark
-   theme (D46), the accessibility baseline review (D47), and the threat-model/security self-review remain.
+1. **Milestones 1-4, i.e. the entire reduced-scope V1 roadmap, are now fully complete** per
+   `docs/REDUCED_SCOPE_ROADMAP.md` -- see "The roadmap is now complete" below.
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
    for a shared resolution; keyboard-driven multi-select.
 3. Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation is still
-   deliberately unimplemented at the application/database layer (see "Finish Phase 3" above) -- no UI
-   would have anywhere to call into for this even if it existed.
+   deliberately unimplemented at the application/database layer (see "The roadmap is now complete" below)
+   -- no UI would have anywhere to call into for this even if it existed.
 
-## Finish Phase 3, then continue the roadmap
+## The roadmap is now complete
 
-Phase 3's core/CLI/test layer is now complete except for one item:
+Phase 3's core/CLI/test layer is complete except for one deliberately-unimplemented item, unchanged since
+Phase 3 and not revisited in any later phase:
 
 - Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation --
-  `TicketService::editIssue` deliberately does not touch either field yet. `moveIssue` (D37) exists but
+  `TicketService::editIssue` deliberately does not touch either field. `moveIssue` (D37) exists but
   deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
-  or any children, so this remains the one open path.
+  or any children, so this remains the one open path in the entire roadmap.
 
-Milestone 2 (Phases 4 and 5) is now **fully closed**. **Milestone 3 (Phase 6: REST API v1/export; Phase 7:
-backup/restore/upgrade/observability) is now fully closed too.** Phase 6: personal access tokens (D39/
-D40), the active-session list/"sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), the
-versioned `/api/v1` prefix (D127), read-only CSV export (D48), fixed request-body/bulk-item constants
-(D125), the security hardening pass, and pagination for `GET /api/v1/issues` (D126, a deliberate partial
-rollout -- every other list endpoint remains open and documented as such). Phase 7: backup/restore
-(D106-D108, live-verified on both databases), the upgrade mechanism (D111, already satisfied by
-`ticket-hub-cli migrate`), structured JSON logs to stdout (D133), and the in-app admin version banner
-(D112). **Milestone 4 (Phase 8: packaging and release hardening) is underway**: the Docker image and
-Compose distribution path (D50) are done -- `docker compose up` brings up the full instance. Still open:
-light/dark theme (D46), the accessibility baseline review (D47), and the threat-model/security
-self-review. Do not jump ahead to later-phase features early, and do not implement anything from
-`docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+Milestone 2 (Phases 4 and 5) is **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
+backup/restore/upgrade/observability) is **fully closed**: personal access tokens (D39/D40), the
+active-session list/"sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), the versioned
+`/api/v1` prefix (D127), read-only CSV export (D48), fixed request-body/bulk-item constants (D125), the
+Phase 6 security hardening pass, pagination for `GET /api/v1/issues` (D126, a deliberate partial rollout --
+every other list endpoint remains unpaginated and documented as such), backup/restore (D106-D108,
+live-verified on both databases), the upgrade mechanism (D111, already satisfied by `ticket-hub-cli
+migrate`), structured JSON logs to stdout (D133), and the in-app admin version banner (D112). **Milestone 4
+(Phase 8: packaging and release hardening) is now fully closed too**: the Docker image and Compose
+distribution path (D50), light/dark theme (D46), the accessibility baseline pass (D47), the browser-support
+note (D139), and the threat-model/security self-review (`docs/THREAT_MODEL.md`) are all done.
+
+**That closes every phase in `docs/REDUCED_SCOPE_ROADMAP.md`.** The roadmap's own Phase 8 exit gate --
+"`docker compose up` produces a usable, documented V1 instance; all supported build configurations...
+compile and pass tests; no known open security issue from the hardening pass" -- is met: Docker/Compose
+verified as far as this environment's network policy allows (see `docs/VERIFICATION.md`); the default,
+SQLite-only, and PostgreSQL-only configurations all compile and their test suites pass; and every finding
+from the security self-review is either fixed or recorded as an explicit, decision-consistent accepted
+residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
+
+What's left is not roadmap work, only optional follow-up if this project continues past V1: re-typing/
+re-parenting an issue (above), the optional UX polish listed above (drag-and-drop board reordering, a
+friendlier bulk Done-status picker, keyboard multi-select), and a web UI for managing personal access
+tokens and active sessions (both already have a full REST API and CLI-equivalent story; only the `web/`
+surface is missing). None of this is required to consider V1 complete, and none of it should be started
+without a fresh, explicit product conversation -- the same rule that has applied to
+`docs/REMOVED_AND_DEFERRED_FEATURES.md` all along.
 
 ## Verification status
 

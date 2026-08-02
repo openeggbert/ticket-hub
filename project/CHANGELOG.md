@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — Threat-model / security self-review — Phase 8 complete, Milestone 4 complete
+
+- **Security**: a dedicated review of the full HTTP attack surface found and fixed five issues -- most
+  notably a **broken access control (IDOR)** bug where `editComment`/`deleteComment`/`editWorklog`/
+  `deleteWorklog`/`deleteAttachment` checked the project-role requirement against the issue named in the
+  URL but looked up the target resource purely by id, letting a user with a role on one project reach and
+  mutate a comment/worklog/attachment belonging to a different project by routing the request through
+  their own issue's URL. Also fixed: the CSRF cookie was an unnecessary prefix of the session token (now
+  generated independently), a login response-time side-channel enabled email enumeration (now equalized
+  with a dummy Argon2id verify), `/api/v1/auth/logout` was the one mutating route missing a CSRF check
+  (now consistent with the other 45), and the CSV export was vulnerable to spreadsheet formula injection
+  (now mitigated with the standard leading-apostrophe fix).
+- New `docs/THREAT_MODEL.md`: the full write-up -- scope, method, every finding (fixed and accepted-
+  residual-risk), and what was and wasn't covered.
+- New regression tests in `tests/authorization_integration_tests.cpp` covering the IDOR fix across all
+  three resource types. All fixes reproduced and confirmed live over HTTP before/after.
+- **This closes Phase 8 (Milestone 4) and the entire reduced-scope V1 roadmap.**
+
 ## Unreleased — Accessibility baseline pass and browser-support note (D47/D139) — Phase 8 continued
 
 - **Accessibility (D47)**: issue table rows, Kanban board cards, project cards, and inline issue-key

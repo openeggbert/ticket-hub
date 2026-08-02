@@ -23,6 +23,17 @@ Domain::Principal toPrincipal(const Domain::User& user) {
     return Domain::Principal{user.id, user.email, user.displayName, user.isAdmin};
 }
 
+// Argon2id verification is deliberately slow; only running it on the
+// "account exists" branch of login() would let a remote caller distinguish
+// an unknown email from a wrong password purely by response time,
+// enumerating valid accounts. Hashing a fixed dummy password once (lazily,
+// thread-safe by C++11 static-local-init rules) gives the "account not
+// found" branch something of comparable cost to verify against.
+const std::string& dummyPasswordHashForTimingEqualization() {
+    static const std::string hash = Common::hashPassword("th-dummy-password-for-timing-equalization");
+    return hash;
+}
+
 void throwValidationErrors(const std::vector<std::string>& errors) {
     std::ostringstream message;
     for (std::size_t index = 0; index < errors.size(); ++index) {
@@ -70,7 +81,11 @@ Domain::AuthenticatedSession AuthService::login(Domain::LoginRequest request) {
     const auto user = database_->findUserByEmail(request.email);
     if (!user || !user->active) {
         // Deliberately identical to the wrong-password path below -- see
-        // Domain::AuthenticationFailed's doc comment.
+        // Domain::AuthenticationFailed's doc comment. Also deliberately
+        // pays the same Argon2id verification cost as that path (see
+        // dummyPasswordHashForTimingEqualization) so response time can't be
+        // used to enumerate which emails have an account.
+        Common::verifyPassword(dummyPasswordHashForTimingEqualization(), request.password);
         throw Domain::AuthenticationFailed("Invalid email or password");
     }
 
