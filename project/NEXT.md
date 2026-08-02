@@ -1,20 +1,14 @@
 # Ticket Hub next work
 
-Current version: 0.2.0. Phase 3 is complete at every layer (core, tests, server, and UI). Phase 4
-(Collaboration) and Phase 5 (Attachments and Kanban board) are both **complete**, closing out Milestone 2
--- see below for detail. **Phase 6 (Milestone 3) is now complete**: personal access tokens (D39/D40), the
-active-session list / "sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125, including a
-`Retry-After` header on 429), the versioned `/api/v1` prefix (D127, every route except
-`GET /api/health`), read-only CSV export of issues (D48), fixed request-body/bulk-item-count constants
-(D125: 1 MiB JSON body cap, 200-item bulk cap), the security hardening pass (found and fixed a real
-stored-XSS vulnerability in attachment preview/download, plus added standard security headers and a
-CSP), and numbered/offset pagination (D126, for `GET /api/v1/issues` -- a deliberate partial rollout,
-documented as still open for every other list endpoint; along the way, fixed a previously-undocumented
-silent 200-row truncation bug in that same route). **Phase 7 (Milestone 3) is underway**: backup and
-restore (D106-D108) are done -- `ticket-hub-cli backup`/`restore`, verified end-to-end on both databases
-matching Phase 7's exit gate exactly. D111 (upgrades) needed no new work (`ticket-hub-cli migrate`
-already satisfies it). Still open in Phase 7: the in-app admin version banner (D112) and structured JSON
-logs to stdout (D133). No web UI yet for managing tokens or sessions.)
+Current version: 0.2.0. Phases 1-5 (Milestones 1-2) are complete at every layer (core, tests, server, and
+UI) -- see below for detail. **Milestone 3 (Phases 6 and 7) is now fully complete**: the entire REST API
+hardening/export list (PATs, active sessions, rate limits, `/api/v1` versioning, CSV export, request/
+batch-size constants, a security hardening pass that found and fixed a real stored-XSS vulnerability, and
+partial pagination for `GET /api/v1/issues`) and the entire backup/restore/upgrade/observability list
+(backup/restore live-verified on both databases, the existing `migrate` command confirmed to satisfy the
+upgrade requirement, structured JSON logs to stdout, and an in-app admin version banner). Full
+batch-by-batch detail below. **Next up: Phase 8 (Milestone 4, packaging and release hardening)** -- not
+yet started. No web UI yet for managing tokens or sessions.)
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -544,6 +538,25 @@ anything from the removed/deferred list without an explicit new product conversa
   restore without `--yes` refuses, then restored with `--yes` and confirmed the issue count, project keys,
   and the marker attachment file all round-tripped correctly on both backends. Re-ran the full three-
   configuration build matrix, all green. Full detail in `docs/VERIFICATION.md`.
+- **Phase 7 closed (structured JSON logs and admin version banner, D112/D133), this batch:** new
+  `TicketHub::Web::JsonLogHandler` implements Crow's `ILogHandler` and is registered globally via
+  `crow::logger::setHandler`, so every log call Crow already makes internally (startup, per-request
+  Info lines, warnings/errors) becomes one JSON object per line (`timestamp`/`level`/`service`/`message`)
+  on stdout instead of Crow's default plain-text-to-stderr format -- zero new call sites needed elsewhere.
+  For the admin banner (D112), confirmed there is no outbound-HTTP-client infrastructure anywhere in this
+  codebase and no decision text specifies how the app would discover "the latest version" -- the
+  conservative, documented choice: a new global-administrator-only `installation_settings` key
+  (`latest_known_version`, no new migration, reusing the existing generic key/value table exactly like
+  the anonymous-read-access toggle) that an admin sets manually, compared against the compiled-in
+  `TICKETHUB_VERSION`. New `GET`/`PUT /api/v1/settings/latest-known-version` routes (structurally
+  identical to the existing anonymous-read-access toggle routes) and a `web/` banner shown only to admins
+  when an update is available. **This closes Phase 7's entire roadmap list**, and with it, Milestone 3.
+  No database/live-PostgreSQL check needed (reuses already-tested generic setting methods; the logging
+  change has no database dimension). Verified via `curl` (JSON log lines all parse correctly; the
+  settings GET/PUT round-trip, reject an empty version, and 403 for a non-admin) and Playwright (an admin
+  with a configured newer version sees the exact expected banner text; a non-admin sees nothing), plus a
+  project-management regression pass and the full three-configuration build matrix, all green. Full
+  detail in `docs/VERIFICATION.md`.
 
 ## `web/` UI now covers every Phase 1-3 route; Phases 4 and 5 are both complete
 
@@ -574,11 +587,8 @@ native-element previews, sortable list/recycle bin/90-day retention, and full Ma
 drag-drop/paste integration) are all done and fully covered in the UI. This closes out Milestone 2. What's
 left:
 
-1. Milestone 3 per `docs/REDUCED_SCOPE_ROADMAP.md`: **Phase 6 is fully complete** (REST API v1/export,
-   rate limiting, active-session list, the security hardening pass, and pagination for
-   `GET /api/v1/issues`, a deliberate partial rollout with every other list endpoint documented as still
-   open). **Phase 7 is underway**: backup/restore (D106-D108) are done; the in-app admin version banner
-   (D112) and structured JSON logs to stdout (D133) remain.
+1. **Milestone 3 (Phases 6 and 7) is now fully complete** per `docs/REDUCED_SCOPE_ROADMAP.md`. Milestone
+   4 (Phase 8: packaging and release hardening) has not been started.
 2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
@@ -596,16 +606,16 @@ Phase 3's core/CLI/test layer is now complete except for one item:
   deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
   or any children, so this remains the one open path.
 
-Milestone 2 (Phases 4 and 5) is now **fully closed**. **Milestone 3's Phase 6 (REST API v1/export) is now
-fully closed too**: personal access tokens (D39/D40), the active-session list/"sign out everywhere"
-endpoint (D54), fixed rate limiting (D124/D125), the versioned `/api/v1` prefix (D127), read-only CSV
-export of issues (D48), fixed request-body/bulk-item constants (D125), the security hardening pass, and
-numbered/offset pagination (D126, for `GET /api/v1/issues`, a deliberate partial rollout -- every other
-list endpoint remains open and is documented as such) are all done. **Phase 7 is underway**: backup/
-restore (D106-D108) are done (`ticket-hub-cli backup`/`restore`, live-verified on both databases); D111
-(upgrades) needed no new work. Still open: the in-app admin version banner (D112), structured JSON logs
-to stdout (D133), then Milestone 4 (Phase 8: packaging and hardening). Do not jump ahead to later-phase
-features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
+Milestone 2 (Phases 4 and 5) is now **fully closed**. **Milestone 3 (Phase 6: REST API v1/export; Phase 7:
+backup/restore/upgrade/observability) is now fully closed too.** Phase 6: personal access tokens (D39/
+D40), the active-session list/"sign out everywhere" endpoint (D54), fixed rate limiting (D124/D125), the
+versioned `/api/v1` prefix (D127), read-only CSV export (D48), fixed request-body/bulk-item constants
+(D125), the security hardening pass, and pagination for `GET /api/v1/issues` (D126, a deliberate partial
+rollout -- every other list endpoint remains open and documented as such). Phase 7: backup/restore
+(D106-D108, live-verified on both databases), the upgrade mechanism (D111, already satisfied by
+`ticket-hub-cli migrate`), structured JSON logs to stdout (D133), and the in-app admin version banner
+(D112). Next: Milestone 4 (Phase 8: packaging and release hardening), not yet started. Do not jump ahead
+to later-phase features early, and do not implement anything from `docs/REMOVED_AND_DEFERRED_FEATURES.md`.
 
 ## Verification status
 

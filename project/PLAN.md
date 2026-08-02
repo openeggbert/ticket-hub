@@ -19,18 +19,18 @@ detail and `docs/VERIFICATION.md` for exactly what was tested and how.
   sortable list, 90-day recycle bin) are all implemented, tested on both PostgreSQL and SQLite, and
   browser-verified end-to-end with Playwright/Chromium.
 - **Milestone 3** (Phase 6: API/security hardening/export; Phase 7: backup/restore/upgrade) --
-  **Phase 6 complete**: personal access tokens (D39/D40), the active-session list/"sign out everywhere"
-  endpoint (D54), fixed rate limits (D124/D125), the versioned `/api/v1` prefix (D127), read-only CSV
-  export (D48), fixed request-body/bulk-item constants (D125), the security hardening pass (found and
-  fixed a real stored-XSS vulnerability in attachment preview/download), and numbered/offset pagination
-  (D126) for `GET /api/v1/issues` (a deliberate partial rollout, every other list endpoint documented as
-  still open). **Phase 7 started**: backup and restore (D106-D108) are done --
+  **fully complete**. Phase 6: personal access tokens (D39/D40), the active-session list/"sign out
+  everywhere" endpoint (D54), fixed rate limits (D124/D125), the versioned `/api/v1` prefix (D127),
+  read-only CSV export (D48), fixed request-body/bulk-item constants (D125), the security hardening pass
+  (found and fixed a real stored-XSS vulnerability in attachment preview/download), and numbered/offset
+  pagination (D126) for `GET /api/v1/issues` (a deliberate partial rollout, every other list endpoint
+  documented as still open). Phase 7: backup and restore (D106-D108,
   `ticket-hub-cli backup <dir>` / `restore <dir> --yes`, live-verified end-to-end on both SQLite and
-  PostgreSQL matching the exit gate exactly (seed → backup → destroy → restore, data and an attachment
-  file round-tripping correctly). D111 (upgrades) needed no new work -- `ticket-hub-cli migrate` already
-  satisfies it. Still open: the in-app admin version banner (D112) and structured JSON logs to stdout
-  (D133). No web UI yet for managing tokens or sessions.
-- **Milestone 4** (Phase 8: packaging and hardening) -- not started.
+  PostgreSQL matching the exit gate exactly), the upgrade mechanism (D111, already satisfied by
+  `ticket-hub-cli migrate`), structured JSON logs to stdout (D133, a new `JsonLogHandler` replacing
+  Crow's default stderr logger), and an in-app admin version banner (D112, admin-configured, no outbound
+  network calls). No web UI yet for managing tokens or sessions.
+- **Milestone 4** (Phase 8: packaging and release hardening) -- not started.
 
 ## Implementation rules
 

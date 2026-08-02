@@ -283,6 +283,8 @@ trip; there is no admin configuration for either limit.
 | `DELETE` | `/api/v1/projects/{key}/permanent` | session + CSRF, global admin | permanently delete |
 | `GET` | `/api/v1/settings/anonymous-read` | session | current toggle value |
 | `PUT` | `/api/v1/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
+| `GET` | `/api/v1/settings/latest-known-version` | session, global admin | `{currentVersion, latestKnownVersion, updateAvailable}` (D112) |
+| `PUT` | `/api/v1/settings/latest-known-version` | session + CSRF, global admin | `{version}` -- sets what the admin banner compares against |
 | `GET` | `/api/v1/issues` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126) |
 | `GET` | `/api/v1/issues/export.csv` | session, or anon if enabled | read-only CSV export of issues (D48), same filters as above |
 | `POST` | `/api/v1/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
@@ -885,6 +887,29 @@ destroyed the live database and attachments directory entirely (dropped the sche
 Postgres; deleted the file for SQLite), confirmed `restore` without `--yes` refuses, then restored with
 `--yes` and confirmed the issue count, project keys, and the marker attachment file all round-tripped
 correctly on both backends. Also re-ran the full three-configuration build matrix, all green.
+
+A twenty-sixth batch closed out the rest of Phase 7: structured JSON logs to stdout (D133) and the in-app
+admin version banner (D112). New `TicketHub::Web::JsonLogHandler` (`src/web/JsonLogHandler.h/.cpp`)
+implements Crow's `ILogHandler` interface and is registered once via `crow::logger::setHandler` before
+`app.run()`, replacing Crow's default plain-text-to-stderr handler -- every log call Crow already makes
+internally (server startup, per-request Info lines, warnings/errors) becomes one JSON object per line
+(`timestamp`/`level`/`service`/`message`) on stdout instead, with no new call sites needed anywhere else
+in the app; the startup banner line was also switched from a raw `std::cout <<` to `CROW_LOG_INFO` so it
+goes through the same handler. For D112, confirmed there is no outbound-HTTP-client infrastructure
+anywhere in this codebase and no decision text specifies how the app would discover the latest available
+version (no URL, no manifest, no external service) -- adding an actual "check for updates" mechanism
+would be new capability, not implementing an existing decision. The conservative, documented choice
+instead: a global-administrator-only `installation_settings` key (`latest_known_version`, reusing the
+existing generic key/value table -- no new migration) that an admin sets manually (e.g. after checking a
+release page themselves); new `GET`/`PUT /api/v1/settings/latest-known-version` (mirroring the existing
+anonymous-read-access toggle's route pattern exactly) compares it against the compiled-in
+`TICKETHUB_VERSION` and reports `updateAvailable`. `web/`'s app shell gained a dismissible-free banner
+element (shown only to admins, only when `updateAvailable` is true) that calls this endpoint once during
+`loadBaseData()`. **This closes Phase 7's entire roadmap list.** Verified via `curl` (JSON log lines
+parse and contain the expected fields; the settings GET/PUT round-trip correctly, an empty version is
+rejected with 400, a non-admin gets 403) and Playwright (an admin with a newer configured version sees
+the banner with the correct text; a non-admin does not see it at all), plus a full regression pass of the
+project-management flow and the three-configuration build matrix, all green.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

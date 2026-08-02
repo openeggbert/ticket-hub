@@ -54,6 +54,24 @@ public:
     // per-project setting.
     void setAnonymousReadEnabled(bool enabled, const Domain::Principal& actor);
 
+    // In-app admin version banner (Phase 7, D112): "simple ... banner when a
+    // newer version is available; no email delivery." No decision text (or
+    // any other doc in this repo) specifies how the app would discover the
+    // latest available version -- there is no outbound-HTTP-client
+    // infrastructure anywhere in this codebase, and adding one (e.g. to poll
+    // a GitHub releases API) would be new capability, not implementing an
+    // existing decision. The conservative, explicitly-documented choice
+    // here: an admin sets the latest version they know about (e.g. after
+    // checking a release page themselves); the app compares that against
+    // its own compiled-in `TICKETHUB_VERSION` and shows a banner on
+    // mismatch. No outbound network calls, matching the rest of V1's
+    // offline-friendly self-hosted posture. Global-administrator-only for
+    // both read and write, unlike the anonymous-read-access toggle above
+    // (whose value ordinary users' UI behavior depends on) -- only an admin
+    // ever acts on this, so there is no reason for a non-admin to see it.
+    std::optional<std::string> latestKnownVersion(const Domain::Principal& actor);
+    void setLatestKnownVersion(const std::string& version, const Domain::Principal& actor);
+
     // Every write use case takes the caller's Principal explicitly (never
     // optional) -- there is no anonymous write path and no fixed demo-user
     // fallback. Callers (the web layer, once wired to Crow) are responsible
