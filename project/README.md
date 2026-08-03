@@ -5,6 +5,21 @@ Ticket Hub is a self-hosted Jira-like Software ticket tracker written in C++20. 
 License: MIT.  
 Main namespace: `TicketHub`.
 
+## Screenshots
+
+Captured with Playwright/Chromium against a freshly seeded SQLite database (`demo` data), logged in as a
+global administrator so every nav item (including the admin-only Audit log and Attachment recycle bin) is
+visible.
+
+| | |
+|---|---|
+| **Login** ![Login screen](docs/screenshots/01-login.png) | **Dashboard** ![Dashboard](docs/screenshots/02-dashboard.png) |
+| **Board** ![Kanban board](docs/screenshots/03-board.png) | **Tickets** ![Tickets list with filters](docs/screenshots/04-tickets.png) |
+| **Ticket detail** ![Ticket detail drawer](docs/screenshots/05-ticket-detail.png) | **New ticket** ![Create ticket modal](docs/screenshots/06-new-ticket-modal.png) |
+| **Projects** ![Projects](docs/screenshots/07-projects.png) | **Account** ![Account preferences, tokens, and sessions](docs/screenshots/08-account.png) |
+| **Audit log** ![Audit log](docs/screenshots/09-audit-log.png) | **Attachment recycle bin** ![Attachment recycle bin](docs/screenshots/10-attachment-recycle-bin.png) |
+| **Dashboard (dark mode)** ![Dashboard in dark mode](docs/screenshots/11-dashboard-dark.png) | |
+
 ## Project status
 
 The current build target is the **reduced-scope V1** (see `REDUCED_SCOPE_SPECIFICATION.md`), not the
