@@ -1031,6 +1031,19 @@ are deliberate consequences of earlier fixed-scope decisions (unscoped PATs, rev
 limiting, no socket-level body-size cap) rather than new gaps. **This closes Phase 8, Milestone 4, and the
 entire reduced-scope V1 roadmap** -- see `docs/REDUCED_SCOPE_ROADMAP.md`'s Phase 8 exit gate, now met.
 
+With V1 closed, the user was asked to pick the first piece of optional, non-roadmap follow-up and chose a
+**web UI for managing personal access tokens and active sessions** (D39/D40/D54) -- both already had a
+complete REST API and CLI-equivalent story since Phase 6; only the `web/` surface was missing, called out
+explicitly in every prior completion note. A new always-visible "Account" nav item and view lets any
+authenticated user create/list/revoke their own personal access tokens (the raw value is shown exactly
+once, per D40, in a dismissible callout with a copy button, then never re-shown) and list/manage their own
+active sessions (current session badged, "sign out everywhere else" invalidates every other one while
+preserving the caller's). No backend or schema changes -- purely a new consumer of endpoints that already
+existed and were already tested. Browser-verified end-to-end with Playwright/Chromium, including a
+genuine two-cookie-jar test confirming "sign out everywhere else" actually invalidates the other session
+server-side (the second browser context is bounced to the login screen on its next request) while leaving
+the caller's own session intact; both existing regression scripts re-run clean.
+
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:
 

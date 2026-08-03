@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Account settings web UI: personal access tokens and active sessions (post-V1)
+
+- **New "Account" page**, visible to every authenticated user: manage personal access tokens (create,
+  view status, revoke) and active sessions (view, "sign out everywhere else"). Both already had a
+  complete REST API (Phase 6, D39/D40/D54); this adds the `web/` screen that was the one remaining gap
+  called out in every V1-completion note. No backend/schema changes.
+- The first optional, non-roadmap follow-up item, picked by explicit user choice after V1 closed.
+
 ## Unreleased — Threat-model / security self-review — Phase 8 complete, Milestone 4 complete
 
 - **Security**: a dedicated review of the full HTTP attack surface found and fixed five issues -- most

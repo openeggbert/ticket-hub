@@ -1,5 +1,63 @@
 # Verification record
 
+## 2026-08-02 — Account settings web UI: personal access tokens and active sessions (post-V1, user-requested)
+
+The reduced-scope V1 roadmap (`docs/REDUCED_SCOPE_ROADMAP.md`) closed with the prior entry below. This is
+the first batch of the explicitly optional, non-roadmap follow-up work listed at the end of `NEXT.md`,
+started only after the user was directly asked which optional item to pick up next and chose this one --
+per `CLAUDE.md`'s autonomy rule, none of the optional items were to be started without that. Personal
+access tokens (D39/D40) and active sessions (D54) have had a complete REST API and CLI-equivalent story
+since Phase 6; the only gap was a `web/` screen to use them from, called out explicitly in every Phase 8
+completion note ("No web UI yet for managing tokens or sessions").
+
+### What changed
+
+- New "Account" item in the sidebar nav (`web/index.html`, always visible to every authenticated user --
+  unlike the admin-only Audit log/Attachment recycle bin items, tokens and sessions are scoped to the
+  caller's own account, not installation-wide).
+- New `renderAccountView()` in `web/app.js`, wired into `renderCurrentView()`'s existing view dispatch:
+  - **Personal access tokens** panel: lists every token (name, created, expires, last used, Active/Revoked
+    status chip) via `GET /api/v1/tokens`. A "New token" button reveals an inline name/expires-in-days
+    form (`POST /api/v1/tokens`); on success the raw token -- returned by the API exactly once (D40) -- is
+    shown in a dismissible, success-colored callout with a "Copy" button
+    (`navigator.clipboard.writeText`), then cleared from in-memory state so navigating away and back never
+    re-shows it. Each active (non-revoked) token gets a "Revoke" button (`DELETE /api/v1/tokens/{id}`).
+  - **Active sessions** panel: lists every session (signed-in time, expiry) via `GET /api/v1/sessions`,
+    tagging the caller's current session with a "This device" badge. A "Sign out everywhere else" button
+    (`POST /api/v1/sessions/sign-out-others`) appears only when there is more than one session, and is
+    wired to the existing endpoint that always preserves the caller's own session while invalidating every
+    other one.
+  - No new backend routes, no schema change -- this batch is entirely `web/` (`index.html`/`app.js`/
+    `styles.css`), consuming REST endpoints that have existed and been tested since the Phase 6 batch.
+- New `.token-reveal-panel`/`.token-reveal-value` CSS rules in `web/styles.css`, built entirely from the
+  existing `--success-bg`/`--success-text` theme variables (from the D46 dark-theme batch), so it renders
+  correctly in both light and dark mode with no new color literals.
+
+### Verification
+
+Playwright/Chromium end-to-end against a running instance:
+
+- Account view loads; empty-tokens state renders correctly.
+- Created a token: the raw value is shown once (confirmed 64 hex characters, matching the 32-byte
+  `randomTokenHex` token format), the new row appears with an "Active" status chip, the Copy button
+  populates the clipboard (verified via granted clipboard permissions) and shows a confirmation toast.
+- Navigated away and back to the Account view: confirmed the reveal panel does **not** reappear (the raw
+  value is genuinely shown only once, matching D40).
+- Revoked the token: status chip flips to "Revoked" and its Revoke button disappears.
+- Two-context session test (two separate browser contexts, i.e. two real cookie jars, logged in as the
+  same user): confirmed both sessions listed from either device, confirmed "Sign out everywhere else" is
+  hidden with only one session and appears with two, confirmed clicking it from device A shows a
+  `"Signed out 1 other session(s)"` toast, confirmed device A's own session survives (its next page load
+  still works), and confirmed device B is bounced to the login screen on its next API call -- i.e. the
+  other session was genuinely invalidated server-side, not just hidden in the UI.
+- Re-ran both existing browser regression scripts (`login_browser_test.mjs`, `reorder_move_bulk_test.mjs`)
+  unchanged against the same instance -- both passed, confirming the new always-visible nav item didn't
+  disturb any existing view's layout or behavior.
+- Reviewed screenshots of the token list, the create-token form, and the reveal panel in both light and
+  dark mode -- all correctly themed with no unstyled elements.
+- No C++ source was touched in this batch, so `ctest`/the build matrix were not re-run; the prior entry
+  below already confirms 8/8 green on the codebase this batch built on top of.
+
 ## 2026-08-02 — Threat-model / security self-review: Phase 8 slice 4 (closes Milestone 4)
 
 The last open Phase 8 item, and with it the whole reduced-scope V1 roadmap: `docs/THREAT_MODEL.md` is the
