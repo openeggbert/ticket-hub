@@ -75,6 +75,18 @@ void runHttpServer(const Config::AppConfig& config,
         applyHtmlSecurityHeaders(response);
         return response;
     });
+    // Jira-style direct issue links (e.g. /browse/TH-123): serves the exact
+    // same single-page app shell as "/" -- `web/app.js` reads the issue key
+    // out of the URL on load (and keeps the URL in sync via
+    // history.pushState as the user navigates) so a bookmarked/shared link
+    // opens straight to that issue. The `<string>` segment is never used
+    // server-side; the actual key lookup/authorization happens through the
+    // existing GET /api/v1/issues/{key} route, same as any other issue open.
+    CROW_ROUTE(app, "/browse/<string>")([root = config.webRoot](const std::string&) {
+        auto response = staticResponse(root + "/index.html", "text/html; charset=utf-8");
+        applyHtmlSecurityHeaders(response);
+        return response;
+    });
     CROW_ROUTE(app, "/app.js")([root = config.webRoot] {
         return staticResponse(root + "/app.js", "text/javascript; charset=utf-8");
     });

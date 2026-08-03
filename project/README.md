@@ -15,9 +15,10 @@ baseline pass, and a threat-model/security self-review (`docs/THREAT_MODEL.md`) 
 real access-control bug. Four batches of optional, non-roadmap follow-up have been added since -- a web UI
 for managing personal access tokens/active sessions, re-typing/re-parenting an issue after creation (the
 one gap left open since Phase 3), Kanban board drag-and-drop, and a bulk Done-status picker plus keyboard
-multi-select -- which closes out the entire optional-follow-up list identified when the roadmap closed.
-See `NEXT.md`'s "The roadmap is now complete" section for the exact closing detail and `docs/VERIFICATION.md`
-for exactly what was tested and how.
+multi-select -- which closed out the entire optional-follow-up list identified when the roadmap closed.
+Since then, one further user-requested addition: Jira-style `/browse/{key}` direct issue links with full
+browser history support. See `NEXT.md`'s "The roadmap is now complete" section for the exact closing
+detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
 Implemented now:
 
@@ -1099,9 +1100,22 @@ keyboard-only path the shift-click convention alone doesn't provide. Both change
 `web/app.js`, no backend/schema/API changes. Browser-verified with Playwright/Chromium in both light and
 dark mode, including a direct API read confirming a bulk Done transition applies the identical resolution
 to every selected issue, and confirming the pre-existing "checkbox click never opens the drawer" guard
-still holds. Both existing browser regression scripts re-run clean. **This was the last item on the
-optional, non-roadmap follow-up list identified when the reduced-scope V1 roadmap closed -- there is
-currently no further queued work.**
+still holds. Both existing browser regression scripts re-run clean. This was the last item on the
+optional, non-roadmap follow-up list identified when the reduced-scope V1 roadmap closed.
+
+The user then asked whether Ticket Hub supports Jira-style `/browse/ABC-123` direct issue links -- it
+didn't, so a small follow-up batch added one. `GET /browse/{key}` (new in `src/web/HttpServer.cpp`) serves
+the exact same `index.html` app shell as `/`, same security headers included; `web/app.js` keeps the URL
+in sync as issues open and close via `history.pushState`, guarded so it only pushes a new history entry
+when the URL doesn't already match the target (which is what makes it safe for the many existing call
+sites that re-open the same issue after a mutation -- edit, comment, watch/vote, worklog, and so on --
+without spamming the browser's back-button history). A `popstate` listener makes the Back/Forward buttons
+work correctly, and the URL is checked both on initial page load and right after login, so a deep link
+opens the right issue whether or not a session already exists. Browser-verified with Playwright/Chromium
+across every combination: logged-out direct navigation (shows login, opens the issue right after),
+clicking between issues, a full reload while on a `/browse/{key}` URL, Back/Forward, an unknown key
+(shows the pre-existing error banner, doesn't crash), and confirming repeated mutations on an open issue
+don't grow `history.length`. No backend/schema changes beyond the one new static route.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

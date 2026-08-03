@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Jira-style direct issue links (`/browse/{key}`)
+
+- **`GET /browse/{key}`** now serves the app shell directly (same as `/`), and `web/app.js` keeps the URL
+  in sync via `history.pushState` as issues are opened/closed -- a bookmarked or shared link like
+  `/browse/TH-123` opens straight to that issue, including on a fresh page load or reload, and the
+  browser's Back/Forward buttons work correctly.
+- No backend/schema changes beyond the one new static route.
+
 ## Unreleased — Rename the "Selected" workflow status to "Confirmed"
 
 - The `selected` status's display name is now "Confirmed" (the internal `status_key` is unchanged, so

@@ -79,8 +79,13 @@ remains only as optional, non-roadmap follow-up.
   `resolution`; only the UI excluded Done-category statuses) and keyboard-driven multi-select for the
   issues table (a header select-all checkbox, Shift+click range select, Shift+ArrowDown/ArrowUp keyboard
   range extension). Both `web/`-only. Browser-verified with Playwright/Chromium in both light and dark
-  mode. **This was the last item on the optional-follow-up list -- there is currently no further queued
-  work.**
+  mode. This was the last item on the original optional-follow-up list.
+- **Post-V1, batch 5.** The user asked whether Ticket Hub supports Jira-style `/browse/ABC-123` direct
+  issue links -- it didn't, so this batch added one: a new `GET /browse/{key}` server route serving the
+  same app shell as `/`, plus `history.pushState`/`popstate` URL syncing in `web/app.js` (guarded to avoid
+  duplicate history entries on repeated opens of the same issue). No backend/schema changes beyond the
+  route. Browser-verified with Playwright/Chromium across logged-out deep links, reloads, Back/Forward,
+  and an unknown-key error path. **There is currently no further queued work.**
 
 ## Implementation rules
 
