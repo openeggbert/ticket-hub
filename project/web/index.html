@@ -83,6 +83,7 @@
             <div id="notification-panel" class="notification-panel hidden"></div>
           </div>
           <button class="primary-button" id="create-button">＋ Create</button>
+          <button type="button" class="icon-button" id="shortcuts-button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">⌨</button>
         </div>
       </header>
 
@@ -210,6 +211,32 @@
 
   <div class="drawer-backdrop hidden" id="ticket-drawer-backdrop"></div>
   <aside class="ticket-drawer hidden" id="ticket-drawer" aria-label="Ticket details"></aside>
+
+  <div class="modal-backdrop hidden" id="shortcuts-modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <span class="eyebrow">Help</span>
+          <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+        </div>
+        <button type="button" class="icon-button" data-close-modal aria-label="Close">×</button>
+      </div>
+      <table class="shortcuts-table">
+        <tbody>
+          <tr><td><kbd>c</kbd></td><td>Create ticket</td></tr>
+          <tr><td><kbd>/</kbd></td><td>Focus the search filter</td></tr>
+          <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Close a dialog, drawer, or the mobile nav</td></tr>
+          <tr><td><kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>Move focus between board cards or table rows</td></tr>
+          <tr><td><kbd>Enter</kbd></td><td>Open the focused ticket</td></tr>
+          <tr><td><kbd>Shift</kbd>+click / <kbd>Shift</kbd>+<kbd>&uarr;</kbd>/<kbd>&darr;</kbd></td><td>Range-select rows on the Tickets screen</td></tr>
+        </tbody>
+      </table>
+      <div class="modal-footer">
+        <button type="button" class="secondary-button" data-close-modal>Close</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/app.js" defer></script>

@@ -412,6 +412,71 @@ remain as the long-term aspirational baseline only — do not build against them
   "changed summary"/"changed priority" entries with humanized labels (not raw snake_case field names or
   raw priority/status keys), and a status transition producing a readable status-name entry. README's
   ticket-detail screenshot regenerated to show the History tab active. See `docs/VERIFICATION.md`.
+- **Batch 12 (done): quick filters, more keyboard shortcuts, and pagination extended to notifications and
+  the audit log** -- three of six items the user picked off a menu of possible new functionality asked for
+  directly ("napis mi seznam moznych novych funkcionalit a ja se rozhodnu" -- "write me a list of possible
+  new functionalities and I'll decide"); the other three (custom fields, webhooks, outbound email) are
+  larger, decision-register-deferred features tracked separately (see the "Deferred after V1, in
+  progress" note below).
+  - **Quick filters (Board/Backlog).** Two one-click chip toggles -- "Only my tickets" and "No Epic" --
+    reusing the exact same semantics as the Tickets screen's existing assignee dropdown and D66's "No
+    Epic" filter, applied client-side after the normal fetch so the same `applyQuickFilters`/
+    `quickFiltersBar` pair covers both screens regardless of whether the underlying fetch is paginated
+    (Backlog) or not (Board). Deliberately separate state fields (`quickFilterMine`, `quickFilterNoEpic`)
+    from the Tickets screen's own filter-bar state, since Board already resets every filter-bar field on
+    each render and mixing the two would either break that reset or leak a Tickets-screen filter onto
+    Board unexpectedly.
+  - **More keyboard shortcuts.** `/` focuses the global search box; `?` opens a new "Keyboard shortcuts"
+    help modal (also reachable via a topbar button); `c` (pre-existing) still opens the create-ticket
+    modal. Table rows and board cards were already focusable and Enter-activatable
+    (`makeKeyboardActivatable`, from the D47 accessibility pass) but only reachable one Tab press at a
+    time -- `bindTicketLinks` now also wires Up/Down to move focus directly to the previous/next
+    ticket in reading order, and a new `bindBoardKeyboardNav` wires Left/Right on the board specifically
+    to move to the same row position in the adjacent column (plain "next element in DOM order," the rule
+    Up/Down uses, would just walk down the current column instead, since board cards are grouped by
+    column in the markup).
+  - **Pagination extended to notifications and the audit log** (D126 extension). Scoped down from the
+    original four-endpoint ask (comments/worklogs/notifications/audit log) to just these two: a per-ticket
+    comment or worklog list is naturally bounded the same way `ticket_history` already was reasoned to be
+    (see Batch 11's rationale) and doesn't need paging, but a per-user notification list and the
+    installation-wide, append-only-forever audit log both have the same unbounded-growth shape that
+    justified D126 for tickets in the first place. New `IDatabase::listNotifications(userId, unreadOnly,
+    limit, offset)` / `countNotifications`, `IDatabase::listAuditEvents(limit, offset)` / `countAuditEvents`
+    on both adapters, `TicketService::listNotificationsPaged`/`listAuditEventsPaged`, and both existing
+    routes (`GET /api/v1/notifications`, `GET /api/v1/admin/audit-events`) now accept the same optional
+    `page`/`pageSize` query parameters as `GET /api/v1/tickets`, wrapped in the same
+    `items`/`page`/`pageSize`/`totalItems`/`totalPages` envelope -- both routes already returned an
+    `{items: [...]}` shape, so this is purely additive for any existing caller that only reads `.items`.
+    The admin Audit log screen gained Previous/Next pagination controls (mirroring the Backlog screen); the
+    notification bell panel is left as-is (a capped, most-recent-200 read, matching how every other
+    non-Backlog ticket list in this app already behaves).
+
+  New test coverage: `tests/sqlite_integration_tests.cpp` asserts `countNotifications`/`countAuditEvents`
+  agree with their unpaginated counterparts' row counts, that the paginated overloads honor
+  limit/offset without overlapping or reordering pages, and that an offset past the end returns an empty
+  page rather than an error. Verified: full rebuild and `ctest` clean in all three build configurations;
+  live-verified over real HTTP against a fresh PostgreSQL database (notification pagination exercised with
+  a second real user receiving three `assigned` notifications from ticket creation, confirming correct
+  paging and that the `unread` filter composes correctly with `page`/`pageSize`; audit-log pagination
+  exercised against the events the verification session's own user-creation calls produced) and a full
+  Playwright/Chromium browser pass against a fresh SQLite database (11/11 checks: the shortcuts modal
+  opens/closes on `?`/Escape, `/` focuses the global search box, both quick-filter chips render and toggle
+  their active state on Board and Backlog, board card Left/Right keyboard navigation moves focus between
+  columns, and the audit log's pagination bar renders with "Previous" correctly disabled on page 1).
+
+## Deferred after V1, in progress
+
+The remaining three items from the same user-picked list above are real, decision-register-deferred
+features (`docs/REMOVED_AND_DEFERRED_FEATURES.md`), not quick UI additions -- tracked here rather than as
+a "Batch N" entry until each is complete:
+
+- **Custom fields** (D9): admin-defined fields with project/type contexts.
+- **Outbound webhooks** (D39/D41): admin-configured subscriptions, signed payloads, durable delivery.
+- **Outbound email** (D52): a pluggable SMTP backend for the existing fixed notification set.
+
+Webhooks and email both need a durable delivery mechanism first (`CLAUDE.md`: "Durable side effects must
+eventually use jobs/outbox/events. Do not use detached in-memory tasks for email, webhooks...") -- an
+outbox table plus a CLI-driven retry command, since this app has no background worker process today.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 

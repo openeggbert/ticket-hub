@@ -39,11 +39,15 @@ optimistic-lock save (D129), self-service timezone/clock-format preferences (D45
 project's key (D91); and, most recently, a dedicated paginated Backlog screen amending D32 (a project's
 backlog can grow past what a Kanban column usefully holds, so it's off the board and on its own screen),
 Markdown-supported worklogs (no longer forced single-line), and Created/Updated columns on every ticket
-list; and, most recently, a Jira-style ticket detail redesign (status pill, sidebar detail/dates cards,
-tabbed Comments/Work log/History activity section) plus a History tab exposing the previously write-only
-`ticket_history` audit log for the first time via `GET /api/v1/tickets/{key}/history`. See `NEXT.md`'s
-"The roadmap is now complete" section for the exact closing detail and `docs/VERIFICATION.md` for exactly
-what was tested and how.
+list; then a Jira-style ticket detail redesign (status pill, sidebar detail/dates cards, tabbed
+Comments/Work log/History activity section) plus a History tab exposing the previously write-only
+`ticket_history` audit log for the first time via `GET /api/v1/tickets/{key}/history`; and, most recently,
+three items picked off a user-requested menu of possible new functionality — quick filters on Board/
+Backlog, more keyboard shortcuts (`/` search, `?` help, arrow-key row/card navigation), and D126 pagination
+extended to notifications and the admin audit log. Three larger, decision-register-deferred items from the
+same menu (custom fields, outbound webhooks, outbound email) are in progress — see `docs/SCOPE.md`'s
+"Deferred after V1, in progress" note. See `NEXT.md`'s "The roadmap is now complete" section for the exact
+closing detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
 Implemented now:
 
@@ -100,6 +104,12 @@ Implemented now:
 - **a History activity tab** exposing `ticket_history` (previously write-only internal bookkeeping) via
   `GET /api/v1/tickets/{key}/history`: every status change and per-field edit, newest first, rendered as
   readable "changed X from Y to Z" entries,
+- **quick filters on Board/Backlog**: one-click "Only my tickets" / "No Epic" chip toggles,
+- **more keyboard shortcuts**: `/` focuses the global search box, `?` opens a keyboard-shortcuts help
+  modal, and Up/Down/Left/Right move focus directly between table rows and board cards,
+- **pagination (D126) extended to notifications and the admin audit log** — both have the same
+  unbounded-growth shape tickets did; comments/worklogs stay unpaginated since a single ticket's list is
+  naturally bounded,
 - **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
   both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
@@ -376,11 +386,11 @@ trip; there is no admin configuration for either limit.
 | `GET` | `/api/v1/board-columns` | session, or anon if enabled | one entry per fixed workflow status with its optional soft WIP limit (D32/D33) |
 | `PUT` | `/api/v1/board-columns/{statusKey}` | session + CSRF, global admin | `{wipLimit}` (number or null); installation-wide, not per-project |
 | `GET` | `/api/v1/users` | session | user directory (id/displayName/email/handle) for @mention autocomplete (D80) |
-| `GET` | `/api/v1/notifications` | session | `?unread=true` filters; fixed set (D14) |
+| `GET` | `/api/v1/notifications` | session | `?unread=true` filters; fixed set (D14); paginated via `page`/`pageSize` (D126) |
 | `GET` | `/api/v1/notifications/unread-count` | session | `{count}` |
 | `POST` | `/api/v1/notifications/{id}/read` | session + CSRF | scoped to the caller's own notifications |
 | `POST` | `/api/v1/notifications/read-all` | session + CSRF | scoped to the caller's own notifications |
-| `GET` | `/api/v1/admin/audit-events` | session, global admin | newest 200 admin/security events (D23) |
+| `GET` | `/api/v1/admin/audit-events` | session, global admin | admin/security events (D23), newest first, paginated via `page`/`pageSize` (D126) |
 | `GET` | `/api/v1/projects` | session, or anon if enabled | active project summaries |
 | `POST` | `/api/v1/projects` | session + CSRF, global admin | create project |
 | `PATCH` | `/api/v1/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |

@@ -513,6 +513,30 @@ int main() {
         require(database.countUnreadNotifications(alexUserId) == 0, "no notifications remain unread");
         require(!database.markAllNotificationsRead(alexUserId), "marking all read again is a no-op");
 
+        // --- Numbered/offset pagination extended to notifications (D126) ---
+        // A per-user notification list has no natural upper bound the way a
+        // single ticket's comments/worklogs do, so it gets the same
+        // page/pageSize contract tickets already have.
+        {
+            database.createNotification(alexUserId, "watched_comment", created.id);
+            const auto allForAlex = database.listNotifications(alexUserId, false);
+            require(allForAlex.size() == 3, "alex now has three notifications total");
+            require(database.countNotifications(alexUserId, false) == 3,
+                   "countNotifications matches the unpaginated listNotifications row count");
+            require(database.countNotifications(alexUserId, true) == 1,
+                   "countNotifications respects the unreadOnly filter (the watched_comment one, since the "
+                   "other two were marked all-read above)");
+
+            const auto firstPage = database.listNotifications(alexUserId, false, 2, 0);
+            require(firstPage.size() == 2, "the paginated overload honors the limit");
+            const auto secondPage = database.listNotifications(alexUserId, false, 2, 2);
+            require(secondPage.size() == 1, "the second page returns the remainder");
+            require(firstPage[0].id != secondPage[0].id && firstPage[1].id != secondPage[0].id,
+                   "paginated pages do not overlap");
+            require(database.listNotifications(alexUserId, false, 2, 0)[0].id == allForAlex[0].id,
+                   "the paginated overload preserves the same newest-first order as the unpaginated one");
+        }
+
         require(database.deleteComment(comment.id, demoUserId), "a comment can be soft-deleted");
         require(database.listComments(created.key).empty(), "a soft-deleted comment no longer appears in the list");
         require(!database.findCommentById(comment.id).has_value(), "a soft-deleted comment is not found by findCommentById");
@@ -631,6 +655,20 @@ int main() {
                     projectDeletedEvent.targetId.has_value() && *projectDeletedEvent.targetId == "TH",
                "target type/id round-trip");
         require(database.listAuditEvents(1).size() == 1, "the limit parameter caps the result size");
+
+        // --- Numbered/offset pagination extended to the audit log (D126) ---
+        // Installation-wide and append-only forever, so it has no natural
+        // upper bound either -- same page/pageSize contract as tickets.
+        {
+            require(database.countAuditEvents() == 2, "countAuditEvents matches listAuditEvents' row count");
+            const auto firstPage = database.listAuditEvents(1, 0);
+            require(firstPage.size() == 1 && firstPage[0].action == "login.failed",
+                   "the paginated overload's first page is the newest event");
+            const auto secondPage = database.listAuditEvents(1, 1);
+            require(secondPage.size() == 1 && secondPage[0].action == "project.permanently_deleted",
+                   "the paginated overload's second page is the next-newest event");
+            require(database.listAuditEvents(10, 2).empty(), "an offset past the end returns no rows, not an error");
+        }
 
         const auto dashboard = database.dashboardStats();
         require(dashboard.totalTickets == 9, "dashboard includes newly created ticket");

@@ -117,6 +117,16 @@ function initialState() {
     // (e.g. after a reorder) so the user's position in a large backlog
     // survives their own actions.
     backlogPage: 1,
+    // Quick filters (Board/Backlog only): one-click toggles, independent of
+    // the ad-hoc filter-bar state above so switching to Board/Backlog never
+    // silently inherits a filter left set on the Tickets screen (Board in
+    // particular already resets every filter-bar field on each render).
+    quickFilterMine: false,
+    quickFilterNoEpic: false,
+    // Audit log (page-based, D126 extended): the log is append-only
+    // forever, so unlike a single ticket's comment/worklog list it has no
+    // natural upper bound.
+    auditPage: 1,
     currentTicket: null,
     principal: null,
     // Cached user directory (D80) -- powers @mention autocomplete. Fetched
@@ -938,13 +948,21 @@ async function renderDashboard() {
 // Simple append-only admin/security audit log (D23): global-administrator-
 // only, read-only, no filtering/export/pagination -- just the newest 200
 // events the server already caps the response to.
+const AuditPageSize = 50;
+
+// Numbered/offset pagination (extends D126): the audit log is append-only
+// forever and installation-wide, so it has no natural upper bound the way a
+// single ticket's comment/worklog list does -- paged the same way the
+// Backlog screen paginates a project's unbounded backlog.
 async function renderAuditLog() {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  const { items } = await api('/api/v1/admin/audit-events');
+  const page = await api(`/api/v1/admin/audit-events?page=${state.auditPage}&pageSize=${AuditPageSize}`);
+  const items = page.items;
+  const totalPages = Math.max(page.totalPages, 1);
   content.innerHTML = `
     ${pageHeader('Audit log', 'Append-only record of admin and security events. Never purged or exported.', 'Administration')}
     <div class="panel">
-      <div class="panel-header"><h2>Events</h2><span class="eyebrow">${items.length} shown</span></div>
+      <div class="panel-header"><h2>Events</h2><span class="eyebrow">${page.totalItems} total</span></div>
       <div style="overflow-x:auto">
         <table class="ticket-table">
           <thead><tr><th>When</th><th>Category</th><th>Action</th><th>Actor</th><th>Target</th><th>Details</th></tr></thead>
@@ -960,7 +978,22 @@ async function renderAuditLog() {
           </tbody>
         </table>
       </div>
+      <div class="pagination-bar">
+        <span>${page.totalItems} event${page.totalItems === 1 ? '' : 's'} — page ${page.page} of ${totalPages}</span>
+        <div>
+          <button type="button" class="secondary-button" id="audit-prev" ${page.page <= 1 ? 'disabled' : ''}>← Previous</button>
+          <button type="button" class="secondary-button" id="audit-next" ${page.page >= totalPages ? 'disabled' : ''}>Next →</button>
+        </div>
+      </div>
     </div>`;
+  document.querySelector('#audit-prev').addEventListener('click', () => {
+    state.auditPage = Math.max(1, state.auditPage - 1);
+    renderAuditLog().catch(showError);
+  });
+  document.querySelector('#audit-next').addEventListener('click', () => {
+    state.auditPage = state.auditPage + 1;
+    renderAuditLog().catch(showError);
+  });
 }
 
 // Attachment recycle bin (D101/D102): global-administrator-only, fixed
@@ -1526,6 +1559,45 @@ async function fetchBoardTickets() {
   state.tickets = results.flatMap(result => result.items);
 }
 
+// Quick filters (Board/Backlog): one-click chip toggles, applied client-side
+// after the normal fetch -- "Only my tickets" and "No Epic" reuse the exact
+// same semantics as the Tickets screen's assignee dropdown and D66's "No
+// Epic" filter, just as an always-visible toggle rather than a dropdown
+// pick, matching Jira's own board quick-filter convention. Deliberately
+// client-side-only (no query params) on both Board and Backlog so the same
+// two functions cover both screens regardless of whether the underlying
+// fetch is paginated (Backlog) or not (Board).
+function applyQuickFilters(tickets) {
+  let result = tickets;
+  if (state.quickFilterMine) {
+    const email = state.principal?.email;
+    result = result.filter(ticket => ticket.assignee?.email === email);
+  }
+  if (state.quickFilterNoEpic) {
+    result = result.filter(ticket => ticketTypeHierarchyLevel(ticket.type.key) === 0 && !ticket.parentTicketKey);
+  }
+  return result;
+}
+
+function quickFiltersBar() {
+  return `
+    <div class="quick-filters">
+      <button type="button" class="quick-filter-chip ${state.quickFilterMine ? 'active' : ''}" id="quick-filter-mine">👤 Only my tickets</button>
+      <button type="button" class="quick-filter-chip ${state.quickFilterNoEpic ? 'active' : ''}" id="quick-filter-no-epic">🚫 No Epic</button>
+    </div>`;
+}
+
+function bindQuickFiltersBar(onChange) {
+  document.querySelector('#quick-filter-mine')?.addEventListener('click', () => {
+    state.quickFilterMine = !state.quickFilterMine;
+    onChange();
+  });
+  document.querySelector('#quick-filter-no-epic')?.addEventListener('click', () => {
+    state.quickFilterNoEpic = !state.quickFilterNoEpic;
+    onChange();
+  });
+}
+
 async function renderBoard() {
   state.selectedProject ||= state.projects[0]?.key || null;
   state.search = '';
@@ -1541,8 +1613,9 @@ async function renderBoard() {
   const [, boardColumns] = await Promise.all([fetchBoardTickets(), api('/api/v1/board-columns')]);
   const isAdmin = Boolean(state.principal?.isAdmin);
   const selected = state.projects.find(project => project.key === state.selectedProject);
+  const visibleTickets = applyQuickFilters(state.tickets);
   const columns = BOARD_STATUSES.map(status => {
-    const tickets = state.tickets.filter(ticket => ticket.status.key === status.key);
+    const tickets = visibleTickets.filter(ticket => ticket.status.key === status.key);
     // Kanban WIP limits (D32/D33): a single flat, installation-wide limit
     // per fixed workflow status -- soft and display-time-only, an
     // over-limit column is highlighted, never blocked from receiving more
@@ -1585,12 +1658,14 @@ async function renderBoard() {
         <select id="board-project" class="status-select">${state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('')}</select>
       </div>
     </div>
+    ${quickFiltersBar()}
     <div class="board">${columns}</div>`;
   document.querySelector('#board-view-backlog').addEventListener('click', () => navigate('backlog'));
   document.querySelector('#board-project').addEventListener('change', event => {
     state.selectedProject = event.target.value;
     renderBoard().catch(showError);
   });
+  bindQuickFiltersBar(() => renderBoard().catch(showError));
   document.querySelectorAll('[data-wip-save]').forEach(button => button.addEventListener('click', async () => {
     const statusKey = button.dataset.wipSave;
     const input = document.querySelector(`[data-wip-input="${CSS.escape(statusKey)}"]`);
@@ -1604,6 +1679,7 @@ async function renderBoard() {
   }));
   bindBoardDragAndDrop();
   bindTicketLinks();
+  bindBoardKeyboardNav();
 }
 
 const BacklogPageSize = 50;
@@ -1644,7 +1720,7 @@ async function renderBacklog() {
     showError(error);
     return;
   }
-  const tickets = page.items;
+  const tickets = applyQuickFilters(page.items);
   const totalPages = Math.max(page.totalPages, 1);
 
   content.innerHTML = `
@@ -1655,6 +1731,7 @@ async function renderBacklog() {
         <select id="backlog-project" class="status-select">${state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('')}</select>
       </div>
     </div>
+    ${quickFiltersBar()}
     <div class="panel">
       <div class="filter-bar">
         <select id="backlog-type-filter">
@@ -1691,7 +1768,7 @@ async function renderBacklog() {
         </table>
       </div>
       <div class="pagination-bar">
-        <span>${page.totalItems} backlog ticket${page.totalItems === 1 ? '' : 's'} — page ${page.page} of ${totalPages}</span>
+        <span>${page.totalItems} backlog ticket${page.totalItems === 1 ? '' : 's'} — page ${page.page} of ${totalPages}${(state.quickFilterMine || state.quickFilterNoEpic) ? ` (${tickets.length} match the active quick filter${state.quickFilterMine && state.quickFilterNoEpic ? 's' : ''} on this page)` : ''}</span>
         <div>
           <button type="button" class="secondary-button" id="backlog-prev" ${page.page <= 1 ? 'disabled' : ''}>← Previous</button>
           <button type="button" class="secondary-button" id="backlog-next" ${page.page >= totalPages ? 'disabled' : ''}>Next →</button>
@@ -1700,6 +1777,10 @@ async function renderBacklog() {
     </div>`;
 
   document.querySelector('#backlog-view-board').addEventListener('click', () => navigate('board'));
+  bindQuickFiltersBar(() => {
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  });
   document.querySelector('#backlog-project').addEventListener('change', event => {
     state.selectedProject = event.target.value;
     state.backlogPage = 1;
@@ -2240,9 +2321,45 @@ function navigate(view) {
 }
 
 function bindTicketLinks() {
-  document.querySelectorAll('[data-ticket-key]').forEach(element => {
+  const elements = [...document.querySelectorAll('[data-ticket-key]')];
+  elements.forEach((element, index) => {
     element.addEventListener('click', () => openTicket(element.dataset.ticketKey));
     makeKeyboardActivatable(element, () => openTicket(element.dataset.ticketKey));
+    // Roving Up/Down focus (Tab already reaches every row/card, but that
+    // takes one Tab press per row -- Up/Down moves directly to the
+    // previous/next ticket in reading order, matching Jira's own
+    // table/board keyboard navigation). Left/Right on the board specifically
+    // are handled separately in bindBoardKeyboardNav, since "next column" is
+    // not "next element in DOM order".
+    element.addEventListener('keydown', event => {
+      if (event.target !== element) return;
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      const next = elements[event.key === 'ArrowDown' ? index + 1 : index - 1];
+      if (!next) return;
+      event.preventDefault();
+      next.focus();
+    });
+  });
+}
+
+// Left/Right moves focus to the card at the same position in the
+// previous/next board column (clamped to that column's last card if it's
+// shorter) -- a plain "next element in DOM order" rule (as used for
+// Up/Down in bindTicketLinks) would just walk down the current column
+// instead, since board cards are grouped by column in the markup.
+function bindBoardKeyboardNav() {
+  const columns = [...document.querySelectorAll('.board-list[data-status-key]')].map(list => [...list.querySelectorAll('[data-ticket-key]')]);
+  columns.forEach((cards, columnIndex) => {
+    cards.forEach((card, rowIndex) => {
+      card.addEventListener('keydown', event => {
+        if (event.target !== card) return;
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        const targetColumn = columns[event.key === 'ArrowRight' ? columnIndex + 1 : columnIndex - 1];
+        if (!targetColumn || !targetColumn.length) return;
+        event.preventDefault();
+        targetColumn[Math.min(rowIndex, targetColumn.length - 1)].focus();
+      });
+    });
   });
 }
 
@@ -2969,6 +3086,14 @@ function closeCreateModal() {
   createModal.classList.add('hidden');
 }
 
+function openShortcutsModal() {
+  document.querySelector('#shortcuts-modal').classList.remove('hidden');
+}
+
+function closeShortcutsModal() {
+  document.querySelector('#shortcuts-modal').classList.add('hidden');
+}
+
 function debounce(fn, delay) {
   let timer;
   return (...args) => {
@@ -2987,6 +3112,9 @@ document.querySelectorAll('[data-close-modal]').forEach(button => button.addEven
 }));
 createModal.addEventListener('click', event => { if (event.target === createModal) closeCreateModal(); });
 projectModal.addEventListener('click', event => { if (event.target === projectModal) closeProjectModal(); });
+const shortcutsModal = document.querySelector('#shortcuts-modal');
+document.querySelector('#shortcuts-button').addEventListener('click', openShortcutsModal);
+shortcutsModal.addEventListener('click', event => { if (event.target === shortcutsModal) closeShortcutsModal(); });
 drawerBackdrop.addEventListener('click', closeDrawer);
 document.querySelector('#menu-button').addEventListener('click', () => document.querySelector('#sidebar').classList.toggle('open'));
 
@@ -3121,11 +3249,21 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     closeCreateModal();
     closeProjectModal();
+    closeShortcutsModal();
     closeDrawer();
     document.querySelector('#sidebar').classList.remove('open');
   }
-  if (event.key.toLowerCase() === 'c' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+  const inTextField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+  if (event.key.toLowerCase() === 'c' && !inTextField) {
     openCreateModal();
+  }
+  if (event.key === '?' && !inTextField) {
+    event.preventDefault();
+    openShortcutsModal();
+  }
+  if (event.key === '/' && !inTextField) {
+    event.preventDefault();
+    document.querySelector('#global-search').focus();
   }
 });
 

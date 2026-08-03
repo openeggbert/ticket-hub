@@ -244,6 +244,15 @@ public:
                                                      const std::string& type,
                                                      const std::string& ticketId) = 0;
     virtual std::vector<Domain::Notification> listNotifications(const std::string& userId, bool unreadOnly) = 0;
+    // Numbered/offset pagination (extends D126 to this per-user list, which
+    // -- unlike a per-ticket comment/worklog list -- has no natural upper
+    // bound: notifications accumulate for as long as a user's account
+    // exists). Additive: the unpaginated overload above is unchanged and
+    // still used wherever the full (small, in practice) unread set is
+    // needed (e.g. the notification bell panel).
+    virtual std::vector<Domain::Notification> listNotifications(const std::string& userId, bool unreadOnly,
+                                                                  int limit, int offset) = 0;
+    virtual std::int64_t countNotifications(const std::string& userId, bool unreadOnly) = 0;
     virtual int countUnreadNotifications(const std::string& userId) = 0;
     // Both return true only if a matching row existed (and, for markRead,
     // was not already read); scoped to `userId` so one user can never mark
@@ -281,6 +290,12 @@ public:
                                   std::optional<std::string> targetId,
                                   std::optional<std::string> details) = 0;
     virtual std::vector<Domain::AuditEvent> listAuditEvents(int limit) = 0;
+    // Numbered/offset pagination (extends D126): the audit log is
+    // installation-wide and append-only-forever, so unlike a single
+    // ticket's comment/worklog list it has no natural upper bound either.
+    // Additive alongside the capped-only overload above.
+    virtual std::vector<Domain::AuditEvent> listAuditEvents(int limit, int offset) = 0;
+    virtual std::int64_t countAuditEvents() = 0;
 
     virtual Domain::DashboardStats dashboardStats() = 0;
 

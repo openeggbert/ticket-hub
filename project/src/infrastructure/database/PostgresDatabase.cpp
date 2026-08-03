@@ -2126,6 +2126,38 @@ std::vector<Domain::Notification> PostgresDatabase::listNotifications(const std:
     return notifications;
 }
 
+std::vector<Domain::Notification> PostgresDatabase::listNotifications(const std::string& userId, const bool unreadOnly,
+                                                                        const int limit, const int offset) {
+    auto connection = connect(connectionString_);
+    std::string sql = std::string(NotificationSelect) + "WHERE n.user_id = $1";
+    if (unreadOnly) {
+        sql += " AND n.read_at IS NULL";
+    }
+    sql += " ORDER BY n.created_at DESC LIMIT $2::int OFFSET $3::int";
+    auto result = execParams(connection.get(), sql,
+                             {userId, std::to_string(limit), std::to_string(offset)},
+                             "List notifications (paginated)");
+    std::vector<Domain::Notification> notifications;
+    const int rowCount = PQntuples(result.get());
+    for (int row = 0; row < rowCount; ++row) {
+        notifications.push_back(readNotification(result.get(), row));
+    }
+    return notifications;
+}
+
+std::int64_t PostgresDatabase::countNotifications(const std::string& userId, const bool unreadOnly) {
+    auto connection = connect(connectionString_);
+    std::string sql = "SELECT COUNT(*) FROM notifications WHERE user_id = $1";
+    if (unreadOnly) {
+        sql += " AND read_at IS NULL";
+    }
+    auto result = execParams(connection.get(), sql, {userId}, "Count notifications");
+    if (PQntuples(result.get()) == 0) {
+        return 0;
+    }
+    return int64Value(result.get(), 0, 0);
+}
+
 int PostgresDatabase::countUnreadNotifications(const std::string& userId) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL",
@@ -2282,6 +2314,28 @@ std::vector<Domain::AuditEvent> PostgresDatabase::listAuditEvents(const int limi
         events.push_back(readAuditEvent(result.get(), row));
     }
     return events;
+}
+
+std::vector<Domain::AuditEvent> PostgresDatabase::listAuditEvents(const int limit, const int offset) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(),
+                             std::string(AuditEventSelect) + "ORDER BY a.created_at DESC LIMIT $1::int OFFSET $2::int",
+                             {std::to_string(limit), std::to_string(offset)}, "List audit events (paginated)");
+    std::vector<Domain::AuditEvent> events;
+    const int rowCount = PQntuples(result.get());
+    for (int row = 0; row < rowCount; ++row) {
+        events.push_back(readAuditEvent(result.get(), row));
+    }
+    return events;
+}
+
+std::int64_t PostgresDatabase::countAuditEvents() {
+    auto connection = connect(connectionString_);
+    auto result = exec(connection.get(), "SELECT COUNT(*) FROM audit_events", "Count audit events");
+    if (PQntuples(result.get()) == 0) {
+        return 0;
+    }
+    return int64Value(result.get(), 0, 0);
 }
 
 Domain::DashboardStats PostgresDatabase::dashboardStats() {

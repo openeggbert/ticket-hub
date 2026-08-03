@@ -212,6 +212,27 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .small-avatar { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--border); color: var(--text); font-size: 9px; font-weight: 800; }
 
 .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--surface-soft); }
+
+.quick-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.quick-filter-chip {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
+  border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.quick-filter-chip:hover { border-color: var(--primary); color: var(--text); }
+.quick-filter-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+.shortcuts-table { width: 100%; border-collapse: collapse; margin: 4px 0 16px; }
+.shortcuts-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.shortcuts-table td:first-child { white-space: nowrap; width: 1%; }
+kbd {
+  display: inline-block; min-width: 20px; padding: 2px 6px; border: 1px solid var(--border);
+  border-bottom-width: 2px; border-radius: 5px; background: var(--surface-soft); color: var(--text);
+  font-family: inherit; font-size: 11px; font-weight: 700; text-align: center;
+}
+.board-list:focus-within, .ticket-table tbody tr:focus-within { outline: none; }
+.ticket-card:focus-visible, .ticket-table tbody tr:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: -2px;
+}
 .filter-bar select, .filter-bar input { min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
 .filter-bar input { min-width: 260px; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--info-bg); }

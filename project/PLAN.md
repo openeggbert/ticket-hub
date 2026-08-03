@@ -177,7 +177,21 @@ remains only as optional, non-roadmap follow-up.
   in the test itself -- `>=` is not a valid strict weak ordering, fixed to strict `>`); verified end-to-end
   against fresh live PostgreSQL and SQLite databases over real HTTP and a full Playwright/Chromium browser
   pass (8/8 checks). README's ticket-detail screenshot regenerated to show the History tab active.
-  **There is currently no further queued work.**
+- **Post-V1, batch 12.** The user asked for a list of possible new functionalities; offered six quick/safe
+  items and six larger decision-register-deferred features, and the user picked six by number
+  ("implementuj prosim 1 3 4 6 11 12"). This batch covers the three quick ones: quick filters on
+  Board/Backlog ("Only my tickets"/"No Epic" chip toggles), more keyboard shortcuts (`/` search, `?` help
+  modal, Up/Down/Left/Right row/card navigation), and D126 pagination extended to notifications and the
+  admin audit log (scoped down from the original four-endpoint ask -- comments/worklogs stay unpaginated
+  since a single ticket's list is naturally bounded, matching the same reasoning already used for
+  `ticket_history`). New SQLite integration test coverage for the paginated notification/audit-log
+  overloads; verified end-to-end against a fresh live PostgreSQL database over real HTTP and a full
+  Playwright/Chromium browser pass (11/11 checks). The other three picked items -- custom fields (D9),
+  outbound webhooks (D39/D41), outbound email (D52) -- are real deferred-feature work, tracked as ongoing
+  in `docs/SCOPE.md`'s "Deferred after V1, in progress" note; webhooks and email additionally need a
+  durable outbox/delivery mechanism first (`CLAUDE.md`'s "no detached in-memory tasks for email/webhooks"
+  rule).
+  **There is currently no further queued work in this batch; custom fields/webhooks/email continue next.**
 
 ## Implementation rules
 

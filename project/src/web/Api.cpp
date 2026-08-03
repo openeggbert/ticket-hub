@@ -2723,20 +2723,32 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Simple append-only admin/security audit log (D23): global-admin-only,
-    // like the recycle bins. No filtering/export/pagination -- just a
-    // capped, newest-first read.
+    // like the recycle bins. Numbered/offset pagination (extends D126): a
+    // caller that never sends `page`/`pageSize` gets exactly the same
+    // capped, newest-first read this route always returned (`limit`
+    // defaults to `Domain::DefaultPageSize`, unchanged), now with
+    // `totalItems`/`totalPages` so the audit log -- unbounded and
+    // append-only forever -- can actually be paged through instead of only
+    // ever showing the most recent page.
     CROW_ROUTE(app, "/api/v1/admin/audit-events")([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
         }
         try {
+            const int page = optionalIntQueryParameter(request, "page").value_or(1);
+            const int pageSize = optionalIntQueryParameter(request, "pageSize").value_or(Domain::DefaultPageSize);
+            const auto result = service->listAuditEventsPaged(*principal, page, pageSize);
             crow::json::wvalue::list items;
-            for (const auto& event : service->listAuditEvents(*principal)) {
+            for (const auto& event : result.items) {
                 items.emplace_back(auditEventJson(event));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
+            body["page"] = result.page;
+            body["pageSize"] = result.pageSize;
+            body["totalItems"] = result.totalItems;
+            body["totalPages"] = result.totalPages();
             return jsonResponse(200, std::move(body));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
@@ -2746,7 +2758,12 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Fixed in-app notifications (D14): always scoped to the caller's own
-    // notifications, never another user's.
+    // notifications, never another user's. Numbered/offset pagination
+    // (extends D126): omitting `page`/`pageSize` returns exactly the same
+    // full (previously unbounded) list this route always returned, now
+    // capped at `Domain::DefaultPageSize` and wrapped with
+    // `totalItems`/`totalPages` -- a notification list otherwise grows
+    // without bound for as long as a user's account exists.
     CROW_ROUTE(app, "/api/v1/notifications")([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2755,12 +2772,19 @@ void registerApiRoutes(crow::SimpleApp& app,
         try {
             const auto unreadParam = queryParameter(request, "unread");
             const bool unreadOnly = unreadParam.has_value() && *unreadParam == "true";
+            const int page = optionalIntQueryParameter(request, "page").value_or(1);
+            const int pageSize = optionalIntQueryParameter(request, "pageSize").value_or(Domain::DefaultPageSize);
+            const auto result = service->listNotificationsPaged(*principal, unreadOnly, page, pageSize);
             crow::json::wvalue::list items;
-            for (const auto& notification : service->listNotifications(*principal, unreadOnly)) {
+            for (const auto& notification : result.items) {
                 items.emplace_back(notificationJson(notification));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
+            body["page"] = result.page;
+            body["pageSize"] = result.pageSize;
+            body["totalItems"] = result.totalItems;
+            body["totalPages"] = result.totalPages();
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
