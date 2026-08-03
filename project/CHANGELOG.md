@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — Quick filters, more keyboard shortcuts, pagination for notifications/audit log
+
+- **Quick filters (Board/Backlog)**: one-click "Only my tickets" / "No Epic" chip toggles, client-side,
+  reusing the exact semantics of the existing assignee dropdown and D66's "No Epic" filter.
+- **More keyboard shortcuts**: `/` focuses the global search box, `?` opens a new keyboard-shortcuts help
+  modal, and Up/Down/Left/Right move focus directly between table rows and board cards (previously only
+  reachable one Tab press at a time).
+- **Pagination (D126) extended to notifications and the admin audit log** — both grow unbounded over time
+  the same way tickets did; comments/worklogs are left unpaginated since a single ticket's list stays
+  naturally small. New `page`/`pageSize` query parameters on `GET /api/v1/notifications` and
+  `GET /api/v1/admin/audit-events`, purely additive to their existing `{items: [...]}` response shape. The
+  admin Audit log screen gained Previous/Next pagination controls.
+- Verified: full rebuild and `ctest` clean in all three build configurations (new SQLite integration test
+  coverage for the paginated notification/audit-log overloads); live-verified against a fresh PostgreSQL
+  database over real HTTP; full Playwright/Chromium browser pass (11/11 checks).
+
 ## Unreleased — History activity tab on the ticket detail drawer
 
 - **New "History" Activity tab** next to Comments and Work log, exposing `ticket_history` (status changes

@@ -1,5 +1,96 @@
 # Verification record
 
+## 2026-08-03 — Quick filters, more keyboard shortcuts, notification/audit-log pagination (user-requested)
+
+Requested directly by the user after the History-tab batch landed: a menu of six possible new
+functionalities was offered ("napis mi seznam moznych novych funkcionalit a ja se rozhodnu" -- "write me a
+list of possible new functionalities and I'll decide"), and the user picked six by number
+("implementuj prosim 1 3 4 6 11 12"). Three (1, 3, 4) are quick UI/pagination additions, covered by this
+entry. The other three (6 = custom fields, 11 = webhooks, 12 = email) are larger, decision-register-deferred
+features tracked as ongoing work in `docs/SCOPE.md`'s "Deferred after V1, in progress" note, not yet
+complete.
+
+### What changed
+
+- **Quick filters (item 1).** `web/app.js` gained `applyQuickFilters(tickets)` and `quickFiltersBar()`/
+  `bindQuickFiltersBar(onChange)` helpers, used by both `renderBoard` and `renderBacklog`. Two chip
+  buttons -- "Only my tickets" (`ticket.assignee?.email === state.principal?.email`) and "No Epic" (the
+  same `ticketTypeHierarchyLevel(...) === 0 && !ticket.parentTicketKey` check D66's Tickets-screen filter
+  already uses) -- toggle two new dedicated state booleans (`quickFilterMine`, `quickFilterNoEpic`),
+  deliberately not reusing the Tickets screen's `filterAssignee`/`filterEpic` fields since `renderBoard`
+  already resets every filter-bar field on each render (board previously had no filter UI at all) and
+  reusing them would either break that reset or leak a filter set on the Tickets screen onto Board
+  unexpectedly. Applied client-side, after the normal fetch, on both screens -- Backlog's pagination totals
+  (`totalItems`/`totalPages`) intentionally still reflect the unfiltered server-side count, with the
+  pagination-bar caption noting how many of the current page's rows match the active filter(s), matching
+  how D66's "No Epic" filter already behaves on the (unpaginated) Tickets screen.
+- **More keyboard shortcuts (item 3).** `makeKeyboardActivatable` (from the D47 accessibility pass) already
+  made every table row and board card focusable and Enter-activatable, but only reachable one Tab press at
+  a time. `bindTicketLinks` now also wires Up/Down on each `[data-ticket-key]` element to move focus
+  directly to the previous/next such element in DOM order (works uniformly for table rows and, within one
+  board column, board cards). A new `bindBoardKeyboardNav`, called only from `renderBoard`, wires Left/Right
+  specifically to the card at the same row position in the adjacent column (a plain "next in DOM order"
+  rule would just walk down the current column instead, since board cards are grouped by column in the
+  markup, not by row). A new global `?` shortcut opens a "Keyboard shortcuts" help modal
+  (`#shortcuts-modal` in `web/index.html`, reusing the existing `.modal-backdrop`/`.modal`/
+  `[data-close-modal]` pattern), also reachable via a new topbar "⌨" button; `/` focuses the existing
+  `#global-search` box. Both new shortcuts are guarded the same way the pre-existing `c` shortcut already
+  was -- skipped while focus is inside an `INPUT`/`TEXTAREA`/`SELECT`, so typing a literal `/` or `?` into
+  a text field never gets hijacked.
+- **Pagination extended to notifications and the audit log (item 4, scoped down from four endpoints to
+  two).** The original ask named comments, worklogs, notifications, and the audit log. Comments and
+  worklogs are per-ticket lists that stay naturally small -- the same reasoning `docs/SCHEMA.md` and Batch
+  11 already used for why `ticket_history` needed no cap ("this V1 product has no bot/automation traffic
+  that could make a single ticket's history unusually large") applies identically here, so they were left
+  out. Notifications (accumulate for as long as a user's account exists) and the audit log
+  (installation-wide, append-only forever) have the same unbounded-growth shape that justified D126 for
+  tickets in the first place, so those two got the same `page`/`pageSize` treatment: new
+  `IDatabase::listNotifications(userId, unreadOnly, limit, offset)` / `countNotifications(userId,
+  unreadOnly)` and `listAuditEvents(limit, offset)` / `countAuditEvents()` on both `SqliteDatabase` and
+  `PostgresDatabase` (mirroring `listTickets`/`countTickets`'s existing two-overload pattern exactly), new
+  `TicketService::listNotificationsPaged`/`listAuditEventsPaged` (same clamp-page-to-≥1/clamp-pageSize-to-
+  `Domain::MaxPageSize` logic as `listTicketsPaged`), and both existing routes
+  (`GET /api/v1/notifications`, `GET /api/v1/admin/audit-events`) now accept optional `page`/`pageSize`
+  query parameters and respond with the same `items`/`page`/`pageSize`/`totalItems`/`totalPages` envelope
+  `GET /api/v1/tickets` already uses. Purely additive: both routes already responded with an
+  `{items: [...]}` shape (confirmed by inspection before making the change), so any existing caller that
+  only destructures `.items` -- which `web/app.js`'s notification bell panel already does -- keeps working
+  unchanged; a caller that never sends `page`/`pageSize` gets the same (now explicitly capped at
+  `Domain::DefaultPageSize` instead of implicitly unbounded) result either route always returned. The admin
+  Audit log screen (`renderAuditLog`) gained Previous/Next pagination controls, mirroring the Backlog
+  screen's `.pagination-bar`; the notification bell panel is deliberately left as a capped, most-recent-200
+  read with no pagination UI, matching how every other non-Backlog list in the app already behaves.
+
+### Verification
+
+- Full rebuild in all three build configurations (default, SQLite-only, PostgreSQL-only) with zero new
+  warnings/errors; `ctest --output-on-failure` green in all three (new coverage in
+  `tests/sqlite_integration_tests.cpp`: `countNotifications` agrees with the unpaginated
+  `listNotifications` row count for both the full and `unreadOnly` cases; the paginated
+  `listNotifications` overload's two pages don't overlap and preserve the same newest-first order as the
+  unpaginated one; `countAuditEvents` agrees with `listAuditEvents`; the paginated `listAuditEvents`
+  overload's pages return the correct newest-first rows in sequence; an offset past the end of either list
+  returns an empty page, not an error).
+- One CLI usage mistake caught and corrected during live verification, not a bug: an initial attempt to
+  create a verification admin account passed `--email=`/`--name=`/`--password=` flags, but
+  `ticket-hub-cli create-user` takes positional arguments (`<email> <displayName> <password>
+  [--admin] [--handle=...]`) -- the malformed flags were silently accepted as the positional `<email>`
+  value, creating a user with a literal `--email=...` email address that then correctly failed to log in.
+  Corrected to the right positional form; documented here since the same mistake is easy to repeat.
+- Live-verified over real HTTP against a fresh throwaway PostgreSQL database: `GET
+  /api/v1/admin/audit-events?page=1&pageSize=1` against three seeded audit events returns exactly one item
+  with `totalPages: 3`; a second real user (not the caller) received three `assigned` notifications from
+  three ticket-creation calls, and `GET /api/v1/notifications?page=1&pageSize=2` /
+  `?page=2&pageSize=2` returned two non-overlapping, correctly newest-first-ordered pages that together
+  covered all three; `?unread=true&page=1&pageSize=1` confirmed the `unread` filter composes correctly
+  with pagination (`totalItems`/`totalPages` reflect the filtered count, not the unfiltered one).
+- Full Playwright/Chromium browser pass (`verify_batch12.js`) against a fresh SQLite database -- 11/11
+  checks: `?` opens the keyboard-shortcuts modal and Escape closes it; `/` focuses `#global-search`; Board
+  and Backlog both render exactly two quick-filter chips; clicking "No Epic" toggles its `.active` class
+  and toggling it back off restores the original visible card count; ArrowRight on a focused board card
+  moves focus to another card; the admin Audit log screen renders a pagination bar with "Previous"
+  disabled on page 1.
+
 ## 2026-08-03 — History activity tab on the ticket detail drawer (user-requested)
 
 Requested directly by the user right after the Jira-layout batch landed: "a co pridat i zalozky history

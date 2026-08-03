@@ -2245,6 +2245,39 @@ std::vector<Domain::Notification> SqliteDatabase::listNotifications(const std::s
     return notifications;
 }
 
+std::vector<Domain::Notification> SqliteDatabase::listNotifications(const std::string& userId, const bool unreadOnly,
+                                                                      const int limit, const int offset) {
+    std::scoped_lock lock(mutex_);
+    std::string sql = std::string(NotificationSelect) + "WHERE n.user_id = ?1";
+    if (unreadOnly) {
+        sql += " AND n.read_at IS NULL";
+    }
+    sql += " ORDER BY n.created_at DESC LIMIT ?2 OFFSET ?3";
+    Statement statement(database_, sql);
+    statement.bind(1, userId);
+    statement.bind(2, static_cast<std::int64_t>(limit));
+    statement.bind(3, static_cast<std::int64_t>(offset));
+    std::vector<Domain::Notification> notifications;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        notifications.push_back(readNotification(statement.get()));
+    }
+    return notifications;
+}
+
+std::int64_t SqliteDatabase::countNotifications(const std::string& userId, const bool unreadOnly) {
+    std::scoped_lock lock(mutex_);
+    std::string sql = "SELECT COUNT(*) FROM notifications WHERE user_id = ?1";
+    if (unreadOnly) {
+        sql += " AND read_at IS NULL";
+    }
+    Statement statement(database_, sql);
+    statement.bind(1, userId);
+    if (statement.step() != SQLITE_ROW) {
+        return 0;
+    }
+    return sqlite3_column_int64(statement.get(), 0);
+}
+
 int SqliteDatabase::countUnreadNotifications(const std::string& userId) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL");
@@ -2418,6 +2451,27 @@ std::vector<Domain::AuditEvent> SqliteDatabase::listAuditEvents(const int limit)
         events.push_back(readAuditEvent(statement.get()));
     }
     return events;
+}
+
+std::vector<Domain::AuditEvent> SqliteDatabase::listAuditEvents(const int limit, const int offset) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(AuditEventSelect) + "ORDER BY a.created_at DESC LIMIT ?1 OFFSET ?2");
+    statement.bind(1, static_cast<std::int64_t>(limit));
+    statement.bind(2, static_cast<std::int64_t>(offset));
+    std::vector<Domain::AuditEvent> events;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        events.push_back(readAuditEvent(statement.get()));
+    }
+    return events;
+}
+
+std::int64_t SqliteDatabase::countAuditEvents() {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "SELECT COUNT(*) FROM audit_events");
+    if (statement.step() != SQLITE_ROW) {
+        return 0;
+    }
+    return sqlite3_column_int64(statement.get(), 0);
 }
 
 Domain::DashboardStats SqliteDatabase::dashboardStats() {

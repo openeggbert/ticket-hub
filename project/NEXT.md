@@ -82,6 +82,20 @@ Jira-style "changed X from Y to Z" sentence with humanized labels. No schema cha
 exposure of an existing table. See `docs/SCOPE.md`'s "Batch 11" entry and "The roadmap is now complete"
 below for full detail.
 
+**Post-V1, batch 12 (done, 2026-08-03):** "napis mi seznam moznych novych funkcionalit a ja se rozhodnu"
+("write me a list of possible new functionalities and I'll decide") -- offered a menu of possible
+additions; the user picked six ("implementuj prosim 1 3 4 6 11 12"). Three were quick, safe UI/pagination
+additions, done in this batch: quick filters on Board/Backlog (one-click "Only my tickets"/"No Epic"
+toggles), more keyboard shortcuts (`/` search, `?` help modal, arrow-key row/card navigation), and D126
+pagination extended to notifications and the admin audit log (scoped down from the original four-endpoint
+ask -- comments/worklogs stay unpaginated since a single ticket's list is naturally bounded, unlike a
+per-user notification list or the installation-wide audit log). The other three -- custom fields (D9),
+outbound webhooks (D39/D41), outbound email (D52) -- are real decision-register-deferred features, tracked
+separately in `docs/SCOPE.md`'s "Deferred after V1, in progress" note rather than as a single "Batch 13,"
+since each needs its own migrations/tests/verification pass; webhooks and email additionally need a
+durable outbox/delivery mechanism first per `CLAUDE.md`'s "no detached in-memory tasks for email/webhooks"
+rule. See `docs/SCOPE.md`'s "Batch 12" entry and "The roadmap is now complete" below for full detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -1144,6 +1158,52 @@ covering the three-tab layout, the History panel hidden by default and visible a
 real edit producing readable "changed summary"/"changed priority" entries with humanized labels rather
 than raw snake_case field names or raw keys, and a status transition producing a readable status-name
 entry. README's ticket-detail screenshot regenerated to show the History tab active. Full detail in
+`docs/VERIFICATION.md`.
+
+**Post-V1 batch 12 (done, 2026-08-03):** offered a menu of possible new functionality
+("napis mi seznam moznych novych funkcionalit a ja se rozhodnu"), grouped into quick/safe UI additions and
+larger decision-register-deferred features; the user picked six by number
+("implementuj prosim 1 3 4 6 11 12"). This batch covers the three quick ones (1, 3, 4); the other three
+(6 = custom fields, 11 = webhooks, 12 = email) are tracked as ongoing work in `docs/SCOPE.md`'s "Deferred
+after V1, in progress" note.
+
+- **Quick filters (Board/Backlog).** Two chip toggles, "Only my tickets" and "No Epic"
+  (`state.quickFilterMine`/`quickFilterNoEpic`, deliberately separate from the Tickets screen's own
+  filter-bar state), applied client-side after the normal fetch via a shared `applyQuickFilters`/
+  `quickFiltersBar` pair so the same code covers both the unpaginated Board and the paginated Backlog.
+  Reuses the exact same "assignee equals me" and "no parent, Story/Task/Bug type" semantics the Tickets
+  screen's assignee dropdown and D66's "No Epic" filter already established.
+- **More keyboard shortcuts.** `/` focuses the global search box; `?` opens a new "Keyboard shortcuts"
+  help modal (also reachable via a topbar button); table rows and board cards were already focusable and
+  Enter-activatable (`makeKeyboardActivatable`, from the D47 accessibility pass) but only reachable one
+  Tab press at a time -- `bindTicketLinks` now wires Up/Down to jump directly to the previous/next ticket
+  in reading order, and a new `bindBoardKeyboardNav` wires Left/Right on the board to move to the same row
+  position in the adjacent column (a plain "next in DOM order" rule, as Up/Down uses, would just walk down
+  the current column instead, since board cards are grouped by column in the markup).
+- **Pagination (D126) extended to notifications and the audit log.** Scoped down from the original
+  four-endpoint ask: a per-ticket comment/worklog list is naturally bounded, matching the same reasoning
+  Batch 11 already applied to `ticket_history`, so only notifications (unbounded per user account) and the
+  audit log (unbounded, installation-wide, append-only forever) actually needed it. New
+  `IDatabase::listNotifications(userId, unreadOnly, limit, offset)`/`countNotifications` and
+  `listAuditEvents(limit, offset)`/`countAuditEvents` on both adapters, `TicketService::
+  listNotificationsPaged`/`listAuditEventsPaged`, and both existing routes now accept optional
+  `page`/`pageSize` (same D126 contract as tickets) -- purely additive, since both routes already
+  responded with an `{items: [...]}` envelope that any existing caller reading only `.items` keeps working
+  against unchanged. The admin Audit log screen gained Previous/Next controls, mirroring the Backlog
+  screen; the notification bell panel is left as a capped most-recent-200 read, matching how every other
+  non-Backlog list in the app already behaves.
+
+New test coverage: `tests/sqlite_integration_tests.cpp` asserts `countNotifications`/`countAuditEvents`
+agree with their unpaginated counterparts, that the paginated overloads honor limit/offset without
+overlapping or reordering pages, and that an offset past the end returns an empty page rather than an
+error. Verified: full rebuild and `ctest` clean in all three build configurations; live-verified over real
+HTTP against a fresh PostgreSQL database (a second real user receiving three `assigned` notifications from
+ticket creation, confirming correct paging and that `unread` composes with `page`/`pageSize`; audit-log
+pagination exercised against events the verification session's own user-creation calls produced); a full
+Playwright/Chromium browser pass against a fresh SQLite database (11/11 checks: the shortcuts modal
+opens/closes on `?`/Escape, `/` focuses the global search box, both quick-filter chips render and toggle
+on Board and Backlog, board card Left/Right keyboard navigation moves focus between columns, and the audit
+log's pagination bar renders with "Previous" correctly disabled on page 1). Full detail in
 `docs/VERIFICATION.md`.
 
 ## Verification status

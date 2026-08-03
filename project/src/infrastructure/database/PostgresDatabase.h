@@ -103,6 +103,9 @@ public:
                                              const std::string& type,
                                              const std::string& ticketId) override;
     std::vector<Domain::Notification> listNotifications(const std::string& userId, bool unreadOnly) override;
+    std::vector<Domain::Notification> listNotifications(const std::string& userId, bool unreadOnly,
+                                                          int limit, int offset) override;
+    std::int64_t countNotifications(const std::string& userId, bool unreadOnly) override;
     int countUnreadNotifications(const std::string& userId) override;
     bool markNotificationRead(const std::string& notificationId, const std::string& userId) override;
     bool markAllNotificationsRead(const std::string& userId) override;
@@ -122,6 +125,8 @@ public:
                           std::optional<std::string> targetId,
                           std::optional<std::string> details) override;
     std::vector<Domain::AuditEvent> listAuditEvents(int limit) override;
+    std::vector<Domain::AuditEvent> listAuditEvents(int limit, int offset) override;
+    std::int64_t countAuditEvents() override;
 
     Domain::DashboardStats dashboardStats() override;
     std::vector<Domain::BoardColumn> listBoardColumns() override;

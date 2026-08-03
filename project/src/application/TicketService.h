@@ -331,6 +331,11 @@ public:
     // Always scoped to the caller's own notifications; there is no
     // cross-user notification management.
     std::vector<Domain::Notification> listNotifications(const Domain::Principal& actor, bool unreadOnly);
+    // Numbered/offset pagination (extends D126): a notification list can
+    // grow unbounded over the lifetime of a user's account, unlike a
+    // single ticket's comments/worklogs.
+    Domain::Page<Domain::Notification> listNotificationsPaged(const Domain::Principal& actor, bool unreadOnly,
+                                                                int page, int pageSize);
     int countUnreadNotifications(const Domain::Principal& actor);
     bool markNotificationRead(const std::string& notificationId, const Domain::Principal& actor);
     bool markAllNotificationsRead(const Domain::Principal& actor);
@@ -340,6 +345,10 @@ public:
     // No categories/export/configurable retention -- just a capped,
     // newest-first read of everything recorded so far.
     std::vector<Domain::AuditEvent> listAuditEvents(const Domain::Principal& actor, int limit = 200);
+    // Numbered/offset pagination (extends D126): the audit log is
+    // installation-wide and append-only forever, so it has no natural
+    // upper bound either.
+    Domain::Page<Domain::AuditEvent> listAuditEventsPaged(const Domain::Principal& actor, int page, int pageSize);
 
 private:
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;

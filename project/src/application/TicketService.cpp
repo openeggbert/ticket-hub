@@ -1035,6 +1035,22 @@ std::vector<Domain::Notification> TicketService::listNotifications(const Domain:
     return database_->listNotifications(actor.userId, unreadOnly);
 }
 
+Domain::Page<Domain::Notification> TicketService::listNotificationsPaged(const Domain::Principal& actor,
+                                                                          const bool unreadOnly,
+                                                                          const int page,
+                                                                          const int pageSize) {
+    const int clampedPage = std::max(page, 1);
+    const int clampedPageSize = std::clamp(pageSize, 1, Domain::MaxPageSize);
+    const int offset = (clampedPage - 1) * clampedPageSize;
+
+    Domain::Page<Domain::Notification> result;
+    result.page = clampedPage;
+    result.pageSize = clampedPageSize;
+    result.totalItems = database_->countNotifications(actor.userId, unreadOnly);
+    result.items = database_->listNotifications(actor.userId, unreadOnly, clampedPageSize, offset);
+    return result;
+}
+
 int TicketService::countUnreadNotifications(const Domain::Principal& actor) {
     return database_->countUnreadNotifications(actor.userId);
 }
@@ -1050,6 +1066,22 @@ bool TicketService::markAllNotificationsRead(const Domain::Principal& actor) {
 std::vector<Domain::AuditEvent> TicketService::listAuditEvents(const Domain::Principal& actor, const int limit) {
     requireGlobalAdmin(actor);
     return database_->listAuditEvents(limit);
+}
+
+Domain::Page<Domain::AuditEvent> TicketService::listAuditEventsPaged(const Domain::Principal& actor,
+                                                                      const int page,
+                                                                      const int pageSize) {
+    requireGlobalAdmin(actor);
+    const int clampedPage = std::max(page, 1);
+    const int clampedPageSize = std::clamp(pageSize, 1, Domain::MaxPageSize);
+    const int offset = (clampedPage - 1) * clampedPageSize;
+
+    Domain::Page<Domain::AuditEvent> result;
+    result.page = clampedPage;
+    result.pageSize = clampedPageSize;
+    result.totalItems = database_->countAuditEvents();
+    result.items = database_->listAuditEvents(clampedPageSize, offset);
+    return result;
 }
 
 void TicketService::dispatchAssignmentNotification(const Domain::Ticket& ticketAfter,
