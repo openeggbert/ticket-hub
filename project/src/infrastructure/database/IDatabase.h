@@ -144,6 +144,30 @@ public:
                                                                     const Domain::EditComponentRequest& request) = 0;
     virtual bool deleteComponent(const std::string& componentId) = 0;
 
+    // --- Custom fields (D9, deferred-after-V1, user-requested) ---
+    // Same shape as the component methods above: createCustomField throws
+    // std::invalid_argument on an unknown project key or an already-used
+    // (project, name) pair; editCustomField/deleteCustomField return
+    // nullopt/false for an unknown fieldId. listCustomFields is ordered by
+    // sort_order. setTicketCustomFieldValues replaces the ticket's entire
+    // value set in one transaction (full-replacement, matching editTicket's
+    // labels handling) -- an empty `values` vector clears every value.
+    // listTicketCustomFieldValues always returns one entry per field
+    // defined on the ticket's project (value nullopt if never set), not
+    // just the fields that happen to have a stored value.
+    virtual std::vector<Domain::CustomFieldDefinition> listCustomFields(const std::string& projectKey) = 0;
+    virtual Domain::CustomFieldDefinition createCustomField(const Domain::CreateCustomFieldRequest& request) = 0;
+    virtual std::optional<Domain::CustomFieldDefinition> findCustomFieldById(const std::string& fieldId) = 0;
+    virtual std::optional<Domain::CustomFieldDefinition> editCustomField(const std::string& fieldId,
+                                                                          const Domain::EditCustomFieldRequest& request) = 0;
+    virtual bool deleteCustomField(const std::string& fieldId) = 0;
+    // Values are set only as part of createTicket/editTicket (via
+    // Domain::CreateTicketRequest::customFieldValues / EditTicketRequest::
+    // customFieldValues), not through a separate write method here -- each
+    // adapter applies them transactionally alongside the rest of the
+    // ticket write, exactly like labels.
+    virtual std::vector<Domain::CustomFieldValue> listTicketCustomFieldValues(const std::string& ticketKey) = 0;
+
     // --- Ticket tracker (existing prototype surface, now principal-driven) ---
     virtual std::vector<Domain::Project> listProjects() = 0;
     // Unpaginated, capped at Domain::DefaultPageSize rows -- used internally

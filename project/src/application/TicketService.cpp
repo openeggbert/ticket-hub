@@ -243,6 +243,7 @@ Domain::Ticket TicketService::createTicket(Domain::CreateTicketRequest request, 
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
     }
+    requireCustomFieldsSatisfied(request.projectKey, request.customFieldValues);
     const auto created = database_->createTicket(request, actor.userId);
     dispatchAssignmentNotification(created, std::nullopt, actor);
     return created;
@@ -292,6 +293,7 @@ std::optional<Domain::Ticket> TicketService::editTicket(const std::string& ticke
     // inside IDatabase::editTicket, the same split changeTicketStatus and
     // moveTicket already use for their own database-state-dependent rules.
     validateHierarchyShape(request.ticketTypeKey, request.parentTicketKey, ticket->projectKey, ticket->key);
+    requireCustomFieldsSatisfied(ticket->projectKey, request.customFieldValues);
     const auto assigneeBefore = ticket->assignee;
     const auto edited = database_->editTicket(normalizedKey, request, actor.userId, expectedVersion);
     if (edited) {
@@ -947,6 +949,85 @@ bool TicketService::deleteComponent(const std::string& projectKey, const std::st
         return false;
     }
     return database_->deleteComponent(componentId);
+}
+
+std::vector<Domain::CustomFieldDefinition> TicketService::listCustomFields(const std::string& projectKey,
+                                                                            const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listCustomFields(Domain::normalizeProjectKey(projectKey));
+}
+
+Domain::CustomFieldDefinition TicketService::createCustomField(Domain::CreateCustomFieldRequest request,
+                                                                 const Domain::Principal& actor) {
+    request.projectKey = Domain::normalizeProjectKey(request.projectKey);
+    requireProjectRole(actor, request.projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    const auto errors = Domain::validateCreateCustomField(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->createCustomField(request);
+}
+
+std::optional<Domain::CustomFieldDefinition> TicketService::editCustomField(const std::string& projectKey,
+                                                                             const std::string& fieldId,
+                                                                             Domain::EditCustomFieldRequest request,
+                                                                             const Domain::Principal& actor) {
+    const std::string normalizedProjectKey = Domain::normalizeProjectKey(projectKey);
+    requireProjectRole(actor, normalizedProjectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    const auto existing = database_->findCustomFieldById(fieldId);
+    if (!existing || existing->projectKey != normalizedProjectKey) {
+        return std::nullopt;
+    }
+    // fieldType is immutable (see EditCustomFieldRequest's doc comment) --
+    // options only make sense for a select field, so an edit that supplies
+    // any while the existing field isn't one of the select types is
+    // rejected the same way create already rejects that combination.
+    if (existing->fieldType != "single_select" && existing->fieldType != "multi_select" && !request.options.empty()) {
+        throw std::invalid_argument("options is only meaningful for single_select/multi_select fields");
+    }
+    const auto errors = Domain::validateEditCustomField(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->editCustomField(fieldId, request);
+}
+
+bool TicketService::deleteCustomField(const std::string& projectKey, const std::string& fieldId, const Domain::Principal& actor) {
+    const std::string normalizedProjectKey = Domain::normalizeProjectKey(projectKey);
+    requireProjectRole(actor, normalizedProjectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    const auto existing = database_->findCustomFieldById(fieldId);
+    if (!existing || existing->projectKey != normalizedProjectKey) {
+        return false;
+    }
+    return database_->deleteCustomField(fieldId);
+}
+
+std::vector<Domain::CustomFieldValue> TicketService::listTicketCustomFieldValues(const std::string& ticketKey,
+                                                                                  const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listTicketCustomFieldValues(Domain::normalizeTicketKey(ticketKey));
+}
+
+void TicketService::requireCustomFieldsSatisfied(const std::string& projectKey,
+                                                  const std::vector<Domain::CustomFieldValueInput>& values) {
+    const auto fields = database_->listCustomFields(projectKey);
+    if (fields.empty()) {
+        return;
+    }
+    std::vector<std::string> errors;
+    for (const auto& field : fields) {
+        if (!field.required) {
+            continue;
+        }
+        const auto supplied = std::find_if(values.begin(), values.end(),
+                                           [&](const auto& input) { return input.fieldId == field.id; });
+        if (supplied == values.end() || supplied->value.empty()) {
+            errors.push_back("Custom field \"" + field.name + "\" is required");
+        }
+    }
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
 }
 
 Domain::Project TicketService::createProject(Domain::CreateProjectRequest request, const Domain::Principal& actor) {

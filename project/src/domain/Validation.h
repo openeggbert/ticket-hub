@@ -44,6 +44,13 @@ std::vector<std::string> validateCreateProject(const CreateProjectRequest& reque
 std::vector<std::string> validateCreateComponent(const CreateComponentRequest& request);
 std::vector<std::string> validateEditComponent(const EditComponentRequest& request);
 
+// D9: fieldType must be one of the fixed set; single_select/multi_select
+// require at least one non-empty option, every other type must have none
+// (options are meaningless for them, so a caller supplying any is a request
+// error rather than something to silently ignore).
+std::vector<std::string> validateCreateCustomField(const CreateCustomFieldRequest& request);
+std::vector<std::string> validateEditCustomField(const EditCustomFieldRequest& request);
+
 std::vector<std::string> validateAddWorklog(const AddWorklogRequest& request);
 std::vector<std::string> validateEditWorklog(const EditWorklogRequest& request);
 

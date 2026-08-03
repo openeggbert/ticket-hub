@@ -44,8 +44,9 @@ Comments/Work log/History activity section) plus a History tab exposing the prev
 `ticket_history` audit log for the first time via `GET /api/v1/tickets/{key}/history`; and, most recently,
 three items picked off a user-requested menu of possible new functionality — quick filters on Board/
 Backlog, more keyboard shortcuts (`/` search, `?` help, arrow-key row/card navigation), and D126 pagination
-extended to notifications and the admin audit log. Three larger, decision-register-deferred items from the
-same menu (custom fields, outbound webhooks, outbound email) are in progress — see `docs/SCOPE.md`'s
+extended to notifications and the admin audit log; and, most recently, custom fields (D9,
+deferred-after-V1) — admin-defined fields scoped to a project, shown on ticket create/edit/view. Two more
+items from the same menu (outbound webhooks, outbound email) are in progress — see `docs/SCOPE.md`'s
 "Deferred after V1, in progress" note. See `NEXT.md`'s "The roadmap is now complete" section for the exact
 closing detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
@@ -110,6 +111,10 @@ Implemented now:
 - **pagination (D126) extended to notifications and the admin audit log** — both have the same
   unbounded-growth shape tickets did; comments/worklogs stay unpaginated since a single ticket's list is
   naturally bounded,
+- **custom fields** (D9, deferred-after-V1, user-requested): admin-defined fields (text/number/date/
+  checkbox/single-select/multi-select) scoped to a project, shown on ticket create/edit/view; a project's
+  Admin-or-above manages the field catalog, and a `required` field blocks a ticket create/edit that omits
+  it,
 - **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
   both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
@@ -403,15 +408,20 @@ trip; there is no admin configuration for either limit.
 | `POST` | `/api/v1/projects/{key}/components` | session + CSRF, project admin | `{name, description?, leadEmail?, defaultAssigneeEmail?}` |
 | `PATCH` | `/api/v1/projects/{key}/components/{id}` | session + CSRF, project admin | full-replacement edit, same fields as create |
 | `DELETE` | `/api/v1/projects/{key}/components/{id}` | session + CSRF, project admin | hard delete -- no recycle bin (D19); clears the component from any ticket via `ON DELETE SET NULL` |
+| `GET` | `/api/v1/projects/{key}/custom-fields` | session, or anon if enabled | a project's custom field definitions (D9), ordered by `sortOrder` |
+| `POST` | `/api/v1/projects/{key}/custom-fields` | session + CSRF, project admin | `{name, fieldType, options?, required?}` |
+| `PATCH` | `/api/v1/projects/{key}/custom-fields/{id}` | session + CSRF, project admin | `{name, options?, required?, sortOrder?}` -- `fieldType` is immutable |
+| `DELETE` | `/api/v1/projects/{key}/custom-fields/{id}` | session + CSRF, project admin | hard delete -- no recycle bin, matching components; cascades away any stored ticket values |
+| `GET` | `/api/v1/tickets/{key}/custom-fields` | session, or anon if enabled | one entry per field defined on the ticket's project, `value: null` if never set |
 | `GET` | `/api/v1/settings/anonymous-read` | session | current toggle value |
 | `PUT` | `/api/v1/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
 | `GET` | `/api/v1/settings/latest-known-version` | session, global admin | `{currentVersion, latestKnownVersion, updateAvailable}` (D112) |
 | `PUT` | `/api/v1/settings/latest-known-version` | session + CSRF, global admin | `{version}` -- sets what the admin banner compares against |
 | `GET` | `/api/v1/tickets` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `component`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126); `sort=rank` orders by manual rank instead of `updated_at DESC` |
 | `GET` | `/api/v1/tickets/export.csv` | session, or anon if enabled | read-only CSV export of tickets (D48), same filters as above |
-| `POST` | `/api/v1/tickets` | session + CSRF, project member | create ticket (`assigneeEmail`, `parentTicketKey`, `componentName`) |
+| `POST` | `/api/v1/tickets` | session + CSRF, project member | create ticket (`assigneeEmail`, `parentTicketKey`, `componentName`, `customFieldValues?`) |
 | `GET` | `/api/v1/tickets/{key}` | session, or anon if enabled | current key or permanent alias |
-| `PATCH` | `/api/v1/tickets/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
+| `PATCH` | `/api/v1/tickets/{key}` | session + CSRF, project member | full-replacement edit (D129), including `customFieldValues?`; see below |
 | `PATCH` | `/api/v1/tickets/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
 | `GET` | `/api/v1/tickets/{key}/comments` | session, or anon if enabled | live comments |
 | `POST` | `/api/v1/tickets/{key}/comments` | session + CSRF, project member | add comment |

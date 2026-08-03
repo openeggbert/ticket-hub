@@ -271,6 +271,80 @@ LEFT JOIN users lead ON lead.id = c.lead_user_id
 LEFT JOIN users def ON def.id = c.default_assignee_user_id
 )SQL";
 
+// Custom fields (D9). `options` is stored as a small self-contained JSON
+// array of strings -- a private encoding local to this adapter (not a
+// dependency on the web layer's crow::json), matching SqliteDatabase's own
+// identical encode/decode pair.
+std::string encodeCustomFieldOptions(const std::vector<std::string>& options) {
+    std::string json = "[";
+    for (std::size_t i = 0; i < options.size(); ++i) {
+        if (i > 0) {
+            json += ",";
+        }
+        json += "\"";
+        for (const char c : options[i]) {
+            if (c == '"' || c == '\\') {
+                json += '\\';
+            }
+            json += c;
+        }
+        json += "\"";
+    }
+    json += "]";
+    return json;
+}
+
+std::vector<std::string> decodeCustomFieldOptions(const std::string& json) {
+    std::vector<std::string> options;
+    std::string current;
+    bool inString = false;
+    bool escape = false;
+    for (const char c : json) {
+        if (!inString) {
+            if (c == '"') {
+                inString = true;
+                current.clear();
+            }
+            continue;
+        }
+        if (escape) {
+            current += c;
+            escape = false;
+            continue;
+        }
+        if (c == '\\') {
+            escape = true;
+            continue;
+        }
+        if (c == '"') {
+            inString = false;
+            options.push_back(current);
+            continue;
+        }
+        current += c;
+    }
+    return options;
+}
+
+constexpr const char* CustomFieldSelect = R"SQL(
+SELECT f.id, p.project_key, f.name, f.field_type, f.options, f.required, f.sort_order, f.created_at::text
+FROM custom_fields f
+JOIN projects p ON p.id = f.project_id
+)SQL";
+
+Domain::CustomFieldDefinition readCustomFieldDefinition(PGresult* result, int row) {
+    Domain::CustomFieldDefinition field;
+    field.id = value(result, row, 0);
+    field.projectKey = value(result, row, 1);
+    field.name = value(result, row, 2);
+    field.fieldType = value(result, row, 3);
+    field.options = decodeCustomFieldOptions(value(result, row, 4));
+    field.required = boolValue(result, row, 5);
+    field.sortOrder = std::stoi(value(result, row, 6));
+    field.createdAt = value(result, row, 7);
+    return field;
+}
+
 std::string lookupTicketId(PGconn* connection, const std::string& ticketKey) {
     auto result = execParams(connection, R"SQL(
 SELECT i.id
@@ -1191,6 +1265,189 @@ bool PostgresDatabase::deleteComponent(const std::string& componentId) {
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
+// --- Custom fields (D9, deferred-after-V1) ---
+
+std::vector<Domain::CustomFieldDefinition> PostgresDatabase::listCustomFields(const std::string& projectKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(),
+                             std::string(CustomFieldSelect) + " WHERE p.project_key = $1 ORDER BY f.sort_order, f.name",
+                             {projectKey}, "List custom fields");
+    std::vector<Domain::CustomFieldDefinition> fields;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        fields.push_back(readCustomFieldDefinition(result.get(), row));
+    }
+    return fields;
+}
+
+Domain::CustomFieldDefinition PostgresDatabase::createCustomField(const Domain::CreateCustomFieldRequest& request) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin create custom field transaction");
+    try {
+        const std::string projectId = lookupId(connection.get(), "projects", "project_key", request.projectKey);
+
+        auto existing = execParams(connection.get(), "SELECT 1 FROM custom_fields WHERE project_id = $1 AND name = $2",
+                                   {projectId, request.name}, "Check existing custom field name");
+        if (PQntuples(existing.get()) != 0) {
+            throw std::invalid_argument("Custom field name is already in use in this project: " + request.name);
+        }
+
+        auto maxOrder = execParams(connection.get(), "SELECT COALESCE(MAX(sort_order), -1) FROM custom_fields WHERE project_id = $1",
+                                   {projectId}, "Find next custom field sort order");
+        const int nextOrder = std::stoi(value(maxOrder.get(), 0, 0)) + 1;
+
+        const std::string fieldId = Common::uuidV4();
+        execParams(connection.get(), R"SQL(
+INSERT INTO custom_fields(id, project_id, name, field_type, options, required, sort_order, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+)SQL",
+                   {fieldId, projectId, request.name, request.fieldType, encodeCustomFieldOptions(request.options),
+                    std::string(request.required ? "true" : "false"), std::to_string(nextOrder)},
+                   "Insert custom field");
+
+        exec(connection.get(), "COMMIT", "Commit create custom field transaction");
+
+        auto result = execParams(connection.get(), std::string(CustomFieldSelect) + " WHERE f.id = $1",
+                                 {fieldId}, "Read created custom field");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Created custom field could not be read back");
+        }
+        return readCustomFieldDefinition(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback create custom field transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+std::optional<Domain::CustomFieldDefinition> PostgresDatabase::findCustomFieldById(const std::string& fieldId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(CustomFieldSelect) + " WHERE f.id = $1",
+                             {fieldId}, "Find custom field");
+    if (PQntuples(result.get()) != 1) {
+        return std::nullopt;
+    }
+    return readCustomFieldDefinition(result.get(), 0);
+}
+
+std::optional<Domain::CustomFieldDefinition> PostgresDatabase::editCustomField(const std::string& fieldId,
+                                                                                const Domain::EditCustomFieldRequest& request) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin edit custom field transaction");
+    try {
+        auto existing = execParams(connection.get(), "SELECT project_id FROM custom_fields WHERE id = $1",
+                                   {fieldId}, "Find custom field for edit");
+        if (PQntuples(existing.get()) != 1) {
+            exec(connection.get(), "ROLLBACK", "Rollback edit custom field transaction");
+            return std::nullopt;
+        }
+        const std::string projectId = value(existing.get(), 0, 0);
+
+        auto nameClash = execParams(connection.get(),
+                                    "SELECT 1 FROM custom_fields WHERE project_id = $1 AND name = $2 AND id <> $3",
+                                    {projectId, request.name, fieldId}, "Check custom field name clash");
+        if (PQntuples(nameClash.get()) != 0) {
+            throw std::invalid_argument("Custom field name is already in use in this project: " + request.name);
+        }
+
+        execParams(connection.get(), R"SQL(
+UPDATE custom_fields SET name = $1, options = $2, required = $3, sort_order = $4 WHERE id = $5
+)SQL",
+                   {request.name, encodeCustomFieldOptions(request.options),
+                    std::string(request.required ? "true" : "false"), std::to_string(request.sortOrder), fieldId},
+                   "Update custom field");
+
+        exec(connection.get(), "COMMIT", "Commit edit custom field transaction");
+
+        auto result = execParams(connection.get(), std::string(CustomFieldSelect) + " WHERE f.id = $1",
+                                 {fieldId}, "Read edited custom field");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Edited custom field could not be read back");
+        }
+        return readCustomFieldDefinition(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback edit custom field transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool PostgresDatabase::deleteCustomField(const std::string& fieldId) {
+    auto connection = connect(connectionString_);
+    // No recycle bin (matches project components, D19) -- every stored
+    // value for this field is cascaded away via ticket_custom_field_values'
+    // ON DELETE CASCADE on field_id.
+    auto result = execParams(connection.get(), "DELETE FROM custom_fields WHERE id = $1",
+                             {fieldId}, "Delete custom field");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::vector<Domain::CustomFieldValue> PostgresDatabase::listTicketCustomFieldValues(const std::string& ticketKey) {
+    auto connection = connect(connectionString_);
+    // One row per field defined on the ticket's project, whether or not a
+    // value has ever been stored for it (LEFT JOIN), so the caller can
+    // render every field -- including unset ones -- on the ticket view.
+    auto result = execParams(connection.get(), R"SQL(
+SELECT f.id, f.name, f.field_type, v.value
+FROM custom_fields f
+JOIN tickets i ON i.project_id = f.project_id
+LEFT JOIN ticket_custom_field_values v ON v.field_id = f.id AND v.ticket_id = i.id
+WHERE i.deleted_at IS NULL
+  AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
+ORDER BY f.sort_order, f.name
+)SQL",
+                             {ticketKey}, "List ticket custom field values");
+    std::vector<Domain::CustomFieldValue> values;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        Domain::CustomFieldValue field;
+        field.fieldId = value(result.get(), row, 0);
+        field.name = value(result.get(), row, 1);
+        field.fieldType = value(result.get(), row, 2);
+        if (PQgetisnull(result.get(), row, 3) == 0) {
+            field.value = value(result.get(), row, 3);
+        }
+        values.push_back(std::move(field));
+    }
+    return values;
+}
+
+namespace {
+// Called only from within an already-open transaction (createTicket/
+// editTicket, on their own already-open `connection`), matching how they
+// already handle labels/component inline -- a free function taking the
+// live PGconn*, matching lookupId's existing pattern for this kind of
+// internal helper. Anonymous-namespace-scoped (internal linkage) since
+// SqliteDatabase.cpp defines its own same-named equivalent for its own
+// sqlite3 type.
+void applyTicketCustomFieldValues(PGconn* connection, const std::string& ticketId, const std::string& projectId,
+                                   const std::vector<Domain::CustomFieldValueInput>& values) {
+    execParams(connection, "DELETE FROM ticket_custom_field_values WHERE ticket_id = $1",
+              {ticketId}, "Clear ticket custom field values");
+    for (const auto& input : values) {
+        if (input.value.empty()) {
+            continue;
+        }
+        // Scopes field_id to this ticket's own project -- a fieldId that
+        // exists but belongs to a different project matches no row, so
+        // nothing is inserted and the RETURNING check below rejects it the
+        // same way an entirely unknown id would.
+        auto result = execParams(connection, R"SQL(
+INSERT INTO ticket_custom_field_values(ticket_id, field_id, value)
+SELECT $1, id, $2 FROM custom_fields WHERE id = $3 AND project_id = $4
+RETURNING ticket_id
+)SQL",
+                                 {ticketId, input.value, input.fieldId, projectId},
+                                 "Insert ticket custom field value");
+        if (PQntuples(result.get()) == 0) {
+            throw std::invalid_argument("Unknown custom field id for this project: " + input.fieldId);
+        }
+    }
+}
+} // namespace
+
 // --- Ticket tracker ---
 
 std::vector<Domain::Project> PostgresDatabase::listProjects() {
@@ -1450,6 +1707,8 @@ ON CONFLICT DO NOTHING
                        "Link label");
         }
 
+        applyTicketCustomFieldValues(connection.get(), ticketId, projectId, request.customFieldValues);
+
         exec(connection.get(), "COMMIT", "Commit create ticket transaction");
         auto result = execParams(connection.get(), std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))", {ticketKey}, "Read created ticket");
         if (PQntuples(result.get()) != 1) {
@@ -1697,6 +1956,8 @@ ON CONFLICT DO NOTHING
                        {ticketId, labelName},
                        "Link label");
         }
+
+        applyTicketCustomFieldValues(connection.get(), ticketId, projectId, request.customFieldValues);
 
         auto recordHistory = [&](const char* field, const std::string& oldValue, const std::string& newValue) {
             if (oldValue == newValue) {

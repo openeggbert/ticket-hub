@@ -1,5 +1,142 @@
 # Verification record
 
+## 2026-08-03 — Custom fields, D9 (user-requested, deferred-after-V1)
+
+Requested directly by the user as item 6 off a menu of possible new functionality
+("implementuj prosim 1 3 4 6 11 12"). Admin-defined fields scoped to a single project, shown on ticket
+create/edit/view -- deliberately scoped down from D9's full target (one context per field, no per-stage
+visibility flags, no default value); see `docs/SCOPE.md`'s "Batch 13" entry for the exact rationale.
+
+### What changed
+
+- **Schema.** New `custom_fields` (`id`, `project_id`, `name`, `field_type` `CHECK`-constrained to
+  `text`/`number`/`date`/`checkbox`/`single_select`/`multi_select`, `options` JSON-array-of-strings text
+  column, `required`, `sort_order`, `created_at`; `UNIQUE(project_id, name)`) and
+  `ticket_custom_field_values` (`(ticket_id, field_id)` composite primary key, `value`, both columns
+  `ON DELETE CASCADE`) tables, migration `018_custom_fields.sql` in both `migrations/sqlite/` and
+  `migrations/postgresql/`.
+- **Backend.** `Domain::CustomFieldDefinition`/`CreateCustomFieldRequest`/`EditCustomFieldRequest`/
+  `CustomFieldValue`/`CustomFieldValueInput`; `Domain::validateCreateCustomField`/`validateEditCustomField`
+  (fixed field-type set, select types require at least one option, non-select types reject any). New
+  `IDatabase::listCustomFields`/`createCustomField`/`findCustomFieldById`/`editCustomField`/
+  `deleteCustomField`/`listTicketCustomFieldValues` on both `SqliteDatabase` and `PostgresDatabase`,
+  mirroring the existing `ProjectComponent` (D19) methods' structure closely (same permission shape, same
+  "throws `std::invalid_argument` on a duplicate name" convention, same "no recycle bin" posture).
+  `CreateTicketRequest`/`EditTicketRequest` gained `customFieldValues` (a vector of `{fieldId, value}`
+  pairs); `createTicket`/`editTicket` on both adapters apply them transactionally via a private,
+  internal-linkage free function (`applyTicketCustomFieldValues`, one per adapter file, each taking that
+  adapter's raw connection/database handle) -- **not** exposed through `IDatabase`, since nothing outside
+  `createTicket`/`editTicket` ever needs to call it directly, and doing so as a separate public method
+  would have broken Postgres's per-call-connection transaction model (an early draft did exactly this and
+  had to be corrected -- see "Errors and fixes" below). `TicketService::requireCustomFieldsSatisfied`
+  checks the target project's field list for any `required` field missing a non-empty supplied value,
+  called from both `createTicket` and `editTicket` before the database write.
+- **API.** `GET`/`POST`/`PATCH`/`DELETE /api/v1/projects/{key}/custom-fields[/{id}]` (project-Admin-or-
+  above to write, standard read access to list); `GET /api/v1/tickets/{key}/custom-fields` (one entry per
+  field defined on the ticket's project, `value: null` if never set, so the client can render every field
+  -- including unset ones -- on the ticket view). `customFieldValues` accepted as a `{fieldId: "value"}`
+  JSON object on `POST /api/v1/tickets` and `PATCH /api/v1/tickets/{key}` (`parseCustomFieldValues` in
+  `src/web/Api.cpp`); a field's value is always a single string on the wire, even for `multi_select`
+  (comma-joined), matching how `labels` is already handled elsewhere in this app.
+- **Frontend.** A new `openCustomFieldsModal` on the Projects screen (mirrors `openComponentsModal`'s
+  structure: a dynamically-built modal, list + add-form, re-rendered after every mutation), reachable via
+  a new "Custom fields" button next to "Components"/"Rename key"/"Delete" on each project card. Shared
+  `customFieldInputMarkup(field, value)` (renders the right input type per `fieldType`) and
+  `collectCustomFieldValues(container, fields)` (reads values back out, with special handling for
+  `checkbox` and `multi_select`) used by both the create-ticket modal (`#create-custom-fields`, refreshed
+  on project selection via `refreshCreateCustomFieldOptions`) and the ticket drawer's edit form (a new
+  "Custom fields" sidebar panel, shown only when the ticket's project has fields defined, rendering either
+  read-only values or the same editable inputs depending on `editing`).
+
+### Two pre-existing bugs found and fixed, unrelated to custom fields
+
+1. **A nondeterministic SQLite integration test.** The existing History-tab test block (added in the
+   previous batch) asserted "the assignee field change from editTicket is recorded" by searching
+   `history` for the first entry with `fieldName == "assignee"`. That test's own scenario produces *two*
+   `assignee`-field history rows: an earlier edit sets the assignee to `sam@ticket-hub.local`, and a later
+   `unassign` edit clears it back to null. When both land within the same wall-clock second (common, since
+   the test runs them back-to-back with no delay), `ORDER BY created_at DESC, id DESC` breaks the tie by
+   comparing the rows' random UUID primary keys -- so whether the "sam" row or the "cleared" row sorts
+   first in `history`, and therefore which one `find_if` returns, is effectively a coin flip. When the
+   "cleared" row won the tie, `assigneeEntry->newValue.has_value()` was false and the assertion failed.
+   This is almost certainly the actual cause of the "transient" `ticket-hub-sqlite-integration-tests`
+   failures noted in the two previous verification passes (previously attributed to a `/tmp` file race
+   between concurrent build-config test runs) -- caught for real this time only because it happened to fail
+   on every run within a single session rather than intermittently across separate ones, which prompted
+   adding temporary debug output (`std::cerr` dump of every history entry) that revealed the actual
+   ordering. Fixed by searching for the specific entry whose `newValue` equals `"sam@ticket-hub.local"`,
+   the assignment the test is actually verifying, rather than "whichever `assignee` entry sorts first."
+   Confirmed deterministic with 5 consecutive clean runs of the fixed test after the change.
+2. **A CSS overflow.** `.project-card-actions` had `display: flex` with no `flex-wrap`, so once a project
+   card accumulated enough action buttons, the row's total width exceeded the card and later buttons were
+   silently clipped by the card's own overflow (invisible without deliberately widening the browser or
+   removing a button to check) -- unnoticed until this batch's new "Custom fields" button became the fifth
+   button on the row, visibly cutting "Delete" off mid-word in a screenshot taken during verification.
+   Fixed with `flex-wrap: wrap`, confirmed by re-screenshotting: the fifth button now wraps to a second row
+   instead of clipping.
+
+### Verification
+
+- Full rebuild in all three build configurations (default, SQLite-only, PostgreSQL-only) with zero new
+  warnings/errors; `ctest --output-on-failure` green in all three (new coverage in
+  `tests/sqlite_integration_tests.cpp`: full field-definition CRUD including duplicate-name and
+  invalid-`fieldType` rejection, JSON options round-tripping through the storage column, sort-order
+  assignment on create and explicit update on edit; setting/reading ticket values through `createTicket`,
+  confirming an unknown field id is rejected; `editTicket`'s full-replacement semantics -- a field with no
+  pair in the edit request becomes unset, one that is present gets its new value; cascade-delete of a
+  field's stored ticket values when the field definition itself is deleted).
+- **Compile-time bug caught and fixed before this reached a build, not a runtime issue**: `Statement::bind`
+  is overloaded for `std::int64_t`/`double`/`std::string`, and passing a plain `int` (from `request.required
+  ? 1 : 0`, `nextOrder`, and `request.sortOrder`) is ambiguous between the `int64_t` and `double` overloads
+  -- caught immediately by the compiler (`call of overloaded 'bind(int, int)' is ambiguous`), fixed with
+  explicit `static_cast<std::int64_t>(...)` at each of the four call sites, matching the cast already used
+  elsewhere in the file for the same reason.
+- **Design correction caught before writing tests, not after**: an early version of
+  `setTicketCustomFieldValues` was written as a public `IDatabase` method that each adapter implemented by
+  opening (Postgres) or reusing (SQLite) a database connection internally. For SQLite this is harmless (one
+  shared `sqlite3*` handle for the adapter's whole lifetime), but for PostgreSQL, every adapter method
+  independently calls `connect(connectionString_)` for its own fresh connection -- so calling this "shared"
+  method from inside `createTicket`/`editTicket` would silently run its DELETE/INSERT statements on a
+  *different* connection than the one holding the open transaction, breaking atomicity (values could
+  persist even if the surrounding ticket write later rolled back, or vice versa). Caught during
+  implementation, before any test ran against it, by re-reading how the existing `lookupId`/
+  `lookupComponentId` helpers are structured (free functions taking the live connection/database handle
+  explicitly, not class methods) -- restructured `applyTicketCustomFieldValues` to match that pattern and
+  removed it from `IDatabase` entirely, since nothing outside `createTicket`/`editTicket` needs to call it.
+- **CLI usage mistake caught and corrected during live verification, not a bug**: an initial attempt to
+  create a verification admin account passed `--email=`/`--name=`/`--password=` flags to
+  `ticket-hub-cli create-user`, which actually takes positional arguments (`<email> <displayName>
+  <password> [--admin] [--handle=...]`) -- the malformed flags were silently accepted as the positional
+  `<email>` value, creating a user whose literal email was the string `--email=...`, which then correctly
+  failed to log in. This exact mistake (and fix) was already documented in the previous batch's
+  verification entry; repeated here since it recurred.
+- Live-verified over real HTTP against a fresh throwaway PostgreSQL database: created a text field and a
+  required `single_select` field on project `TH`; confirmed `POST /api/v1/tickets` without the required
+  field returns `400 {"error":"Custom field \"Severity\" is required"}`; created a ticket supplying both
+  values and confirmed `GET /api/v1/tickets/{key}/custom-fields` returns them correctly; `PATCH
+  /api/v1/tickets/{key}` re-supplying only the select field's value confirmed the text field's value was
+  cleared (full-replacement semantics); deleting the text field definition confirmed its value entry
+  disappeared from the ticket's custom-fields response (cascade).
+- Full Playwright/Chromium browser pass (`verify_custom_fields.js`) against a fresh SQLite database --
+  11/11 checks: the admin modal opens and creates both a text and a required select field (the options
+  input appearing/disappearing correctly based on the selected field type); the create-ticket modal renders
+  inputs for both fields and blocks submission with a clear error when the required one is left blank; the
+  ticket drawer's new sidebar panel shows both values after creation; edit mode renders the same fields as
+  editable inputs, and changed values persist after save; deleting a field via the admin modal leaves the
+  correct one remaining. One false failure in an early run was traced to the test script's own selector
+  (the modal's submit button lives in `.modal-footer` associated via the HTML `form=` attribute, not nested
+  inside the `<form>` element, matching the existing Components modal's structure -- the test's
+  `#form-id button[type=submit]` selector required a descendant, which this button isn't); fixed by
+  selecting `button[form="custom-field-add-form"]` instead. A second false failure (case-sensitive regex
+  matching against `.innerText`, which reflects the panel labels' CSS `text-transform: uppercase` unlike
+  `.textContent`) was fixed by matching case-insensitively. A third, more serious false *pass* was caught
+  during review: after fixing the selector, a rerun showed values leaking across "fresh" test runs (a field
+  read back with `sortOrder: 2` in a project that should only ever have 2 fields) -- traced to a leftover
+  server process from an earlier run still listening on the test port, silently causing later `nohup`
+  server starts to fail to bind while the test script kept talking to the stale, state-accumulating
+  instance. Killed the leftover process, confirmed the port was free, and re-ran cleanly to get the
+  trustworthy 11/11 result cited above.
+
 ## 2026-08-03 — Quick filters, more keyboard shortcuts, notification/audit-log pagination (user-requested)
 
 Requested directly by the user after the History-tab batch landed: a menu of six possible new

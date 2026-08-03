@@ -463,20 +463,64 @@ remain as the long-term aspirational baseline only — do not build against them
   opens/closes on `?`/Escape, `/` focuses the global search box, both quick-filter chips render and toggle
   their active state on Board and Backlog, board card Left/Right keyboard navigation moves focus between
   columns, and the audit log's pagination bar renders with "Previous" correctly disabled on page 1).
+- **Batch 13 (done): custom fields** (D9, deferred-after-V1, item 6 from the same user-picked list as
+  Batch 12) -- admin-defined fields scoped to a single project, shown on ticket create/edit/view.
+  Deliberately scoped down from D9's full target: one context per field (its project, not also its issue
+  type -- D9 already rules out named screens/screen schemes, and per-issue-type contexts on top of that
+  would multiply this batch's scope well past what was asked for), a fixed always-shown-everywhere
+  visibility (no per-stage hidden/show-on flags), and no per-field default value. Six field types (text,
+  number, date, checkbox, single_select, multi_select); every value is a single string on the wire and in
+  storage, even for multi_select (comma-joined) -- the same convention `labels` already uses, chosen to
+  avoid a second "value is sometimes an array" JSON shape only custom fields would need. New `custom_fields`
+  (the field catalog, project-scoped, `UNIQUE(project_id, name)`) and `ticket_custom_field_values`
+  (`ON DELETE CASCADE` on both `ticket_id` and `field_id`) tables (migration `018_custom_fields.sql`); new
+  `IDatabase::listCustomFields`/`createCustomField`/`findCustomFieldById`/`editCustomField`/
+  `deleteCustomField`/`listTicketCustomFieldValues` on both adapters, mirroring the existing
+  `ProjectComponent` (D19) methods almost exactly; values are set only as part of `createTicket`/
+  `editTicket` (full-replacement, exactly like `labels`) via a private per-adapter helper, not a separate
+  public write method. New `GET`/`POST`/`PATCH`/`DELETE /api/v1/projects/{key}/custom-fields[/{id}]`
+  (project-Admin-or-above to write) and `GET /api/v1/tickets/{key}/custom-fields` (standard read access)
+  routes. `TicketService::requireCustomFieldsSatisfied` rejects a create/edit missing a value for a
+  `required` field. `web/`: a new "Custom fields" admin modal on the Projects screen (mirrors the existing
+  Components modal), dynamic inputs in the create-ticket modal and the ticket drawer's edit form
+  (`customFieldInputMarkup`/`collectCustomFieldValues`, shared by both), and a new "Custom fields" sidebar
+  panel in the ticket drawer showing current values (view mode) or editable inputs (edit mode).
+
+  Two real bugs were found and fixed during this batch's own verification, both outside the custom-fields
+  code itself: (1) a **pre-existing, nondeterministic SQLite integration test** (`tests/
+  sqlite_integration_tests.cpp`) that searched for "the assignee history entry" via a plain `find_if`
+  without disambiguating which of two same-second `assignee`-field history rows it meant -- when the two
+  rows tied on `created_at`, `ORDER BY created_at DESC, id DESC` broke the tie by random UUID, so the test
+  passed or failed depending on UUID comparison outcome. This was almost certainly the real cause of the
+  "transient" test failures noted in earlier verification passes (previously guessed to be a `/tmp` file
+  race). Fixed by searching for the specific entry whose `newValue` matches the assignment the test
+  actually cares about. (2) A **pre-existing CSS overflow**: `.project-card-actions` had no `flex-wrap`,
+  so a project card's action-button row silently clipped its last button once a project had enough buttons
+  -- unnoticed until this batch's new "Custom fields" button became the fifth. Fixed with `flex-wrap: wrap`.
+
+  New test coverage: `tests/sqlite_integration_tests.cpp` covers full custom-field-definition CRUD
+  (creation, duplicate-name rejection, invalid-`fieldType` rejection via the `CHECK` constraint, JSON
+  options round-tripping, sort-order assignment/editing), setting/reading/clearing ticket values through
+  `createTicket`/`editTicket` (including the full-replacement-clears-omitted-fields behavior), rejecting an
+  unknown field id, and cascade-delete of stored values when a field definition is deleted. Verified: full
+  rebuild and `ctest` clean in all three build configurations; live-verified over real HTTP against a fresh
+  PostgreSQL database (field CRUD, required-field-missing 400, ticket creation/edit with values, field
+  deletion cascading away a ticket's stored value); a full Playwright/Chromium browser pass against a fresh
+  SQLite database (11/11 checks, re-run against a genuinely fresh single server instance after an earlier
+  run's result was caught as untrustworthy -- a leftover server process from a prior verification attempt
+  had kept accumulating state across "fresh" database directories since a later `nohup` start silently
+  failed to bind the already-in-use port). See `docs/VERIFICATION.md`.
 
 ## Deferred after V1, in progress
 
-The remaining three items from the same user-picked list above are real, decision-register-deferred
-features (`docs/REMOVED_AND_DEFERRED_FEATURES.md`), not quick UI additions -- tracked here rather than as
-a "Batch N" entry until each is complete:
+The remaining two items from the same user-picked list as Batch 12/13 are real, decision-register-deferred
+features (`docs/REMOVED_AND_DEFERRED_FEATURES.md`) that both need a durable delivery mechanism first
+(`CLAUDE.md`: "Durable side effects must eventually use jobs/outbox/events. Do not use detached in-memory
+tasks for email, webhooks...") -- an outbox table plus a CLI-driven retry command, since this app has no
+background worker process today. Tracked here rather than as a "Batch N" entry until each is complete:
 
-- **Custom fields** (D9): admin-defined fields with project/type contexts.
 - **Outbound webhooks** (D39/D41): admin-configured subscriptions, signed payloads, durable delivery.
 - **Outbound email** (D52): a pluggable SMTP backend for the existing fixed notification set.
-
-Webhooks and email both need a durable delivery mechanism first (`CLAUDE.md`: "Durable side effects must
-eventually use jobs/outbox/events. Do not use detached in-memory tasks for email, webhooks...") -- an
-outbox table plus a CLI-driven retry command, since this app has no background worker process today.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 

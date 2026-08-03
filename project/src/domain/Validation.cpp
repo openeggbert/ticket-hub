@@ -252,6 +252,76 @@ std::vector<std::string> validateEditComponent(const EditComponentRequest& reque
 }
 
 namespace {
+bool isValidCustomFieldType(const std::string& fieldType) {
+    return fieldType == "text" || fieldType == "number" || fieldType == "date" ||
+           fieldType == "checkbox" || fieldType == "single_select" || fieldType == "multi_select";
+}
+
+bool isSelectFieldType(const std::string& fieldType) {
+    return fieldType == "single_select" || fieldType == "multi_select";
+}
+
+void appendCustomFieldContentErrors(std::vector<std::string>& errors,
+                                     const std::string& name,
+                                     const std::string& fieldType,
+                                     const std::vector<std::string>& options) {
+    if (name.empty()) {
+        errors.emplace_back("name is required");
+    } else if (name.size() > 160) {
+        errors.emplace_back("name must not exceed 160 characters");
+    }
+    if (!isValidCustomFieldType(fieldType)) {
+        errors.emplace_back("fieldType must be one of text, number, date, checkbox, single_select, multi_select");
+        return;
+    }
+    if (isSelectFieldType(fieldType)) {
+        if (options.empty()) {
+            errors.emplace_back("options must contain at least one value for a select field");
+        }
+        for (const auto& option : options) {
+            if (option.empty() || option.size() > 160) {
+                errors.emplace_back("each option must be 1-160 characters");
+                break;
+            }
+        }
+    } else if (!options.empty()) {
+        errors.emplace_back("options is only meaningful for single_select/multi_select fields");
+    }
+}
+} // namespace
+
+std::vector<std::string> validateCreateCustomField(const CreateCustomFieldRequest& request) {
+    std::vector<std::string> errors;
+    if (!isValidProjectKey(normalizeProjectKey(request.projectKey))) {
+        errors.emplace_back("projectKey must contain 2-12 uppercase letters or digits and start with a letter");
+    }
+    appendCustomFieldContentErrors(errors, request.name, request.fieldType, request.options);
+    return errors;
+}
+
+std::vector<std::string> validateEditCustomField(const EditCustomFieldRequest& request) {
+    std::vector<std::string> errors;
+    // fieldType is not editable (changing it would strand every existing
+    // stored value's meaning -- e.g. a single_select's options no longer
+    // matching a previously-recorded value), so this only re-validates
+    // name/options against the field's own existing fieldType, which the
+    // caller (TicketService) already knows and re-supplies via the
+    // existing options bound.
+    if (request.name.empty()) {
+        errors.emplace_back("name is required");
+    } else if (request.name.size() > 160) {
+        errors.emplace_back("name must not exceed 160 characters");
+    }
+    for (const auto& option : request.options) {
+        if (option.empty() || option.size() > 160) {
+            errors.emplace_back("each option must be 1-160 characters");
+            break;
+        }
+    }
+    return errors;
+}
+
+namespace {
 // D12/D13: no time-estimate linkage, so the only bound on timeSpentSeconds
 // is sanity -- reject zero/negative (meaningless) and an implausibly large
 // single entry (1000 hours), not a business rule.

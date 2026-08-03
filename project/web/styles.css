@@ -276,7 +276,7 @@ kbd {
 .project-card-stats { display: flex; gap: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .project-card-stats strong, .project-card-stats span { display: block; }
 .project-card-stats span { color: var(--muted); font-size: 11px; }
-.project-card-actions { display: flex; gap: 8px; margin-top: 14px; }
+.project-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .project-card-actions .secondary-button { padding: 6px 10px; font-size: 12px; }
 
 .drawer-backdrop { position: fixed; inset: 0; z-index: 80; background: var(--overlay); }
