@@ -205,6 +205,36 @@ std::vector<std::string> validateCreateProject(const CreateProjectRequest& reque
 }
 
 namespace {
+void appendComponentContentErrors(std::vector<std::string>& errors,
+                                  const std::string& name,
+                                  const std::string& description) {
+    if (name.empty()) {
+        errors.emplace_back("name is required");
+    } else if (name.size() > 160) {
+        errors.emplace_back("name must not exceed 160 characters");
+    }
+    if (description.size() > 10000) {
+        errors.emplace_back("description must not exceed 10000 characters");
+    }
+}
+} // namespace
+
+std::vector<std::string> validateCreateComponent(const CreateComponentRequest& request) {
+    std::vector<std::string> errors;
+    if (!isValidProjectKey(normalizeProjectKey(request.projectKey))) {
+        errors.emplace_back("projectKey must contain 2-12 uppercase letters or digits and start with a letter");
+    }
+    appendComponentContentErrors(errors, request.name, request.description);
+    return errors;
+}
+
+std::vector<std::string> validateEditComponent(const EditComponentRequest& request) {
+    std::vector<std::string> errors;
+    appendComponentContentErrors(errors, request.name, request.description);
+    return errors;
+}
+
+namespace {
 // D12/D13: no time-estimate linkage, so the only bound on timeSpentSeconds
 // is sanity -- reject zero/negative (meaningless) and an implausibly large
 // single entry (1000 hours), not a business rule.

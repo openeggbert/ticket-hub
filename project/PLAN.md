@@ -96,8 +96,20 @@ remains only as optional, non-roadmap follow-up.
   `NEXT.md`, `CHANGELOG.md`, `docs/VERIFICATION.md`) were left as written, with a new dated entry added to
   each instead. Verified end-to-end against fresh live PostgreSQL and SQLite databases (zero remaining
   "issue"-named schema objects), a live HTTP smoke test, and a full Playwright/Chromium pass confirming no
-  leftover "Issue" text in the UI and that creating a ticket still works. **There is currently no further
-  queued work.**
+  leftover "Issue" text in the UI and that creating a ticket still works.
+- **Post-V1, batch 7.** The user asked which fields tickets support (priority/components/labels/
+  created/updated); components turned out to be a real gap -- decided `KEEP_FOR_V1` in
+  `docs/REDUCED_SCOPE_DECISIONS.md` (D19) but never actually implemented. Asked to implement it, and did:
+  new migration `017_project_components.sql` (both backends) adds `project_components` (name, description,
+  lead, default assignee) and a nullable `tickets.component_id` (`ON DELETE SET NULL`, no recycle bin --
+  D19 doesn't call for one). New `GET`/`POST /api/v1/projects/{key}/components` and `PATCH`/`DELETE
+  /api/v1/projects/{key}/components/{id}` routes (project-Admin-or-above to write, IDOR-safe scoping to
+  `(projectKey, componentId)` together); `createTicket`/`editTicket`/`cloneTicket` and `TicketFilter`
+  wired through. `web/` gained a components management dialog, ticket-form picker, drawer display, and
+  table filter. Verified end-to-end against fresh live PostgreSQL and SQLite databases (including the `ON
+  DELETE SET NULL` behavior through the real HTTP API), new unit/integration/authorization test coverage,
+  and a full Playwright/Chromium pass (which found and fixed one real layout bug in the components list).
+  **There is currently no further queued work.**
 
 ## Implementation rules
 

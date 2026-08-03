@@ -1,5 +1,97 @@
 # Verification record
 
+## 2026-08-03 — Project components (D19, `KEEP_FOR_V1`) (user-requested)
+
+Requested directly by the user ("implementuj prosim komponenty" -- "please implement components") after
+asking whether tickets support priority/components/labels/created/updated, and being told components were
+decided `KEEP_FOR_V1` in `docs/REDUCED_SCOPE_DECISIONS.md` (D19: "Simple project components: name,
+description, lead, default assignee; at most one per issue") but were never actually implemented -- a real
+gap between the decision register and the built schema, with zero trace of `component`/`project_components`
+anywhere in migrations, `src/`, or `web/`.
+
+### What changed
+
+- New migration `migrations/{sqlite,postgresql}/017_project_components.sql`: `project_components` (`id`,
+  `project_id`, `name`, `description`, `lead_user_id` nullable, `default_assignee_user_id` nullable,
+  `created_at`, `updated_at`, `UNIQUE(project_id, name)`) and `tickets.component_id` (nullable, `ON DELETE
+  SET NULL`). No recycle bin/soft-delete columns -- D19 doesn't call for one, unlike tickets/projects/
+  comments, which have explicit D22/D88-D89/D82 decisions; kept as "a small table plus one optional ticket
+  field," exactly the decision text's own framing, no scope reduction needed since D19 was already "the
+  cheapest reasonable form."
+- `Domain::ComponentSummary` (compact id+name, embedded in `Ticket`, mirrors how `TicketType`/`Priority`
+  are embedded) and `Domain::ProjectComponent` (the full row) added to `src/domain/Models.h`, plus
+  `CreateComponentRequest`/`EditComponentRequest` (full-replacement PUT-style, matching every other edit
+  request in this codebase) and `Domain::validateCreateComponent`/`validateEditComponent`.
+  `CreateTicketRequest`/`EditTicketRequest` gained `componentName` (resolved by name against the ticket's
+  own project's components -- a human-readable identifier, like `assigneeEmail`/`priorityKey`/`label`, not
+  a raw component id); `TicketFilter` gained a matching `componentName` filter.
+- `IDatabase::listComponents`/`createComponent`/`findComponentById`/`editComponent`/`deleteComponent`,
+  implemented in both adapters. `createTicket`/`editTicket`/`listTickets`(both overloads)/`countTickets`
+  updated to resolve/filter/return the component; `TicketSelect` gained a `LEFT JOIN project_components`
+  and two trailing columns (`comp.id`, `comp.name`) in both adapters, appended at the end of the existing
+  column list rather than inserted in the middle, so no other column's positional index needed
+  renumbering.
+- `TicketService::listComponents`/`createComponent`/`editComponent`/`deleteComponent`: read access mirrors
+  projects/tickets (any authenticated user, or anonymous if the installation toggle is on);
+  create/edit/delete require project-Admin-or-above, the same level as archiving/deleting a project itself
+  -- no separate "component admin" role. `editComponent`/`deleteComponent` are scoped to `(projectKey,
+  componentId)` together, not `componentId` alone -- the same IDOR-safe pattern the Phase 8 threat-model
+  pass established for worklogs/comments/attachments -- so a component id belonging to a different project
+  is treated as not found, never silently acted on through the wrong project's URL.
+  `TicketService::cloneTicket` (D60) now also copies the component into the clone, per the original
+  decision text's own "summary/description/type/priority/labels/component" clone-field list (D60's text
+  already named "component" -- this was simply unreachable before components existed).
+- New REST routes: `GET`/`POST /api/v1/projects/{key}/components`, `PATCH`/`DELETE
+  /api/v1/projects/{key}/components/{id}`. `ticketJson` gained a `component: {id, name} | null` field;
+  `POST`/`PATCH /api/v1/tickets` accept `componentName`; `GET /api/v1/tickets` accepts a `component` query
+  parameter.
+- `web/`: a new "Components" button on each project card (Projects view) opens a dynamically-created
+  dialog (same pattern as the board's drag-and-drop resolution prompt) to list/add/delete a project's
+  components. The ticket create modal and the ticket drawer's edit form both gained a Component picker,
+  refetched whenever the selected project changes (same request-id-guarded async pattern as the existing
+  Epic/parent pickers, to discard a stale response superseded by a newer one); the drawer's read-only view
+  and the tickets-table filter bar both gained a Component row/filter.
+
+### Verification
+
+- Full rebuild in all three build configurations (default, SQLite-only, PostgreSQL-only) with zero new
+  warnings; `ctest --output-on-failure`: 8/8 green, including new coverage --
+  `domain_validation_tests` (valid/invalid `CreateComponentRequest`/`EditComponentRequest`),
+  `sqlite_integration_tests` (create/list/duplicate-name-rejection/edit/delete, a ticket created with
+  `componentName` round-trips it, the `componentName` ticket filter matches/excludes correctly and agrees
+  with `countTickets`, and deleting a component clears it from a ticket that referenced it via `ON DELETE
+  SET NULL` -- verified with a scratch ticket that is cleaned up via soft-delete + permanent-delete so it
+  doesn't disturb the exact-total dashboard/recycle-bin assertions later in the same test file, a real
+  ordering bug this batch found and fixed on the first test run), and `authorization_integration_tests`
+  (project-Admin-or-above enforced for create/edit/delete against both the TH and WEB seed projects; a
+  dedicated IDOR regression confirming a WEB component cannot be edited or deleted through a TH project
+  URL, even for a global administrator who passes the role check for every project).
+- Fresh `migrate` + `seed-demo` against a throwaway live PostgreSQL database: confirmed
+  `project_components` and `tickets.component_id` exist with the expected FK/unique constraints via
+  `psql`; a live HTTP smoke test over the real API -- login, create a component, create a ticket
+  referencing it by name, filter `GET /api/v1/tickets?component=...`, edit the component, delete it, and
+  re-fetch the ticket to confirm its `component` field is now `null` (the `ON DELETE SET NULL` behavior
+  exercised through the actual REST layer, not just the database adapter test).
+- The same fresh-migrate-and-seed check against a throwaway SQLite database, confirmed via
+  `sqlite_master`/`PRAGMA foreign_key_check` (zero violations).
+- Browser-verified with Playwright/Chromium against the SQLite-backed server: opened the Components dialog
+  from a project card, confirmed the initial empty state, added a component with a lead, confirmed it
+  listed; created a ticket through the create modal with that component selected and confirmed it
+  appeared in the tickets table; opened the ticket and confirmed the drawer's Component row showed it;
+  filtered the tickets table by component name and confirmed only the matching ticket showed. A real
+  layout bug was found and fixed along the way: the components list row (label text + Delete button)
+  initially reused the `.meta-row` class, which is only ever styled for a label-then-value *stacked*
+  layout (as used in the ticket drawer) -- visually cramped, though not a true DOM overlap (confirmed via
+  bounding-box measurement before fixing). Replaced with an explicit flex row (label left, Delete button
+  right), matching the rest of the app's list-row conventions; re-verified with a fresh screenshot.
+  Also hit and worked around a pre-existing, unrelated timing behavior while writing the test: `showAppShell()` unhides the app shell before
+  `loadBaseData()`/`renderDashboard()` finish their own async fetches, so a test that navigates away from
+  Dashboard immediately after the app shell becomes visible can race a still-in-flight
+  `renderDashboard()` call, which writes to `#content` unconditionally once its fetch resolves regardless
+  of the current view -- not a bug introduced by this batch, and not fixed here (out of scope), but noted
+  since it will bite the next Playwright script that navigates immediately after login without waiting for
+  the dashboard's own content (e.g. `.stat-card`) to actually render first.
+
 ## 2026-08-03 — Full "issue" -> "ticket" terminology rename (user-requested)
 
 Requested directly by the user: "issue nahrad prosim za ticket vsude v nazvech ui i db tabulkach"

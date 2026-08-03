@@ -46,13 +46,16 @@ Implemented now:
   a resolution is required to complete a ticket and is cleared automatically on reopen, and a ticket
   cannot complete while it has an unfinished sub-task,
 - **full-replacement ticket edit with optimistic locking** (D129): summary, description, priority,
-  assignee, story points, due date and labels, sharing the same `expectedVersion`/409 contract as status
-  changes, with one `ticket_history` row per field that actually changed,
+  assignee, story points, due date, labels and component, sharing the same `expectedVersion`/409 contract
+  as status changes, with one `ticket_history` row per field that actually changed,
+- **project components** (D19, `KEEP_FOR_V1`): name, description, lead, default assignee; at most one per
+  ticket. Project-Admin-or-above manages a project's components; any ticket in that project may reference
+  one by name,
 - **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
   both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
-- **simple field-copy cloning** (D60): summary/description/type/priority/labels copied into a new ticket,
-  with an automatic `clones` link back to the original,
+- **simple field-copy cloning** (D60): summary/description/type/priority/labels/component copied into a
+  new ticket, with an automatic `clones` link back to the original,
 - **self-service watching and voting** (D20/D79): any authenticated user may watch or vote on any ticket
   — the one write with no project-role requirement — idempotent on repeat, with a visible watcher/voter
   list,
@@ -331,13 +334,17 @@ trip; there is no admin configuration for either limit.
 | `GET` | `/api/v1/projects/deleted` | session, global admin | list recycle bin |
 | `POST` | `/api/v1/projects/{key}/restore` | session + CSRF, global admin | restore from recycle bin |
 | `DELETE` | `/api/v1/projects/{key}/permanent` | session + CSRF, global admin | permanently delete |
+| `GET` | `/api/v1/projects/{key}/components` | session, or anon if enabled | a project's components (D19) |
+| `POST` | `/api/v1/projects/{key}/components` | session + CSRF, project admin | `{name, description?, leadEmail?, defaultAssigneeEmail?}` |
+| `PATCH` | `/api/v1/projects/{key}/components/{id}` | session + CSRF, project admin | full-replacement edit, same fields as create |
+| `DELETE` | `/api/v1/projects/{key}/components/{id}` | session + CSRF, project admin | hard delete -- no recycle bin (D19); clears the component from any ticket via `ON DELETE SET NULL` |
 | `GET` | `/api/v1/settings/anonymous-read` | session | current toggle value |
 | `PUT` | `/api/v1/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
 | `GET` | `/api/v1/settings/latest-known-version` | session, global admin | `{currentVersion, latestKnownVersion, updateAvailable}` (D112) |
 | `PUT` | `/api/v1/settings/latest-known-version` | session + CSRF, global admin | `{version}` -- sets what the admin banner compares against |
-| `GET` | `/api/v1/tickets` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126) |
+| `GET` | `/api/v1/tickets` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `component`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126) |
 | `GET` | `/api/v1/tickets/export.csv` | session, or anon if enabled | read-only CSV export of tickets (D48), same filters as above |
-| `POST` | `/api/v1/tickets` | session + CSRF, project member | create ticket (`assigneeEmail`, `parentTicketKey`) |
+| `POST` | `/api/v1/tickets` | session + CSRF, project member | create ticket (`assigneeEmail`, `parentTicketKey`, `componentName`) |
 | `GET` | `/api/v1/tickets/{key}` | session, or anon if enabled | current key or permanent alias |
 | `PATCH` | `/api/v1/tickets/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
 | `PATCH` | `/api/v1/tickets/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
@@ -384,7 +391,7 @@ the keys that already succeeded.
 
 `PATCH /api/v1/tickets/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
 priorityKey, ticketTypeKey, parentTicketKey?, assigneeEmail?, storyPoints?, dueDate?, labels?,
-expectedVersion?}`. Every editable field is always the caller's intended final value (e.g. omitting
+componentName?, expectedVersion?}`. Every editable field is always the caller's intended final value (e.g. omitting
 `assigneeEmail` unassigns the ticket, it does not leave the current assignee alone) -- the caller is
 expected to pre-populate the request from the current ticket. `ticketTypeKey`/`parentTicketKey` re-typing/
 re-parenting (post-V1 follow-up) re-validates the fixed hierarchy shape exactly like `POST /api/v1/tickets`

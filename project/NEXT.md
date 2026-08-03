@@ -45,6 +45,10 @@ below for detail.
 REST API, C++ code, and UI, to match the product's own name (Ticket Hub) -- another new user-requested
 addition; see "The roadmap is now complete" below for detail.
 
+**Post-V1, batch 7 (done):** project components (D19, `KEEP_FOR_V1`) -- discovered, while answering a user
+question about ticket fields, to be the one V1-decided feature that was never actually implemented; see
+"The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -866,6 +870,35 @@ anywhere in the schema; the same fresh-migrate-and-seed check against a throwawa
 /api/v1/tickets`, `/browse/{key}`); and a full Playwright/Chromium browser pass confirming no leftover
 "Issue"/"Issues" text anywhere in the rendered UI (dashboard, nav, tickets table, ticket drawer) and that
 creating a new ticket through the UI still works end-to-end. Full detail in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 7 (done):** the user asked what entity fields tickets support (priority, components,
+labels, created/updated) -- priority/labels/created/updated all check out, but components turned out to be
+a real gap: D19 in `docs/REDUCED_SCOPE_DECISIONS.md` decided to `KEEP_FOR_V1` "simple project components:
+name, description, lead, default assignee; at most one per issue," but no `project_components` table, no
+`component_id` column, and no component-related code existed anywhere. Asked to implement it, and did. New
+migration `017_project_components.sql` (both backends): `project_components` plus `tickets.component_id`
+(nullable, `ON DELETE SET NULL`) -- no recycle bin/soft-delete, since D19 doesn't call for one, unlike
+tickets/projects/comments. New `Domain::ComponentSummary`/`ProjectComponent`/`CreateComponentRequest`/
+`EditComponentRequest`, `IDatabase` component CRUD in both adapters, and `TicketService::listComponents`/
+`createComponent`/`editComponent`/`deleteComponent` (project-Admin-or-above to write, same read access as
+projects/tickets otherwise; edit/delete scoped to `(projectKey, componentId)` together, the same IDOR-safe
+pattern the Phase 8 threat-model pass established for worklogs/comments/attachments).
+`createTicket`/`editTicket` gained a `componentName` field (resolved by name against the ticket's own
+project, like `assigneeEmail`/`priorityKey`); `TicketFilter` gained a matching filter; `cloneTicket` now
+copies the component too, per D60's own original clone-field list (which already named "component" -- it
+was simply unreachable before this batch). New REST routes: `GET`/`POST
+/api/v1/projects/{key}/components`, `PATCH`/`DELETE /api/v1/projects/{key}/components/{id}`; `GET
+/api/v1/tickets` gained a `component` query parameter. `web/` gained a "Components" management dialog on
+each project card, a Component picker in the create-ticket modal and the ticket drawer's edit form, a
+read-only Component row in the drawer, and a Component filter in the tickets table's filter bar. Verified:
+full rebuild in all three build configurations, `ctest` clean including three new test files' worth of
+coverage (domain validation, SQLite integration -- including the ON DELETE SET NULL behavior and the
+componentName filter -- and an authorization IDOR regression); a fresh live-PostgreSQL migrate+seed with a
+full HTTP-layer smoke test (create/edit/delete a component, create a ticket referencing it, filter by it,
+delete the component and confirm the ticket's `component` field goes back to `null`); and a
+Playwright/Chromium browser pass, which found and fixed one real layout bug (the components list row
+misused the `.meta-row` class, meant for a stacked label/value pair, not a label-plus-action-button row --
+replaced with an explicit flex row). Full detail in `docs/VERIFICATION.md`.
 
 ## Verification status
 

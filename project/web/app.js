@@ -56,6 +56,7 @@ function initialState() {
     filterPriority: '',
     filterAssignee: '',
     filterLabel: '',
+    filterComponent: '',
     filterDueBefore: '',
     currentTicket: null,
     principal: null,
@@ -978,6 +979,7 @@ function ticketFilterParams() {
   if (state.filterPriority) params.set('priority', state.filterPriority);
   if (state.filterAssignee) params.set('assignee', state.filterAssignee);
   if (state.filterLabel) params.set('label', state.filterLabel);
+  if (state.filterComponent) params.set('component', state.filterComponent);
   if (state.filterDueBefore) params.set('dueBefore', state.filterDueBefore);
   if (state.search) params.set('q', state.search);
   return params;
@@ -1064,6 +1066,7 @@ async function renderTicketsView(showingDeleted) {
           <option value="sam@ticket-hub.local" ${state.filterAssignee === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
         </select>
         <input id="ticket-label-filter" value="${escapeHtml(state.filterLabel)}" placeholder="Label" style="width:110px">
+        <input id="ticket-component-filter" value="${escapeHtml(state.filterComponent)}" placeholder="Component" style="width:110px">
         <input id="ticket-due-filter" type="date" value="${escapeHtml(state.filterDueBefore)}" title="Due on or before">
         <input id="ticket-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key, summary, or description">
         <button class="secondary-button" id="clear-filters">Clear</button>
@@ -1144,6 +1147,10 @@ async function renderTicketsView(showingDeleted) {
     state.filterLabel = event.target.value.trim();
     renderTickets().catch(showError);
   }, 300));
+  document.querySelector('#ticket-component-filter').addEventListener('input', debounce(event => {
+    state.filterComponent = event.target.value.trim();
+    renderTickets().catch(showError);
+  }, 300));
   document.querySelector('#ticket-due-filter').addEventListener('change', event => {
     state.filterDueBefore = event.target.value;
     renderTickets().catch(showError);
@@ -1159,6 +1166,7 @@ async function renderTicketsView(showingDeleted) {
     state.filterPriority = '';
     state.filterAssignee = '';
     state.filterLabel = '';
+    state.filterComponent = '';
     state.filterDueBefore = '';
     state.selectedProject = null;
     renderTickets().catch(showError);
@@ -1291,6 +1299,7 @@ async function renderBoard() {
   state.filterPriority = '';
   state.filterAssignee = '';
   state.filterLabel = '';
+  state.filterComponent = '';
   state.filterDueBefore = '';
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   const [, boardColumns] = await Promise.all([fetchTickets(), api('/api/v1/board-columns')]);
@@ -1466,6 +1475,111 @@ function promptBoardResolution(ticket, targetStatusKey) {
   backdrop.querySelector('#board-resolution-select').focus();
 }
 
+// Project components (D19, KEEP_FOR_V1): a dynamically-created dialog, same
+// pattern as promptBoardResolution above -- listing, adding, and deleting a
+// project's components. Create/edit/delete require project-Admin-or-above
+// server-side (TicketService::createComponent/editComponent/
+// deleteComponent); a non-admin's attempt just surfaces the resulting 403
+// as a toast, the same convention every other write in this app follows.
+// The demo user list mirrors every other lead/assignee picker in this file
+// (there is no generic user-search picker anywhere in the app).
+const DEMO_USERS = [
+  ['demo@ticket-hub.local', 'Demo User'],
+  ['alex@ticket-hub.local', 'Alex Morgan'],
+  ['sam@ticket-hub.local', 'Sam Lee'],
+];
+
+function userSelectOptions(selectedEmail) {
+  return '<option value="">None</option>' + DEMO_USERS.map(([email, name]) =>
+    `<option value="${escapeHtml(email)}" ${email === selectedEmail ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+}
+
+async function openComponentsModal(projectKey) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  document.body.appendChild(backdrop);
+
+  const onKeydown = event => { if (event.key === 'Escape') close(); };
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKeydown);
+  };
+  document.addEventListener('keydown', onKeydown);
+  backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+
+  async function render() {
+    let components = [];
+    let loadError = null;
+    try {
+      components = (await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/components`)).items;
+    } catch (error) {
+      loadError = error.message;
+    }
+    backdrop.innerHTML = `
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+          <div><span class="eyebrow">${escapeHtml(projectKey)}</span><h2>Components</h2></div>
+          <button type="button" class="icon-button" id="components-close" aria-label="Close">×</button>
+        </div>
+        ${loadError ? `<div class="form-error">${escapeHtml(loadError)}</div>` : `
+        <div style="max-height:260px;overflow-y:auto">
+          ${components.length ? components.map(component => `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)" data-component-row="${escapeHtml(component.id)}">
+              <span>${escapeHtml(component.name)}${component.lead ? ` <span style="color:var(--muted)">(lead: ${escapeHtml(component.lead.displayName)})</span>` : ''}</span>
+              <button type="button" class="secondary-button" data-delete-component="${escapeHtml(component.id)}">Delete</button>
+            </div>`).join('') : '<div class="empty-state">No components yet.</div>'}
+        </div>`}
+        <form class="form-grid" id="component-add-form" style="margin-top:16px">
+          <label class="wide">Name<input name="name" maxlength="160" required placeholder="e.g. Backend"></label>
+          <label class="wide">Description<input name="description" placeholder="Optional"></label>
+          <label>Lead<select name="leadEmail">${userSelectOptions('')}</select></label>
+          <label>Default assignee<select name="defaultAssigneeEmail">${userSelectOptions('')}</select></label>
+        </form>
+        <div id="component-error" class="form-error hidden"></div>
+        <div class="modal-footer">
+          <button type="button" class="secondary-button" id="components-done">Close</button>
+          <button type="submit" form="component-add-form" class="primary-button">Add component</button>
+        </div>
+      </div>`;
+
+    backdrop.querySelector('#components-close').addEventListener('click', close);
+    backdrop.querySelector('#components-done').addEventListener('click', close);
+    backdrop.querySelectorAll('[data-delete-component]').forEach(button => button.addEventListener('click', async () => {
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/components/${encodeURIComponent(button.dataset.deleteComponent)}`,
+          { method: 'DELETE' });
+        showToast('Component deleted');
+        await render();
+      } catch (error) { showToast(error.message); }
+    }));
+    backdrop.querySelector('#component-add-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+      const errorElement = backdrop.querySelector('#component-error');
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/components`, {
+          method: 'POST',
+          body: JSON.stringify({
+            name: values.name.trim(),
+            description: values.description.trim(),
+            leadEmail: values.leadEmail || null,
+            defaultAssigneeEmail: values.defaultAssigneeEmail || null,
+          }),
+        });
+        showToast('Component added');
+        await render();
+      } catch (error) {
+        errorElement.textContent = error.message;
+        errorElement.classList.remove('hidden');
+      }
+    });
+  }
+
+  await render();
+}
+
 async function renderProjects() {
   await renderProjectsView(false);
 }
@@ -1507,7 +1621,7 @@ async function renderProjectsView(showingDeleted) {
           <div class="project-card-stats"><div><strong>${project.ticketCount}</strong><span>Total tickets</span></div><div><strong>${project.openTicketCount}</strong><span>Open tickets</span></div><div><strong>${escapeHtml(project.lead?.displayName || '—')}</strong><span>Lead</span></div></div>
           <div class="project-card-actions">${showingDeleted
             ? `<button type="button" class="secondary-button" data-restore-project="${escapeHtml(project.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-project="${escapeHtml(project.key)}">Delete permanently</button>`
-            : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
+            : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-components-project="${escapeHtml(project.key)}">Components</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
         </article>`).join('') : `<div class="empty-state">${showingDeleted ? 'The recycle bin is empty.' : 'No projects yet.'}</div>`}
     </div>`;
 
@@ -1523,6 +1637,9 @@ async function renderProjectsView(showingDeleted) {
   document.querySelector('#new-project-button')?.addEventListener('click', openProjectModal);
 
   const stopAnd = handler => event => { event.stopPropagation(); return handler(event); };
+  document.querySelectorAll('[data-components-project]').forEach(button => button.addEventListener('click', stopAnd(() => {
+    openComponentsModal(button.dataset.componentsProject);
+  })));
   document.querySelectorAll('[data-archive-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
     const key = button.dataset.archiveProject;
     const archived = button.dataset.archived !== 'true';
@@ -1649,7 +1766,8 @@ function editFieldsMarkup(ticket) {
     </select></label>
     <label>Story points<input id="edit-story-points" type="number" min="0" max="10000" step="0.5" value="${ticket.storyPoints ?? ''}"></label>
     <label>Due date<input id="edit-due-date" type="date" value="${ticket.dueDate ?? ''}"></label>
-    <label class="wide">Labels<input id="edit-labels" value="${escapeHtml(ticket.labels.join(', '))}"></label>`;
+    <label class="wide">Labels<input id="edit-labels" value="${escapeHtml(ticket.labels.join(', '))}"></label>
+    <label>Component<select id="edit-component"><option value="">None</option></select></label>`;
 }
 
 // Jira-style direct ticket links (/browse/TH-123), synced via history.
@@ -1859,6 +1977,7 @@ async function openTicket(ticketKey) {
               ${editing ? '' : `
               <div class="meta-row"><span>Story points</span><strong>${ticket.storyPoints ?? '—'}</strong></div>
               <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(ticket.dueDate))}</strong></div>
+              <div class="meta-row"><span>Component</span><strong>${ticket.component ? escapeHtml(ticket.component.name) : '—'}</strong></div>
               <div class="meta-row"><span>Labels</span><div>${labelsMarkup(ticket.labels) || '—'}</div></div>`}
               <div class="meta-row"><span>Created</span><strong>${escapeHtml(formatDate(ticket.createdAt))}</strong></div>
               <div class="meta-row"><span>Updated</span><strong>${escapeHtml(relativeDate(ticket.updatedAt))}</strong></div>
@@ -2101,6 +2220,7 @@ async function openTicket(ticketKey) {
       if (editing) {
         attachMarkdownToolbar(document.querySelector('#edit-description'), ticket.key);
         refreshEditParentOptions(ticket).catch(() => {});
+        refreshEditComponentOptions(ticket).catch(() => {});
         document.querySelector('#edit-type').addEventListener('change', () => refreshEditParentOptions(ticket).catch(() => {}));
         document.querySelector('#edit-cancel').addEventListener('click', () => render(false));
         document.querySelector('#edit-save').addEventListener('click', async () => {
@@ -2116,6 +2236,7 @@ async function openTicket(ticketKey) {
             labels: document.querySelector('#edit-labels').value.split(',').map(value => value.trim()).filter(Boolean),
             ticketTypeKey: document.querySelector('#edit-type').value,
             parentTicketKey: document.querySelector('#edit-parent').value || null,
+            componentName: document.querySelector('#edit-component').value || null,
             expectedVersion: ticket.version
           };
           try {
@@ -2226,11 +2347,48 @@ async function refreshEditParentOptions(ticket) {
   }
 }
 
+// Components are project-scoped (D19), so both pickers re-fetch whenever
+// their project changes -- same request-id-guarded pattern as
+// refreshCreateParentOptions/refreshEditParentOptions, to discard a stale
+// response that resolves after a newer one already superseded it.
+let createComponentRequestId = 0;
+async function refreshCreateComponentOptions() {
+  const requestId = ++createComponentRequestId;
+  const projectKey = document.querySelector('#create-project').value;
+  const select = document.querySelector('#create-component');
+  select.innerHTML = '<option value="">None</option>';
+  if (!projectKey) return;
+  try {
+    const result = await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/components`);
+    if (requestId !== createComponentRequestId) return;
+    select.innerHTML += result.items.map(component =>
+      `<option value="${escapeHtml(component.name)}">${escapeHtml(component.name)}</option>`).join('');
+  } catch {
+    // Leave just the "None" option if the project's components can't be loaded.
+  }
+}
+
+let editComponentRequestId = 0;
+async function refreshEditComponentOptions(ticket) {
+  const requestId = ++editComponentRequestId;
+  const select = document.querySelector('#edit-component');
+  select.innerHTML = '<option value="">None</option>';
+  try {
+    const result = await api(`/api/v1/projects/${encodeURIComponent(ticket.projectKey)}/components`);
+    if (requestId !== editComponentRequestId) return;
+    select.innerHTML += result.items.map(component =>
+      `<option value="${escapeHtml(component.name)}" ${component.name === ticket.component?.name ? 'selected' : ''}>${escapeHtml(component.name)}</option>`).join('');
+  } catch {
+    // Leave just the "None" option if the project's components can't be loaded.
+  }
+}
+
 function openCreateModal() {
   document.querySelector('#create-error').classList.add('hidden');
   if (state.selectedProject) document.querySelector('#create-project').value = state.selectedProject;
   createModal.classList.remove('hidden');
   refreshCreateParentOptions().catch(() => {});
+  refreshCreateComponentOptions().catch(() => {});
   createModal.querySelector('input[name="summary"]').focus();
 }
 
@@ -2249,6 +2407,7 @@ function debounce(fn, delay) {
 document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', () => navigate(item.dataset.view)));
 document.querySelector('#create-button').addEventListener('click', openCreateModal);
 document.querySelector('#create-project').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
+document.querySelector('#create-project').addEventListener('change', () => refreshCreateComponentOptions().catch(() => {}));
 document.querySelector('#create-ticket-type').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
 document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click', () => {
   button.closest('.modal-backdrop')?.classList.add('hidden');
@@ -2273,6 +2432,7 @@ document.querySelector('#global-search').addEventListener('input', debounce(even
     state.filterPriority = '';
     state.filterAssignee = '';
     state.filterLabel = '';
+    state.filterComponent = '';
     state.filterDueBefore = '';
     navigate('tickets');
   }
@@ -2290,6 +2450,7 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
     priorityKey: values.priorityKey,
     assigneeEmail: values.assigneeEmail || null,
     parentTicketKey: values.parentTicketKey || null,
+    componentName: values.componentName || null,
     storyPoints: values.storyPoints ? Number(values.storyPoints) : null,
     dueDate: values.dueDate || null,
     labels: values.labels.split(',').map(value => value.trim()).filter(Boolean)

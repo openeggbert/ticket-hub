@@ -109,6 +109,26 @@ crow::json::wvalue projectJson(const Domain::Project& project) {
     return json;
 }
 
+crow::json::wvalue componentSummaryJson(const Domain::ComponentSummary& component) {
+    crow::json::wvalue json;
+    json["id"] = component.id;
+    json["name"] = component.name;
+    return json;
+}
+
+crow::json::wvalue componentJson(const Domain::ProjectComponent& component) {
+    crow::json::wvalue json;
+    json["id"] = component.id;
+    json["projectKey"] = component.projectKey;
+    json["name"] = component.name;
+    json["description"] = component.description;
+    json["lead"] = component.lead ? userJson(*component.lead) : crow::json::wvalue(nullptr);
+    json["defaultAssignee"] = component.defaultAssignee ? userJson(*component.defaultAssignee) : crow::json::wvalue(nullptr);
+    json["createdAt"] = component.createdAt;
+    json["updatedAt"] = component.updatedAt;
+    return json;
+}
+
 crow::json::wvalue ticketJson(const Domain::Ticket& ticket) {
     crow::json::wvalue json;
     json["id"] = ticket.id;
@@ -133,6 +153,7 @@ crow::json::wvalue ticketJson(const Domain::Ticket& ticket) {
     json["reporter"] = userJson(ticket.reporter);
     json["assignee"] = ticket.assignee ? userJson(*ticket.assignee) : crow::json::wvalue(nullptr);
     json["parentTicketKey"] = ticket.parentTicketKey ? crow::json::wvalue(*ticket.parentTicketKey) : crow::json::wvalue(nullptr);
+    json["component"] = ticket.component ? componentSummaryJson(*ticket.component) : crow::json::wvalue(nullptr);
     json["storyPoints"] = ticket.storyPoints ? crow::json::wvalue(*ticket.storyPoints) : crow::json::wvalue(nullptr);
     json["dueDate"] = ticket.dueDate ? crow::json::wvalue(*ticket.dueDate) : crow::json::wvalue(nullptr);
     json["resolution"] = ticket.resolution ? crow::json::wvalue(*ticket.resolution) : crow::json::wvalue(nullptr);
@@ -425,6 +446,7 @@ Domain::TicketFilter ticketFilterFromQuery(const crow::request& request) {
     filter.priorityKey = queryParameter(request, "priority");
     filter.assigneeEmail = queryParameter(request, "assignee");
     filter.label = queryParameter(request, "label");
+    filter.componentName = queryParameter(request, "component");
     filter.dueBefore = queryParameter(request, "dueBefore");
     filter.search = queryParameter(request, "q");
     return filter;
@@ -897,6 +919,124 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
+    // --- Project components (D19, KEEP_FOR_V1) ---
+    CROW_ROUTE(app, "/api/v1/projects/<string>/components")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& projectKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& component : service->listComponents(projectKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(componentJson(component));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/projects/<string>/components")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& projectKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::CreateComponentRequest create;
+            create.projectKey = projectKey;
+            create.name = requiredString(body, "name");
+            create.description = optionalString(body, "description").value_or("");
+            create.leadEmail = optionalString(body, "leadEmail");
+            create.defaultAssigneeEmail = optionalString(body, "defaultAssigneeEmail");
+            return jsonResponse(201, componentJson(service->createComponent(std::move(create), *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/projects/<string>/components/<string>")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& projectKey,
+                                                              const std::string& componentId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::EditComponentRequest edit;
+            edit.name = requiredString(body, "name");
+            edit.description = optionalString(body, "description").value_or("");
+            edit.leadEmail = optionalString(body, "leadEmail");
+            edit.defaultAssigneeEmail = optionalString(body, "defaultAssigneeEmail");
+            auto component = service->editComponent(projectKey, componentId, std::move(edit), *principal);
+            return component ? jsonResponse(200, componentJson(*component)) : errorResponse(404, "Component not found");
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/projects/<string>/components/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& projectKey,
+                                                               const std::string& componentId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (!service->deleteComponent(projectKey, componentId, *principal)) {
+                return errorResponse(404, "Component not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
     // Moves a project to the recycle bin (soft delete, D88/D89) -- not a
     // permanent delete. See DELETE /api/v1/projects/<key>/permanent below.
     CROW_ROUTE(app, "/api/v1/projects/<string>")
@@ -1252,6 +1392,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             create.priorityKey = optionalString(body, "priorityKey").value_or("medium");
             create.assigneeEmail = optionalString(body, "assigneeEmail");
             create.parentTicketKey = optionalString(body, "parentTicketKey");
+            create.componentName = optionalString(body, "componentName");
             create.dueDate = optionalString(body, "dueDate");
             if (body.has("storyPoints") && body["storyPoints"].t() != crow::json::type::Null) {
                 create.storyPoints = body["storyPoints"].d();
@@ -1413,6 +1554,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             edit.dueDate = optionalString(body, "dueDate");
             edit.ticketTypeKey = requiredString(body, "ticketTypeKey");
             edit.parentTicketKey = optionalString(body, "parentTicketKey");
+            edit.componentName = optionalString(body, "componentName");
             if (body.has("storyPoints") && body["storyPoints"].t() != crow::json::type::Null) {
                 edit.storyPoints = body["storyPoints"].d();
             }
@@ -1989,9 +2131,9 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    // Simple field-copy clone (D60): summary/description/type/priority/labels
-    // into a new ticket in the same project, plus a clones/is-cloned-by link
-    // back to the original.
+    // Simple field-copy clone (D60): summary/description/type/priority/
+    // labels/component into a new ticket in the same project, plus a
+    // clones/is-cloned-by link back to the original.
     CROW_ROUTE(app, "/api/v1/tickets/<string>/clone")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);

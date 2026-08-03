@@ -64,6 +64,13 @@ public:
     std::optional<std::string> getSetting(const std::string& key) override;
     void setSetting(const std::string& key, const std::string& value) override;
 
+    std::vector<Domain::ProjectComponent> listComponents(const std::string& projectKey) override;
+    Domain::ProjectComponent createComponent(const Domain::CreateComponentRequest& request) override;
+    std::optional<Domain::ProjectComponent> findComponentById(const std::string& componentId) override;
+    std::optional<Domain::ProjectComponent> editComponent(const std::string& componentId,
+                                                            const Domain::EditComponentRequest& request) override;
+    bool deleteComponent(const std::string& componentId) override;
+
     std::vector<Domain::Project> listProjects() override;
     std::vector<Domain::Ticket> listTickets(const Domain::TicketFilter& filter) override;
     std::vector<Domain::Ticket> listTickets(const Domain::TicketFilter& filter, int limit, int offset) override;

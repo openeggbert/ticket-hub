@@ -115,6 +115,21 @@ public:
     virtual std::optional<std::string> getSetting(const std::string& key) = 0;
     virtual void setSetting(const std::string& key, const std::string& value) = 0;
 
+    // --- Project components (D19, KEEP_FOR_V1) ---
+    // A small table plus one optional ticket field, per the decision text --
+    // no recycle bin/soft-delete. createComponent throws std::invalid_argument
+    // on an unknown project key or an already-used (project, name) pair (the
+    // table's own UNIQUE constraint). editComponent/deleteComponent return
+    // nullopt/false for an unknown componentId; deleting a component that is
+    // still referenced by tickets clears it there via ON DELETE SET NULL,
+    // not a rejection.
+    virtual std::vector<Domain::ProjectComponent> listComponents(const std::string& projectKey) = 0;
+    virtual Domain::ProjectComponent createComponent(const Domain::CreateComponentRequest& request) = 0;
+    virtual std::optional<Domain::ProjectComponent> findComponentById(const std::string& componentId) = 0;
+    virtual std::optional<Domain::ProjectComponent> editComponent(const std::string& componentId,
+                                                                    const Domain::EditComponentRequest& request) = 0;
+    virtual bool deleteComponent(const std::string& componentId) = 0;
+
     // --- Ticket tracker (existing prototype surface, now principal-driven) ---
     virtual std::vector<Domain::Project> listProjects() = 0;
     // Unpaginated, capped at Domain::DefaultPageSize rows -- used internally

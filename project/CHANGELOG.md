@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Project components (D19, `KEEP_FOR_V1`)
+
+- Implemented project components, decided `KEEP_FOR_V1` in the original scope review but never actually
+  built: name, description, lead, default assignee; at most one per ticket. New migration
+  `017_project_components.sql` (both backends): `project_components` table plus a nullable
+  `tickets.component_id` (`ON DELETE SET NULL`); no recycle bin, since D19 doesn't call for one.
+- New REST routes `GET`/`POST /api/v1/projects/{key}/components` and `PATCH`/`DELETE
+  /api/v1/projects/{key}/components/{id}` (project-Admin-or-above to write, same read access as
+  projects/tickets otherwise). `createTicket`/`editTicket` gained `componentName`; `GET /api/v1/tickets`
+  gained a `component` filter; `cloneTicket` now copies the component too.
+- `web/`: a "Components" management dialog on each project card, a Component picker in the ticket
+  create/edit forms, a read-only Component row in the ticket drawer, and a Component filter in the
+  tickets table.
+- Verified end-to-end against fresh live PostgreSQL and SQLite databases, a live HTTP smoke test
+  (including the `ON DELETE SET NULL` behavior through the real API), and a full Playwright/Chromium
+  browser pass.
+
 ## Unreleased — Full "issue" -> "ticket" terminology rename (user-requested, breaking)
 
 - Renamed "issue" to "ticket" everywhere -- database tables/columns/indexes/constraints, REST API paths

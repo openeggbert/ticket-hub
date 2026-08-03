@@ -261,6 +261,85 @@ int main() {
             + "' AND field_name IN ('summary','description','priority','assignee','story_points','due_date')");
         require(editHistoryCount >= 6, "each changed field writes a ticket_history row");
 
+        // --- Project components (D19, KEEP_FOR_V1) --- uses a freshly created
+        // ticket rather than `created`/`edited`, so it does not disturb the
+        // optimistic-lock version chain the stale-edit tests above depend on.
+        {
+            TicketHub::Domain::CreateComponentRequest componentRequest;
+            componentRequest.projectKey = "TH";
+            componentRequest.name = "Backend";
+            componentRequest.description = "Server-side work";
+            componentRequest.leadEmail = "alex@ticket-hub.local";
+            const auto component = database.createComponent(componentRequest);
+            require(!component.id.empty(), "component is created with an id");
+            require(component.name == "Backend", "component name is stored");
+            require(component.lead.has_value() && component.lead->email == "alex@ticket-hub.local",
+                   "component lead is resolved");
+
+            bool duplicateRejected = false;
+            try {
+                database.createComponent(componentRequest);
+            } catch (const std::invalid_argument&) {
+                duplicateRejected = true;
+            }
+            require(duplicateRejected, "a duplicate component name in the same project is rejected");
+
+            const auto components = database.listComponents("TH");
+            require(components.size() == 1, "listComponents returns the newly created component");
+
+            CreateTicketRequest componentTicketRequest;
+            componentTicketRequest.projectKey = "TH";
+            componentTicketRequest.summary = "Ticket carrying a component";
+            componentTicketRequest.componentName = "Backend";
+            const auto componentTicket = database.createTicket(componentTicketRequest, demoUserId);
+            require(componentTicket.component.has_value() && componentTicket.component->name == "Backend",
+                   "a ticket created with componentName is linked to that component");
+
+            TicketFilter componentFilter;
+            componentFilter.componentName = "Backend";
+            require(containsTicket(database.listTickets(componentFilter), componentTicket.key),
+                   "componentName filter matches a ticket carrying that component");
+            require(database.countTickets(componentFilter)
+                        == static_cast<std::int64_t>(database.listTickets(componentFilter).size()),
+                   "countTickets agrees with listTickets for the componentName filter");
+            componentFilter.componentName = "Frontend";
+            require(!containsTicket(database.listTickets(componentFilter), componentTicket.key),
+                   "componentName filter excludes a ticket without a matching component");
+
+            const auto editedComponent = database.editComponent(component.id,
+                TicketHub::Domain::EditComponentRequest{"Backend Services", "Renamed", std::nullopt,
+                                                         std::string("sam@ticket-hub.local")});
+            require(editedComponent.has_value() && editedComponent->name == "Backend Services",
+                   "editComponent renames the component");
+            require(!editedComponent->lead.has_value(), "editComponent clears the lead when leadEmail is nullopt");
+            require(editedComponent->defaultAssignee.has_value()
+                        && editedComponent->defaultAssignee->email == "sam@ticket-hub.local",
+                   "editComponent sets the default assignee");
+
+            require(!database.editComponent("unknown-component-id",
+                        TicketHub::Domain::EditComponentRequest{"X", "", std::nullopt, std::nullopt}).has_value(),
+                   "editing an unknown component returns nullopt");
+            require(!database.findComponentById("unknown-component-id").has_value(),
+                   "finding an unknown component returns nullopt");
+
+            require(database.deleteComponent(component.id), "deleteComponent removes the component");
+            require(!database.deleteComponent(component.id), "deleting an already-deleted component returns false");
+
+            const auto afterDelete = database.findTicketByKey(componentTicket.key);
+            require(afterDelete.has_value() && !afterDelete->component.has_value(),
+                   "deleting a component clears it from any ticket that referenced it (ON DELETE SET NULL)");
+
+            // Fully remove this block's own scratch ticket so it does not
+            // throw off the dashboard/count/recycle-bin assertions later in
+            // this file, which assert exact totals against the fixed seed +
+            // `created` (a merely soft-deleted ticket would still show up
+            // in the recycle-bin size assertion below).
+            require(database.softDeleteTicket(componentTicket.key, demoUserId),
+                   "cleanup: the component-test scratch ticket can be soft-deleted");
+            require(database.permanentlyDeleteTicket(componentTicket.key),
+                   "cleanup: the component-test scratch ticket can be permanently deleted");
+        }
+
         const auto link = database.createTicketLink(created.key, "TH-1", TicketHub::Domain::LinkTypeBlocks);
         require(!link.id.empty() && link.outward && link.otherTicketKey == "TH-1",
                "a link is created from the source ticket's perspective");
