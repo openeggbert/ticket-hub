@@ -99,8 +99,8 @@ crow::json::wvalue projectJson(const Domain::Project& project) {
     json["key"] = project.key;
     json["name"] = project.name;
     json["description"] = project.description;
-    json["issueCount"] = project.issueCount;
-    json["openIssueCount"] = project.openIssueCount;
+    json["ticketCount"] = project.ticketCount;
+    json["openTicketCount"] = project.openTicketCount;
     if (project.lead) {
         json["lead"] = userJson(*project.lead);
     } else {
@@ -109,42 +109,42 @@ crow::json::wvalue projectJson(const Domain::Project& project) {
     return json;
 }
 
-crow::json::wvalue issueJson(const Domain::Issue& issue) {
+crow::json::wvalue ticketJson(const Domain::Ticket& ticket) {
     crow::json::wvalue json;
-    json["id"] = issue.id;
-    json["key"] = issue.key;
-    json["number"] = issue.number;
-    json["projectKey"] = issue.projectKey;
-    json["projectName"] = issue.projectName;
-    json["summary"] = issue.summary;
-    json["description"] = issue.description;
-    json["type"] = crow::json::wvalue{{"key", issue.type.key},
-                                      {"name", issue.type.name},
-                                      {"icon", issue.type.icon},
-                                      {"color", issue.type.color}};
-    json["status"] = crow::json::wvalue{{"key", issue.status.key},
-                                        {"name", issue.status.name},
-                                        {"category", issue.status.category},
-                                        {"sortOrder", issue.status.sortOrder}};
-    json["priority"] = crow::json::wvalue{{"key", issue.priority.key},
-                                          {"name", issue.priority.name},
-                                          {"rank", issue.priority.rank},
-                                          {"color", issue.priority.color}};
-    json["reporter"] = userJson(issue.reporter);
-    json["assignee"] = issue.assignee ? userJson(*issue.assignee) : crow::json::wvalue(nullptr);
-    json["parentIssueKey"] = issue.parentIssueKey ? crow::json::wvalue(*issue.parentIssueKey) : crow::json::wvalue(nullptr);
-    json["storyPoints"] = issue.storyPoints ? crow::json::wvalue(*issue.storyPoints) : crow::json::wvalue(nullptr);
-    json["dueDate"] = issue.dueDate ? crow::json::wvalue(*issue.dueDate) : crow::json::wvalue(nullptr);
-    json["resolution"] = issue.resolution ? crow::json::wvalue(*issue.resolution) : crow::json::wvalue(nullptr);
+    json["id"] = ticket.id;
+    json["key"] = ticket.key;
+    json["number"] = ticket.number;
+    json["projectKey"] = ticket.projectKey;
+    json["projectName"] = ticket.projectName;
+    json["summary"] = ticket.summary;
+    json["description"] = ticket.description;
+    json["type"] = crow::json::wvalue{{"key", ticket.type.key},
+                                      {"name", ticket.type.name},
+                                      {"icon", ticket.type.icon},
+                                      {"color", ticket.type.color}};
+    json["status"] = crow::json::wvalue{{"key", ticket.status.key},
+                                        {"name", ticket.status.name},
+                                        {"category", ticket.status.category},
+                                        {"sortOrder", ticket.status.sortOrder}};
+    json["priority"] = crow::json::wvalue{{"key", ticket.priority.key},
+                                          {"name", ticket.priority.name},
+                                          {"rank", ticket.priority.rank},
+                                          {"color", ticket.priority.color}};
+    json["reporter"] = userJson(ticket.reporter);
+    json["assignee"] = ticket.assignee ? userJson(*ticket.assignee) : crow::json::wvalue(nullptr);
+    json["parentTicketKey"] = ticket.parentTicketKey ? crow::json::wvalue(*ticket.parentTicketKey) : crow::json::wvalue(nullptr);
+    json["storyPoints"] = ticket.storyPoints ? crow::json::wvalue(*ticket.storyPoints) : crow::json::wvalue(nullptr);
+    json["dueDate"] = ticket.dueDate ? crow::json::wvalue(*ticket.dueDate) : crow::json::wvalue(nullptr);
+    json["resolution"] = ticket.resolution ? crow::json::wvalue(*ticket.resolution) : crow::json::wvalue(nullptr);
     crow::json::wvalue::list labels;
-    for (const auto& label : issue.labels) {
+    for (const auto& label : ticket.labels) {
         labels.emplace_back(label);
     }
     json["labels"] = std::move(labels);
-    json["createdAt"] = issue.createdAt;
-    json["updatedAt"] = issue.updatedAt;
-    json["version"] = issue.version;
-    json["rankOrder"] = issue.rankOrder;
+    json["createdAt"] = ticket.createdAt;
+    json["updatedAt"] = ticket.updatedAt;
+    json["version"] = ticket.version;
+    json["rankOrder"] = ticket.rankOrder;
     return json;
 }
 
@@ -154,7 +154,7 @@ crow::json::wvalue issueJson(const Domain::Issue& issue) {
 // always correct and keeps the call sites simple.
 //
 // Also neutralizes CSV/formula injection: every field here comes from
-// user-controlled issue content (summary, description, labels, ...), and a
+// user-controlled ticket content (summary, description, labels, ...), and a
 // spreadsheet application (Excel, Google Sheets, LibreOffice Calc) treats a
 // cell beginning with `=`, `+`, `-`, or `@` as a formula to evaluate when the
 // file is opened, regardless of the exporting application's intent. A
@@ -182,25 +182,25 @@ std::string csvField(const std::string& value) {
     return escaped;
 }
 
-std::string issuesToCsv(const std::vector<Domain::Issue>& issues) {
+std::string ticketsToCsv(const std::vector<Domain::Ticket>& tickets) {
     std::ostringstream csv;
     csv << "key,project,summary,description,type,status,priority,reporter,assignee,storyPoints,dueDate,"
            "resolution,labels,createdAt,updatedAt\r\n";
-    for (const auto& issue : issues) {
+    for (const auto& ticket : tickets) {
         std::ostringstream labels;
-        for (std::size_t i = 0; i < issue.labels.size(); ++i) {
+        for (std::size_t i = 0; i < ticket.labels.size(); ++i) {
             if (i > 0) labels << ';';
-            labels << issue.labels[i];
+            labels << ticket.labels[i];
         }
-        csv << csvField(issue.key) << ',' << csvField(issue.projectKey) << ',' << csvField(issue.summary)
-            << ',' << csvField(issue.description) << ',' << csvField(issue.type.name) << ','
-            << csvField(issue.status.name) << ',' << csvField(issue.priority.name) << ','
-            << csvField(issue.reporter.email) << ','
-            << csvField(issue.assignee ? issue.assignee->email : "") << ',';
-        if (issue.storyPoints) csv << *issue.storyPoints;
-        csv << ',' << csvField(issue.dueDate.value_or("")) << ',' << csvField(issue.resolution.value_or(""))
-            << ',' << csvField(labels.str()) << ',' << csvField(issue.createdAt) << ','
-            << csvField(issue.updatedAt) << "\r\n";
+        csv << csvField(ticket.key) << ',' << csvField(ticket.projectKey) << ',' << csvField(ticket.summary)
+            << ',' << csvField(ticket.description) << ',' << csvField(ticket.type.name) << ','
+            << csvField(ticket.status.name) << ',' << csvField(ticket.priority.name) << ','
+            << csvField(ticket.reporter.email) << ','
+            << csvField(ticket.assignee ? ticket.assignee->email : "") << ',';
+        if (ticket.storyPoints) csv << *ticket.storyPoints;
+        csv << ',' << csvField(ticket.dueDate.value_or("")) << ',' << csvField(ticket.resolution.value_or(""))
+            << ',' << csvField(labels.str()) << ',' << csvField(ticket.createdAt) << ','
+            << csvField(ticket.updatedAt) << "\r\n";
     }
     return csv.str();
 }
@@ -208,7 +208,7 @@ std::string issuesToCsv(const std::vector<Domain::Issue>& issues) {
 crow::json::wvalue commentJson(const Domain::Comment& comment) {
     crow::json::wvalue json;
     json["id"] = comment.id;
-    json["issueId"] = comment.issueId;
+    json["ticketId"] = comment.ticketId;
     json["author"] = userJson(comment.author);
     json["body"] = comment.body;
     json["createdAt"] = comment.createdAt;
@@ -234,7 +234,7 @@ crow::json::wvalue auditEventJson(const Domain::AuditEvent& event) {
 crow::json::wvalue worklogJson(const Domain::Worklog& worklog) {
     crow::json::wvalue json;
     json["id"] = worklog.id;
-    json["issueId"] = worklog.issueId;
+    json["ticketId"] = worklog.ticketId;
     json["author"] = userJson(worklog.author);
     json["workDate"] = worklog.workDate;
     json["timeSpentSeconds"] = worklog.timeSpentSeconds;
@@ -248,8 +248,8 @@ crow::json::wvalue worklogJson(const Domain::Worklog& worklog) {
 crow::json::wvalue attachmentJson(const Domain::Attachment& attachment) {
     crow::json::wvalue json;
     json["id"] = attachment.id;
-    json["issueId"] = attachment.issueId;
-    json["issueKey"] = attachment.issueKey;
+    json["ticketId"] = attachment.ticketId;
+    json["ticketKey"] = attachment.ticketKey;
     json["uploader"] = userJson(attachment.uploader);
     json["fileName"] = attachment.fileName;
     json["contentType"] = attachment.contentType;
@@ -322,22 +322,22 @@ crow::json::wvalue notificationJson(const Domain::Notification& notification) {
     crow::json::wvalue json;
     json["id"] = notification.id;
     json["type"] = notification.type;
-    json["issueKey"] = notification.issueKey ? crow::json::wvalue(*notification.issueKey) : crow::json::wvalue(nullptr);
-    json["issueSummary"] =
-        notification.issueSummary ? crow::json::wvalue(*notification.issueSummary) : crow::json::wvalue(nullptr);
+    json["ticketKey"] = notification.ticketKey ? crow::json::wvalue(*notification.ticketKey) : crow::json::wvalue(nullptr);
+    json["ticketSummary"] =
+        notification.ticketSummary ? crow::json::wvalue(*notification.ticketSummary) : crow::json::wvalue(nullptr);
     json["readAt"] = notification.readAt ? crow::json::wvalue(*notification.readAt) : crow::json::wvalue(nullptr);
     json["createdAt"] = notification.createdAt;
     return json;
 }
 
-crow::json::wvalue issueLinkJson(const Domain::IssueLink& link) {
+crow::json::wvalue ticketLinkJson(const Domain::TicketLink& link) {
     const auto labels = Domain::linkTypeLabels(link.linkType);
     crow::json::wvalue json;
     json["id"] = link.id;
     json["linkType"] = link.linkType;
     json["label"] = link.outward ? labels.outward : labels.inward;
-    json["otherIssueKey"] = link.otherIssueKey;
-    json["otherIssueSummary"] = link.otherIssueSummary;
+    json["otherTicketKey"] = link.otherTicketKey;
+    json["otherTicketSummary"] = link.otherTicketSummary;
     return json;
 }
 
@@ -358,28 +358,28 @@ crow::json::wvalue bulkActionResultJson(const Domain::BulkActionResult& result) 
 
 // Fixed batch-size constant (D125): "fixed constants only (max body size,
 // max bulk items, max page size); no admin exceptions." Applies to every
-// `POST /api/v1/issues/bulk/*` route's `issueKeys` array via the shared
-// `requiredIssueKeys` helper below.
+// `POST /api/v1/tickets/bulk/*` route's `ticketKeys` array via the shared
+// `requiredTicketKeys` helper below.
 constexpr std::size_t MaxBulkItems = 200;
 
-// Simple bulk actions (D36) always take {"issueKeys": [...]} plus
+// Simple bulk actions (D36) always take {"ticketKeys": [...]} plus
 // action-specific fields; every bulk route needs this.
-std::vector<std::string> requiredIssueKeys(const crow::json::rvalue& body) {
-    if (!body.has("issueKeys") || body["issueKeys"].t() != crow::json::type::List) {
-        throw std::invalid_argument("issueKeys must be an array of strings");
+std::vector<std::string> requiredTicketKeys(const crow::json::rvalue& body) {
+    if (!body.has("ticketKeys") || body["ticketKeys"].t() != crow::json::type::List) {
+        throw std::invalid_argument("ticketKeys must be an array of strings");
     }
     std::vector<std::string> keys;
-    for (const auto& item : body["issueKeys"]) {
+    for (const auto& item : body["ticketKeys"]) {
         if (item.t() != crow::json::type::String) {
-            throw std::invalid_argument("issueKeys must be an array of strings");
+            throw std::invalid_argument("ticketKeys must be an array of strings");
         }
         keys.emplace_back(item.s());
     }
     if (keys.empty()) {
-        throw std::invalid_argument("issueKeys must not be empty");
+        throw std::invalid_argument("ticketKeys must not be empty");
     }
     if (keys.size() > MaxBulkItems) {
-        throw std::invalid_argument("issueKeys must not contain more than " + std::to_string(MaxBulkItems) + " items");
+        throw std::invalid_argument("ticketKeys must not contain more than " + std::to_string(MaxBulkItems) + " items");
     }
     return keys;
 }
@@ -393,7 +393,7 @@ std::optional<std::string> queryParameter(const crow::request& request, const ch
 }
 
 // Numbered/offset pagination (D126): a missing `page`/`pageSize` query
-// parameter returns `defaultValue` (used by TicketService::listIssuesPaged
+// parameter returns `defaultValue` (used by TicketService::listTicketsPaged
 // to clamp into range); a present-but-non-numeric one is a genuine client
 // error, not silently ignored.
 std::optional<int> optionalIntQueryParameter(const crow::request& request, const char* name) {
@@ -413,15 +413,15 @@ std::optional<int> optionalIntQueryParameter(const crow::request& request, const
     }
 }
 
-// Read-only CSV export of issues (D48): no CSV import, no Jira migration
-// tool. Shares the same `Domain::IssueFilter` query parameters and
-// authorization as `GET /api/v1/issues`, so an export can be scoped to
+// Read-only CSV export of tickets (D48): no CSV import, no Jira migration
+// tool. Shares the same `Domain::TicketFilter` query parameters and
+// authorization as `GET /api/v1/tickets`, so an export can be scoped to
 // whatever the caller could already see via the list view.
-Domain::IssueFilter issueFilterFromQuery(const crow::request& request) {
-    Domain::IssueFilter filter;
+Domain::TicketFilter ticketFilterFromQuery(const crow::request& request) {
+    Domain::TicketFilter filter;
     filter.projectKey = queryParameter(request, "project");
     filter.statusKey = queryParameter(request, "status");
-    filter.issueTypeKey = queryParameter(request, "type");
+    filter.ticketTypeKey = queryParameter(request, "type");
     filter.priorityKey = queryParameter(request, "priority");
     filter.assigneeEmail = queryParameter(request, "assignee");
     filter.label = queryParameter(request, "label");
@@ -464,10 +464,10 @@ constexpr long long SessionCookieMaxAgeSeconds = 30LL * 24 * 60 * 60;
 // size, max bulk items, max page size); no admin exceptions." Max page size
 // has no meaning yet -- numbered/offset pagination (D126) does not exist in
 // V1 yet, so it is intentionally not implemented here; max bulk items is
-// enforced above, next to `requiredIssueKeys`.
+// enforced above, next to `requiredTicketKeys`.
 //
 // Generous for this API's largest legitimate JSON payload (a
-// full-replacement issue edit with a long Markdown description) while still
+// full-replacement ticket edit with a long Markdown description) while still
 // bounding worst-case processing of a malicious/broken client. Enforced
 // against `request.body.size()` (i.e. after Crow has already buffered the
 // body), not against the `Content-Length` header before reading -- Crow's
@@ -1102,7 +1102,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Kanban board WIP limits (D32/D33): a single flat, installation-wide
-    // list (same read-access rule as projects/issues), settable only by a
+    // list (same read-access rule as projects/tickets), settable only by a
     // global administrator (there is no per-project board admin concept in
     // the reduced-scope model).
     CROW_ROUTE(app, "/api/v1/board-columns")([service, authService](const crow::request& request) {
@@ -1174,16 +1174,16 @@ void registerApiRoutes(crow::SimpleApp& app,
     // route always returned (the pre-existing, previously-undocumented
     // 200-row cap), now with `totalItems`/`totalPages` so a caller can tell
     // whether more rows exist and page through them explicitly.
-    CROW_ROUTE(app, "/api/v1/issues")
+    CROW_ROUTE(app, "/api/v1/tickets")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {
-            const auto filter = issueFilterFromQuery(request);
+            const auto filter = ticketFilterFromQuery(request);
             const int page = optionalIntQueryParameter(request, "page").value_or(1);
             const int pageSize = optionalIntQueryParameter(request, "pageSize").value_or(Domain::DefaultPageSize);
-            const auto result = service->listIssuesPaged(filter, page, pageSize, resolvePrincipal(request, authService));
+            const auto result = service->listTicketsPaged(filter, page, pageSize, resolvePrincipal(request, authService));
             crow::json::wvalue::list items;
-            for (const auto& issue : result.items) {
-                items.emplace_back(issueJson(issue));
+            for (const auto& ticket : result.items) {
+                items.emplace_back(ticketJson(ticket));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
@@ -1203,17 +1203,17 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Read-only CSV export (D48): same filters/authorization as the JSON
     // list route above, just a different representation. Not nested under a
-    // path that could collide with /api/v1/issues/{key} since Crow resolves
+    // path that could collide with /api/v1/tickets/{key} since Crow resolves
     // static path segments before parameterized ones, matching the existing
-    // /api/v1/issues/deleted and /api/v1/issues/bulk/* routes' precedent.
-    CROW_ROUTE(app, "/api/v1/issues/export.csv")
+    // /api/v1/tickets/deleted and /api/v1/tickets/bulk/* routes' precedent.
+    CROW_ROUTE(app, "/api/v1/tickets/export.csv")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         try {
-            const auto filter = issueFilterFromQuery(request);
-            const auto issues = service->listIssues(filter, resolvePrincipal(request, authService));
-            crow::response response(200, issuesToCsv(issues));
+            const auto filter = ticketFilterFromQuery(request);
+            const auto tickets = service->listTickets(filter, resolvePrincipal(request, authService));
+            crow::response response(200, ticketsToCsv(tickets));
             response.set_header("Content-Type", "text/csv; charset=utf-8");
-            response.set_header("Content-Disposition", "attachment; filename=\"issues.csv\"");
+            response.set_header("Content-Disposition", "attachment; filename=\"tickets.csv\"");
             response.set_header("Cache-Control", "no-store");
             applySecurityHeaders(response);
             return response;
@@ -1224,7 +1224,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues")
+    CROW_ROUTE(app, "/api/v1/tickets")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1244,14 +1244,14 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            Domain::CreateIssueRequest create;
+            Domain::CreateTicketRequest create;
             create.projectKey = requiredString(body, "projectKey");
             create.summary = requiredString(body, "summary");
             create.description = optionalString(body, "description").value_or("");
-            create.issueTypeKey = optionalString(body, "issueTypeKey").value_or("task");
+            create.ticketTypeKey = optionalString(body, "ticketTypeKey").value_or("task");
             create.priorityKey = optionalString(body, "priorityKey").value_or("medium");
             create.assigneeEmail = optionalString(body, "assigneeEmail");
-            create.parentIssueKey = optionalString(body, "parentIssueKey");
+            create.parentTicketKey = optionalString(body, "parentTicketKey");
             create.dueDate = optionalString(body, "dueDate");
             if (body.has("storyPoints") && body["storyPoints"].t() != crow::json::type::Null) {
                 create.storyPoints = body["storyPoints"].d();
@@ -1263,7 +1263,7 @@ void registerApiRoutes(crow::SimpleApp& app,
                     }
                 }
             }
-            return jsonResponse(201, issueJson(service->createIssue(std::move(create), *principal)));
+            return jsonResponse(201, ticketJson(service->createTicket(std::move(create), *principal)));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -1273,7 +1273,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/deleted")
+    CROW_ROUTE(app, "/api/v1/tickets/deleted")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -1281,8 +1281,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
         try {
             crow::json::wvalue::list items;
-            for (const auto& issue : service->listDeletedIssues(*principal)) {
-                items.emplace_back(issueJson(issue));
+            for (const auto& ticket : service->listDeletedTickets(*principal)) {
+                items.emplace_back(ticketJson(ticket));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
@@ -1294,10 +1294,10 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>")([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>")([service, authService](const crow::request& request, const std::string& ticketKey) {
         try {
-            auto issue = service->findIssue(issueKey, resolvePrincipal(request, authService));
-            return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
+            auto ticket = service->findTicket(ticketKey, resolvePrincipal(request, authService));
+            return ticket ? jsonResponse(200, ticketJson(*ticket)) : errorResponse(404, "Ticket not found");
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
@@ -1305,10 +1305,10 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    // Moves an issue to the recycle bin (soft delete, D22) -- not a
-    // permanent delete. See DELETE /api/v1/issues/<key>/permanent below.
-    CROW_ROUTE(app, "/api/v1/issues/<string>")
-    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
+    // Moves a ticket to the recycle bin (soft delete, D22) -- not a
+    // permanent delete. See DELETE /api/v1/tickets/<key>/permanent below.
+    CROW_ROUTE(app, "/api/v1/tickets/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1320,8 +1320,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            if (!service->deleteIssue(issueKey, *principal)) {
-                return errorResponse(404, "Issue not found");
+            if (!service->deleteTicket(ticketKey, *principal)) {
+                return errorResponse(404, "Ticket not found");
             }
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
@@ -1333,8 +1333,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/restore")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/restore")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1346,8 +1346,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            if (!service->restoreIssue(issueKey, *principal)) {
-                return errorResponse(404, "Issue not found in recycle bin");
+            if (!service->restoreTicket(ticketKey, *principal)) {
+                return errorResponse(404, "Ticket not found in recycle bin");
             }
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
@@ -1359,8 +1359,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/permanent")
-    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/permanent")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1372,8 +1372,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            if (!service->permanentlyDeleteIssue(issueKey, *principal)) {
-                return errorResponse(404, "Issue not found in recycle bin");
+            if (!service->permanentlyDeleteTicket(ticketKey, *principal)) {
+                return errorResponse(404, "Ticket not found in recycle bin");
             }
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
@@ -1385,8 +1385,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>")
-    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1405,14 +1405,14 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            Domain::EditIssueRequest edit;
+            Domain::EditTicketRequest edit;
             edit.summary = requiredString(body, "summary");
             edit.description = optionalString(body, "description").value_or("");
             edit.priorityKey = requiredString(body, "priorityKey");
             edit.assigneeEmail = optionalString(body, "assigneeEmail");
             edit.dueDate = optionalString(body, "dueDate");
-            edit.issueTypeKey = requiredString(body, "issueTypeKey");
-            edit.parentIssueKey = optionalString(body, "parentIssueKey");
+            edit.ticketTypeKey = requiredString(body, "ticketTypeKey");
+            edit.parentTicketKey = optionalString(body, "parentTicketKey");
             if (body.has("storyPoints") && body["storyPoints"].t() != crow::json::type::Null) {
                 edit.storyPoints = body["storyPoints"].d();
             }
@@ -1427,8 +1427,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
                 expectedVersion = body["expectedVersion"].i();
             }
-            auto issue = service->editIssue(issueKey, std::move(edit), *principal, expectedVersion);
-            return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
+            auto ticket = service->editTicket(ticketKey, std::move(edit), *principal, expectedVersion);
+            return ticket ? jsonResponse(200, ticketJson(*ticket)) : errorResponse(404, "Ticket not found");
         } catch (const Domain::ConcurrencyConflict& error) {
             return errorResponse(409, error.what());
         } catch (const Domain::Forbidden& error) {
@@ -1440,8 +1440,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/status")
-    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/status")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1466,11 +1466,11 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
                 expectedVersion = body["expectedVersion"].i();
             }
-            if (!service->changeStatus(issueKey, statusKey, *principal, resolution, expectedVersion)) {
-                return errorResponse(404, "Issue not found");
+            if (!service->changeStatus(ticketKey, statusKey, *principal, resolution, expectedVersion)) {
+                return errorResponse(404, "Ticket not found");
             }
-            auto issue = service->findIssue(issueKey, principal);
-            return issue ? jsonResponse(200, issueJson(*issue)) : errorResponse(404, "Issue not found");
+            auto ticket = service->findTicket(ticketKey, principal);
+            return ticket ? jsonResponse(200, ticketJson(*ticket)) : errorResponse(404, "Ticket not found");
         } catch (const Domain::ConcurrencyConflict& error) {
             return errorResponse(409, error.what());
         } catch (const Domain::WorkflowViolation& error) {
@@ -1484,11 +1484,11 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/comments")
-    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/comments")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& comment : service->listComments(issueKey, resolvePrincipal(request, authService))) {
+            for (const auto& comment : service->listComments(ticketKey, resolvePrincipal(request, authService))) {
                 items.emplace_back(commentJson(comment));
             }
             crow::json::wvalue body;
@@ -1501,8 +1501,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/comments")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/comments")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1521,7 +1521,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            return jsonResponse(201, commentJson(service->addComment(issueKey, requiredString(body, "body"), *principal)));
+            return jsonResponse(201, commentJson(service->addComment(ticketKey, requiredString(body, "body"), *principal)));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -1534,8 +1534,8 @@ void registerApiRoutes(crow::SimpleApp& app,
     // Comment editing (D81/D83): the author may always edit their own
     // comment; otherwise the actor needs project-Admin-or-above (or global
     // admin). Sets `edited_at` -- there is no stored history of prior text.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>")
-    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/comments/<string>")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& ticketKey, const std::string& commentId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1558,7 +1558,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
                 expectedVersion = body["expectedVersion"].i();
             }
-            auto comment = service->editComment(issueKey, commentId, requiredString(body, "body"), *principal, expectedVersion);
+            auto comment = service->editComment(ticketKey, commentId, requiredString(body, "body"), *principal, expectedVersion);
             return comment ? jsonResponse(200, commentJson(*comment)) : errorResponse(404, "Comment not found");
         } catch (const Domain::ConcurrencyConflict& error) {
             return errorResponse(409, error.what());
@@ -1573,9 +1573,9 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Tombstone delete (D82): the comment row and original body remain in
     // the database, just excluded from ordinary listing -- there is no
-    // separate recycle-bin API for comments, unlike issues and projects.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>")
-    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
+    // separate recycle-bin API for comments, unlike tickets and projects.
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/comments/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& ticketKey, const std::string& commentId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1587,7 +1587,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            if (!service->deleteComment(issueKey, commentId, *principal)) {
+            if (!service->deleteComment(ticketKey, commentId, *principal)) {
                 return errorResponse(404, "Comment not found");
             }
             crow::json::wvalue responseBody;
@@ -1606,11 +1606,11 @@ void registerApiRoutes(crow::SimpleApp& app,
     // project-role check -- any authenticated user may react to any comment,
     // same reasoning as watch/vote. `reactionKey` is a path segment from the
     // fixed Domain::isValidCommentReactionKey set (e.g. "thumbs_up").
-    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>/reactions")
-    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/comments/<string>/reactions")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey, const std::string& commentId) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& reaction : service->listCommentReactions(issueKey, commentId, resolvePrincipal(request, authService))) {
+            for (const auto& reaction : service->listCommentReactions(ticketKey, commentId, resolvePrincipal(request, authService))) {
                 items.emplace_back(commentReactionJson(reaction));
             }
             crow::json::wvalue body;
@@ -1625,8 +1625,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>/reactions/<string>")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId, const std::string& reactionKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/comments/<string>/reactions/<string>")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey, const std::string& commentId, const std::string& reactionKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1639,10 +1639,10 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
         try {
             // The return value only signals whether a row was newly
-            // inserted (idempotent, like watch/vote) -- an unknown issue,
+            // inserted (idempotent, like watch/vote) -- an unknown ticket,
             // comment, or reaction key throws std::invalid_argument instead
             // of returning false, so there is no not-found case to check here.
-            service->addCommentReaction(issueKey, commentId, reactionKey, *principal);
+            service->addCommentReaction(ticketKey, commentId, reactionKey, *principal);
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
@@ -1653,8 +1653,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/comments/<string>/reactions/<string>")
-    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& commentId, const std::string& reactionKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/comments/<string>/reactions/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& ticketKey, const std::string& commentId, const std::string& reactionKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1666,7 +1666,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            service->removeCommentReaction(issueKey, commentId, reactionKey, *principal);
+            service->removeCommentReaction(ticketKey, commentId, reactionKey, *principal);
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
@@ -1679,12 +1679,12 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Simplified worklogs (D12/D13): no own-vs-others permission split --
     // any project member (the same project-Member-or-above level as any
-    // other issue write) may edit or delete any worklog on the issue.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/worklogs")
-    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+    // other ticket write) may edit or delete any worklog on the ticket.
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/worklogs")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& worklog : service->listWorklogs(issueKey, resolvePrincipal(request, authService))) {
+            for (const auto& worklog : service->listWorklogs(ticketKey, resolvePrincipal(request, authService))) {
                 items.emplace_back(worklogJson(worklog));
             }
             crow::json::wvalue body;
@@ -1697,8 +1697,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/worklogs")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/worklogs")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1720,7 +1720,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body.has("timeSpentSeconds") || body["timeSpentSeconds"].t() != crow::json::type::Number) {
                 return errorResponse(400, "timeSpentSeconds must be a number");
             }
-            const auto worklog = service->addWorklog(issueKey, requiredString(body, "workDate"),
+            const auto worklog = service->addWorklog(ticketKey, requiredString(body, "workDate"),
                 body["timeSpentSeconds"].i(), optionalString(body, "comment"), *principal);
             return jsonResponse(201, worklogJson(worklog));
         } catch (const Domain::Forbidden& error) {
@@ -1732,8 +1732,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/worklogs/<string>")
-    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& worklogId) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/worklogs/<string>")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& ticketKey, const std::string& worklogId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1759,7 +1759,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
                 expectedVersion = body["expectedVersion"].i();
             }
-            auto worklog = service->editWorklog(issueKey, worklogId, requiredString(body, "workDate"),
+            auto worklog = service->editWorklog(ticketKey, worklogId, requiredString(body, "workDate"),
                 body["timeSpentSeconds"].i(), optionalString(body, "comment"), *principal, expectedVersion);
             return worklog ? jsonResponse(200, worklogJson(*worklog)) : errorResponse(404, "Worklog not found");
         } catch (const Domain::ConcurrencyConflict& error) {
@@ -1773,8 +1773,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/worklogs/<string>")
-    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& worklogId) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/worklogs/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& ticketKey, const std::string& worklogId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1786,7 +1786,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            if (!service->deleteWorklog(issueKey, worklogId, *principal)) {
+            if (!service->deleteWorklog(ticketKey, worklogId, *principal)) {
                 return errorResponse(404, "Worklog not found");
             }
             crow::json::wvalue responseBody;
@@ -1803,11 +1803,11 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Attachments (Phase 5, D15/D98-D105). Local filesystem storage only,
     // hardwired -- there is no storage-backend abstraction to route around.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/attachments")
-    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/attachments")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& attachment : service->listAttachments(issueKey, resolvePrincipal(request, authService))) {
+            for (const auto& attachment : service->listAttachments(ticketKey, resolvePrincipal(request, authService))) {
                 items.emplace_back(attachmentJson(attachment));
             }
             crow::json::wvalue body;
@@ -1821,14 +1821,14 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // multipart/form-data with a single "file" part. Fixed limits (D98, no
-    // admin configuration): 25MB/file, 20 attachments/issue, a blocked-
+    // admin configuration): 25MB/file, 20 attachments/ticket, a blocked-
     // extension denylist -- all enforced in
     // Domain::validateAttachmentUpload, not here. The whole body is read
     // into memory before that check runs (no streaming/early-abort), so an
     // oversized upload is rejected only after being fully received -- an
     // accepted V1 simplification, not a decision-driven choice.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/attachments")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/attachments")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1850,7 +1850,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             const std::string fileName = filenameParam != disposition.params.end() ? filenameParam->second : "upload";
             const auto& contentTypeHeader = filePart.get_header_object("Content-Type");
             const std::string contentType = contentTypeHeader.value.empty() ? "application/octet-stream" : contentTypeHeader.value;
-            const auto attachment = service->uploadAttachment(issueKey, fileName, contentType, filePart.body, *principal);
+            const auto attachment = service->uploadAttachment(ticketKey, fileName, contentType, filePart.body, *principal);
             return jsonResponse(201, attachmentJson(attachment));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
@@ -1865,8 +1865,8 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     // Uploader-or-project-Admin-or-above (see TicketService::deleteAttachment
     // for why this mirrors the comment edit/delete rule).
-    CROW_ROUTE(app, "/api/v1/issues/<string>/attachments/<string>")
-    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey, const std::string& attachmentId) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/attachments/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& ticketKey, const std::string& attachmentId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -1878,7 +1878,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            if (!service->deleteAttachment(issueKey, attachmentId, *principal)) {
+            if (!service->deleteAttachment(ticketKey, attachmentId, *principal)) {
                 return errorResponse(404, "Attachment not found");
             }
             crow::json::wvalue responseBody;
@@ -1893,11 +1893,11 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    // Not nested under /api/v1/issues/{key} like the routes above: a download
+    // Not nested under /api/v1/tickets/{key} like the routes above: a download
     // link (and an inline <img>/<audio>/<video>/<embed> preview src) only
     // ever needs the attachment id, e.g. when rendered from an
     // `attachment://<id>` reference inside Markdown (D100) that could be
-    // read from any comment on the issue, not just its description.
+    // read from any comment on the ticket, not just its description.
     CROW_ROUTE(app, "/api/v1/attachments/<string>/download")
     .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& attachmentId) {
         try {
@@ -1919,7 +1919,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Recycle bin (D101/D102): global-administrator-only, the same split as
-    // the issue and project recycle bins. Fixed 90-day on-demand retention
+    // the ticket and project recycle bins. Fixed 90-day on-demand retention
     // (checked inside TicketService::listDeletedAttachments, not here, not
     // a background job).
     CROW_ROUTE(app, "/api/v1/attachments/deleted")
@@ -1990,10 +1990,10 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Simple field-copy clone (D60): summary/description/type/priority/labels
-    // into a new issue in the same project, plus a clones/is-cloned-by link
+    // into a new ticket in the same project, plus a clones/is-cloned-by link
     // back to the original.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/clone")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/clone")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2005,7 +2005,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            return jsonResponse(201, issueJson(service->cloneIssue(issueKey, *principal)));
+            return jsonResponse(201, ticketJson(service->cloneTicket(ticketKey, *principal)));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -2015,10 +2015,10 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    // Simple integer manual ordering with renumbering (D31). `beforeIssueKey`
-    // omitted or null moves the issue to the end of its project.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/reorder")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    // Simple integer manual ordering with renumbering (D31). `beforeTicketKey`
+    // omitted or null moves the ticket to the end of its project.
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/reorder")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2037,8 +2037,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            const auto beforeIssueKey = optionalString(body, "beforeIssueKey");
-            return jsonResponse(200, issueJson(service->reorderIssue(issueKey, beforeIssueKey, *principal)));
+            const auto beforeTicketKey = optionalString(body, "beforeTicketKey");
+            return jsonResponse(200, ticketJson(service->reorderTicket(ticketKey, beforeTicketKey, *principal)));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -2048,13 +2048,13 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    // Move an issue to a different project (D37): no compatibility check is
+    // Move a ticket to a different project (D37): no compatibility check is
     // needed since every project shares the same fixed types/workflow/fields.
-    // Rejected if the issue has a parent or any children (see
-    // IDatabase::moveIssue). Requires project-Member-or-above on both the
+    // Rejected if the ticket has a parent or any children (see
+    // IDatabase::moveTicket). Requires project-Member-or-above on both the
     // source and target projects.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/move")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/move")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2074,7 +2074,7 @@ void registerApiRoutes(crow::SimpleApp& app,
                 return errorResponse(400, "Request body must be valid JSON");
             }
             const std::string targetProjectKey = requiredString(body, "targetProjectKey");
-            return jsonResponse(200, issueJson(service->moveIssue(issueKey, targetProjectKey, *principal)));
+            return jsonResponse(200, ticketJson(service->moveTicket(ticketKey, targetProjectKey, *principal)));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -2084,12 +2084,12 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/links")
-    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/links")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& link : service->listIssueLinks(issueKey, resolvePrincipal(request, authService))) {
-                items.emplace_back(issueLinkJson(link));
+            for (const auto& link : service->listTicketLinks(ticketKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(ticketLinkJson(link));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);
@@ -2102,11 +2102,11 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // The fixed link catalog (D17): blocks/relates_to/duplicates/clones.
-    // Both the source (`issueKey`) and target (`targetIssueKey`) projects
-    // must be accessible to the actor, since a link touches two issues that
+    // Both the source (`ticketKey`) and target (`targetTicketKey`) projects
+    // must be accessible to the actor, since a link touches two tickets that
     // may be in different projects.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/links")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/links")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2125,9 +2125,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            const std::string targetIssueKey = requiredString(body, "targetIssueKey");
+            const std::string targetTicketKey = requiredString(body, "targetTicketKey");
             const std::string linkType = requiredString(body, "linkType");
-            return jsonResponse(201, issueLinkJson(service->createIssueLink(issueKey, targetIssueKey, linkType, *principal)));
+            return jsonResponse(201, ticketLinkJson(service->createTicketLink(ticketKey, targetTicketKey, linkType, *principal)));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -2137,7 +2137,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issue-links/<string>")
+    CROW_ROUTE(app, "/api/v1/ticket-links/<string>")
     .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& linkId) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2150,7 +2150,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            if (!service->deleteIssueLink(linkId, *principal)) {
+            if (!service->deleteTicketLink(linkId, *principal)) {
                 return errorResponse(404, "Link not found");
             }
             crow::json::wvalue responseBody;
@@ -2164,12 +2164,12 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Watching and voting (D20, D79): self-service only, no project-role
-    // check -- any authenticated user may watch/vote on any issue.
-    CROW_ROUTE(app, "/api/v1/issues/<string>/watchers")
-    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+    // check -- any authenticated user may watch/vote on any ticket.
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/watchers")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& user : service->listWatchers(issueKey, resolvePrincipal(request, authService))) {
+            for (const auto& user : service->listWatchers(ticketKey, resolvePrincipal(request, authService))) {
                 items.emplace_back(userJson(user));
             }
             crow::json::wvalue body;
@@ -2182,8 +2182,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/watch")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/watch")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2195,7 +2195,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            service->watchIssue(issueKey, *principal);
+            service->watchTicket(ticketKey, *principal);
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
@@ -2206,8 +2206,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/watch")
-    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/watch")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2219,7 +2219,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            service->unwatchIssue(issueKey, *principal);
+            service->unwatchTicket(ticketKey, *principal);
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
@@ -2228,11 +2228,11 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/voters")
-    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/voters")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey) {
         try {
             crow::json::wvalue::list items;
-            for (const auto& user : service->listVoters(issueKey, resolvePrincipal(request, authService))) {
+            for (const auto& user : service->listVoters(ticketKey, resolvePrincipal(request, authService))) {
                 items.emplace_back(userJson(user));
             }
             crow::json::wvalue body;
@@ -2245,8 +2245,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/vote")
-    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/vote")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2258,7 +2258,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            service->voteIssue(issueKey, *principal);
+            service->voteTicket(ticketKey, *principal);
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
@@ -2269,8 +2269,8 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/<string>/vote")
-    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& issueKey) {
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/vote")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& ticketKey) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
             return errorResponse(401, "Not authenticated");
@@ -2282,7 +2282,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            service->unvoteIssue(issueKey, *principal);
+            service->unvoteTicket(ticketKey, *principal);
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
@@ -2292,11 +2292,11 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // Simple bulk actions (D36): one action kind per call, applied
-    // independently per issue -- {"succeeded": [...], "failed": [...]}
+    // independently per ticket -- {"succeeded": [...], "failed": [...]}
     // reports which keys went through, since a partial failure does not
     // roll back the ones that already succeeded. No cross-project move and
     // no type change in bulk (D36 explicitly excludes both).
-    CROW_ROUTE(app, "/api/v1/issues/bulk/status")
+    CROW_ROUTE(app, "/api/v1/tickets/bulk/status")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2316,10 +2316,10 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            const auto issueKeys = requiredIssueKeys(body);
+            const auto ticketKeys = requiredTicketKeys(body);
             const std::string statusKey = requiredString(body, "statusKey");
             const auto resolution = optionalString(body, "resolution");
-            return jsonResponse(200, bulkActionResultJson(service->bulkChangeStatus(issueKeys, statusKey, resolution, *principal)));
+            return jsonResponse(200, bulkActionResultJson(service->bulkChangeStatus(ticketKeys, statusKey, resolution, *principal)));
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
@@ -2327,7 +2327,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/bulk/assign")
+    CROW_ROUTE(app, "/api/v1/tickets/bulk/assign")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2347,9 +2347,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            const auto issueKeys = requiredIssueKeys(body);
+            const auto ticketKeys = requiredTicketKeys(body);
             const auto assigneeEmail = optionalString(body, "assigneeEmail");
-            return jsonResponse(200, bulkActionResultJson(service->bulkAssign(issueKeys, assigneeEmail, *principal)));
+            return jsonResponse(200, bulkActionResultJson(service->bulkAssign(ticketKeys, assigneeEmail, *principal)));
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
@@ -2357,7 +2357,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/bulk/label")
+    CROW_ROUTE(app, "/api/v1/tickets/bulk/label")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2377,9 +2377,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            const auto issueKeys = requiredIssueKeys(body);
+            const auto ticketKeys = requiredTicketKeys(body);
             const std::string label = requiredString(body, "label");
-            return jsonResponse(200, bulkActionResultJson(service->bulkAddLabel(issueKeys, label, *principal)));
+            return jsonResponse(200, bulkActionResultJson(service->bulkAddLabel(ticketKeys, label, *principal)));
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
@@ -2387,7 +2387,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
-    CROW_ROUTE(app, "/api/v1/issues/bulk/delete")
+    CROW_ROUTE(app, "/api/v1/tickets/bulk/delete")
     .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);
         if (!principal) {
@@ -2407,8 +2407,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            const auto issueKeys = requiredIssueKeys(body);
-            return jsonResponse(200, bulkActionResultJson(service->bulkDelete(issueKeys, *principal)));
+            const auto ticketKeys = requiredTicketKeys(body);
+            return jsonResponse(200, bulkActionResultJson(service->bulkDelete(ticketKeys, *principal)));
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
@@ -2420,28 +2420,28 @@ void registerApiRoutes(crow::SimpleApp& app,
         try {
             const auto stats = service->dashboard(resolvePrincipal(request, authService));
             crow::json::wvalue body;
-            body["totalIssues"] = stats.totalIssues;
-            body["todoIssues"] = stats.todoIssues;
-            body["inProgressIssues"] = stats.inProgressIssues;
-            body["doneIssues"] = stats.doneIssues;
+            body["totalTickets"] = stats.totalTickets;
+            body["todoTickets"] = stats.todoTickets;
+            body["inProgressTickets"] = stats.inProgressTickets;
+            body["doneTickets"] = stats.doneTickets;
             crow::json::wvalue::list recent;
-            for (const auto& issue : stats.recentIssues) {
-                recent.emplace_back(issueJson(issue));
+            for (const auto& ticket : stats.recentTickets) {
+                recent.emplace_back(ticketJson(ticket));
             }
-            body["recentIssues"] = std::move(recent);
+            body["recentTickets"] = std::move(recent);
             crow::json::wvalue::list assignedToMe;
-            for (const auto& issue : stats.assignedToMe) {
-                assignedToMe.emplace_back(issueJson(issue));
+            for (const auto& ticket : stats.assignedToMe) {
+                assignedToMe.emplace_back(ticketJson(ticket));
             }
             body["assignedToMe"] = std::move(assignedToMe);
-            crow::json::wvalue::list watchedIssues;
-            for (const auto& issue : stats.watchedIssues) {
-                watchedIssues.emplace_back(issueJson(issue));
+            crow::json::wvalue::list watchedTickets;
+            for (const auto& ticket : stats.watchedTickets) {
+                watchedTickets.emplace_back(ticketJson(ticket));
             }
-            body["watchedIssues"] = std::move(watchedIssues);
+            body["watchedTickets"] = std::move(watchedTickets);
             crow::json::wvalue::list upcomingDeadlines;
-            for (const auto& issue : stats.upcomingDeadlines) {
-                upcomingDeadlines.emplace_back(issueJson(issue));
+            for (const auto& ticket : stats.upcomingDeadlines) {
+                upcomingDeadlines.emplace_back(ticketJson(ticket));
             }
             body["upcomingDeadlines"] = std::move(upcomingDeadlines);
             return jsonResponse(200, std::move(body));
@@ -2453,7 +2453,7 @@ void registerApiRoutes(crow::SimpleApp& app,
     });
 
     // User directory (D80): backs @mention autocomplete. Requires a session
-    // -- unlike issue reads, this is never available to an anonymous caller
+    // -- unlike ticket reads, this is never available to an anonymous caller
     // even when the installation-wide anonymous-read toggle is on.
     CROW_ROUTE(app, "/api/v1/users")([service, authService](const crow::request& request) {
         const auto principal = resolvePrincipal(request, authService);

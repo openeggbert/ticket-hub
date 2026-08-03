@@ -6,7 +6,7 @@ is [docs/REDUCED_SCOPE_ROADMAP.md](docs/REDUCED_SCOPE_ROADMAP.md) (the original
 snapshot status line, kept in sync at each milestone boundary -- see `NEXT.md` for full batch-by-batch
 detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
-## Current status (2026-08-02)
+## Current status (2026-08-03)
 
 **The entire reduced-scope V1 roadmap (`docs/REDUCED_SCOPE_ROADMAP.md`, Milestones 1-4 / Phases 1-8) is
 now complete**, including its Phase 8 exit gate (`docker compose up` produces a usable, documented
@@ -85,7 +85,19 @@ remains only as optional, non-roadmap follow-up.
   same app shell as `/`, plus `history.pushState`/`popstate` URL syncing in `web/app.js` (guarded to avoid
   duplicate history entries on repeated opens of the same issue). No backend/schema changes beyond the
   route. Browser-verified with Playwright/Chromium across logged-out deep links, reloads, Back/Forward,
-  and an unknown-key error path. **There is currently no further queued work.**
+  and an unknown-key error path.
+- **Post-V1, batch 6.** The user asked to rename "issue" to "ticket" everywhere -- UI and database tables
+  -- and, asked to clarify whether that should also cover REST API paths and internal C++/CSS naming,
+  chose the fully comprehensive option. New migration `016_ticket_terminology.sql` (both backends) renames
+  every `issue*` table/column/index (plus, on PostgreSQL, the auto-generated constraint names a table/
+  column rename doesn't touch on its own); every C++ type/method/identifier, REST route, JSON field, CSS
+  class, and user-facing UI string was renamed to match. `docs/SCHEMA.md`/`docs/SCOPE.md`/`README.md`'s
+  current-state sections were updated in place; historical batch narratives (this file's entries above,
+  `NEXT.md`, `CHANGELOG.md`, `docs/VERIFICATION.md`) were left as written, with a new dated entry added to
+  each instead. Verified end-to-end against fresh live PostgreSQL and SQLite databases (zero remaining
+  "issue"-named schema objects), a live HTTP smoke test, and a full Playwright/Chromium pass confirming no
+  leftover "Issue" text in the UI and that creating a ticket still works. **There is currently no further
+  queued work.**
 
 ## Implementation rules
 

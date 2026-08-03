@@ -147,39 +147,39 @@ Domain::User readUser(PGresult* result, int row) {
 constexpr const char* UserSelect =
     "SELECT id, email, display_name, handle, time_zone, clock_format, active, is_admin, created_at::text FROM users";
 
-Domain::Issue readIssue(PGresult* result, int row) {
-    Domain::Issue issue;
-    issue.id = value(result, row, 0);
-    issue.key = value(result, row, 1);
-    issue.number = int64Value(result, row, 2);
-    issue.projectKey = value(result, row, 3);
-    issue.projectName = value(result, row, 4);
-    issue.summary = value(result, row, 5);
-    issue.description = value(result, row, 6);
-    issue.type = {value(result, row, 7), value(result, row, 8), value(result, row, 9), value(result, row, 10)};
-    issue.status = {value(result, row, 11), value(result, row, 12), value(result, row, 13), intValue(result, row, 14)};
-    issue.priority = {value(result, row, 15), value(result, row, 16), intValue(result, row, 17), value(result, row, 18)};
-    issue.reporter = readUserSummary(result, row, 19);
+Domain::Ticket readTicket(PGresult* result, int row) {
+    Domain::Ticket ticket;
+    ticket.id = value(result, row, 0);
+    ticket.key = value(result, row, 1);
+    ticket.number = int64Value(result, row, 2);
+    ticket.projectKey = value(result, row, 3);
+    ticket.projectName = value(result, row, 4);
+    ticket.summary = value(result, row, 5);
+    ticket.description = value(result, row, 6);
+    ticket.type = {value(result, row, 7), value(result, row, 8), value(result, row, 9), value(result, row, 10)};
+    ticket.status = {value(result, row, 11), value(result, row, 12), value(result, row, 13), intValue(result, row, 14)};
+    ticket.priority = {value(result, row, 15), value(result, row, 16), intValue(result, row, 17), value(result, row, 18)};
+    ticket.reporter = readUserSummary(result, row, 19);
     if (PQgetisnull(result, row, 22) == 0) {
-        issue.assignee = readUserSummary(result, row, 22);
+        ticket.assignee = readUserSummary(result, row, 22);
     }
-    issue.parentIssueKey = optionalValue(result, row, 25);
+    ticket.parentTicketKey = optionalValue(result, row, 25);
     if (PQgetisnull(result, row, 26) == 0) {
-        issue.storyPoints = std::stod(value(result, row, 26));
+        ticket.storyPoints = std::stod(value(result, row, 26));
     }
-    issue.dueDate = optionalValue(result, row, 27);
-    issue.labels = splitLabels(value(result, row, 28));
-    issue.createdAt = value(result, row, 29);
-    issue.updatedAt = value(result, row, 30);
-    issue.version = int64Value(result, row, 31);
-    issue.resolution = optionalValue(result, row, 32);
-    issue.rankOrder = int64Value(result, row, 33);
-    return issue;
+    ticket.dueDate = optionalValue(result, row, 27);
+    ticket.labels = splitLabels(value(result, row, 28));
+    ticket.createdAt = value(result, row, 29);
+    ticket.updatedAt = value(result, row, 30);
+    ticket.version = int64Value(result, row, 31);
+    ticket.resolution = optionalValue(result, row, 32);
+    ticket.rankOrder = int64Value(result, row, 33);
+    return ticket;
 }
 
-constexpr const char* IssueSelect = R"SQL(
+constexpr const char* TicketSelect = R"SQL(
 SELECT
-    i.id, i.issue_key, i.issue_number,
+    i.id, i.ticket_key, i.ticket_number,
     p.project_key, p.name,
     i.summary, i.description,
     it.type_key, it.name, it.icon, it.color,
@@ -187,22 +187,22 @@ SELECT
     pr.priority_key, pr.name, pr.rank, pr.color,
     reporter.id, reporter.display_name, reporter.email,
     assignee.id, assignee.display_name, assignee.email,
-    parent.issue_key,
+    parent.ticket_key,
     i.story_points, i.due_date::text,
     labels.names,
     i.created_at::text, i.updated_at::text, i.version, i.resolution, i.rank_order
-FROM issues i
+FROM tickets i
 JOIN projects p ON p.id = i.project_id
-JOIN issue_types it ON it.id = i.issue_type_id
-JOIN issue_statuses s ON s.id = i.status_id
+JOIN ticket_types it ON it.id = i.ticket_type_id
+JOIN ticket_statuses s ON s.id = i.status_id
 JOIN priorities pr ON pr.id = i.priority_id
 JOIN users reporter ON reporter.id = i.reporter_user_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
-LEFT JOIN issues parent ON parent.id = i.parent_issue_id
+LEFT JOIN tickets parent ON parent.id = i.parent_ticket_id
 LEFT JOIN LATERAL (
     SELECT COALESCE(string_agg(l.name, ',' ORDER BY l.name), '') AS names
-    FROM issue_labels il JOIN labels l ON l.id = il.label_id
-    WHERE il.issue_id = i.id
+    FROM ticket_labels il JOIN labels l ON l.id = il.label_id
+    WHERE il.ticket_id = i.id
 ) labels ON TRUE
 )SQL";
 
@@ -224,15 +224,15 @@ std::string requireUserId(PGconn* connection, const std::string& userId) {
     return lookupId(connection, "users", "id", userId);
 }
 
-std::string lookupIssueId(PGconn* connection, const std::string& issueKey) {
+std::string lookupTicketId(PGconn* connection, const std::string& ticketKey) {
     auto result = execParams(connection, R"SQL(
 SELECT i.id
-FROM issues i
+FROM tickets i
 WHERE i.deleted_at IS NULL
-  AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
-)SQL", {issueKey}, "Lookup issue");
+  AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
+)SQL", {ticketKey}, "Lookup ticket");
     if (PQntuples(result.get()) != 1) {
-        throw std::invalid_argument("Unknown issue key: " + issueKey);
+        throw std::invalid_argument("Unknown ticket key: " + ticketKey);
     }
     return value(result.get(), 0, 0);
 }
@@ -240,7 +240,7 @@ WHERE i.deleted_at IS NULL
 Domain::Comment readComment(PGresult* result, int row) {
     Domain::Comment comment;
     comment.id = value(result, row, 0);
-    comment.issueId = value(result, row, 1);
+    comment.ticketId = value(result, row, 1);
     comment.author = readUserSummary(result, row, 2);
     comment.body = value(result, row, 5);
     comment.createdAt = value(result, row, 6);
@@ -251,7 +251,7 @@ Domain::Comment readComment(PGresult* result, int row) {
 }
 
 constexpr const char* CommentSelect = R"SQL(
-SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
+SELECT c.id, c.ticket_id, u.id, u.display_name, u.email,
        c.body, c.created_at::text, c.updated_at::text, c.version, c.edited_at::text
 FROM comments c JOIN users u ON u.id = c.author_user_id
 )SQL";
@@ -259,7 +259,7 @@ FROM comments c JOIN users u ON u.id = c.author_user_id
 Domain::Worklog readWorklog(PGresult* result, int row) {
     Domain::Worklog worklog;
     worklog.id = value(result, row, 0);
-    worklog.issueId = value(result, row, 1);
+    worklog.ticketId = value(result, row, 1);
     worklog.author = readUserSummary(result, row, 2);
     worklog.workDate = value(result, row, 5);
     worklog.timeSpentSeconds = int64Value(result, row, 6);
@@ -271,7 +271,7 @@ Domain::Worklog readWorklog(PGresult* result, int row) {
 }
 
 constexpr const char* WorklogSelect = R"SQL(
-SELECT w.id, w.issue_id, u.id, u.display_name, u.email,
+SELECT w.id, w.ticket_id, u.id, u.display_name, u.email,
        w.work_date::text, w.time_spent_seconds, w.comment, w.created_at::text, w.updated_at::text, w.version
 FROM worklogs w JOIN users u ON u.id = w.author_user_id
 )SQL";
@@ -279,7 +279,7 @@ FROM worklogs w JOIN users u ON u.id = w.author_user_id
 Domain::Attachment readAttachment(PGresult* result, int row) {
     Domain::Attachment attachment;
     attachment.id = value(result, row, 0);
-    attachment.issueId = value(result, row, 1);
+    attachment.ticketId = value(result, row, 1);
     attachment.uploader = readUserSummary(result, row, 2);
     attachment.fileName = value(result, row, 5);
     attachment.contentType = value(result, row, 6);
@@ -287,14 +287,14 @@ Domain::Attachment readAttachment(PGresult* result, int row) {
     attachment.sha256 = value(result, row, 8);
     attachment.createdAt = value(result, row, 9);
     attachment.deletedAt = optionalValue(result, row, 10);
-    attachment.issueKey = value(result, row, 11);
+    attachment.ticketKey = value(result, row, 11);
     return attachment;
 }
 
 constexpr const char* AttachmentSelect = R"SQL(
-SELECT a.id, a.issue_id, u.id, u.display_name, u.email,
-       a.file_name, a.content_type, a.byte_size, a.sha256, a.created_at::text, a.deleted_at::text, i.issue_key
-FROM attachments a JOIN users u ON u.id = a.uploader_user_id JOIN issues i ON i.id = a.issue_id
+SELECT a.id, a.ticket_id, u.id, u.display_name, u.email,
+       a.file_name, a.content_type, a.byte_size, a.sha256, a.created_at::text, a.deleted_at::text, i.ticket_key
+FROM attachments a JOIN users u ON u.id = a.uploader_user_id JOIN tickets i ON i.id = a.ticket_id
 )SQL";
 
 Domain::AuditEvent readAuditEvent(PGresult* result, int row) {
@@ -334,7 +334,7 @@ Domain::BoardColumn readBoardColumn(PGresult* result, int row) {
 
 constexpr const char* BoardColumnSelect = R"SQL(
 SELECT bc.id, s.status_key, s.name, bc.sort_order, bc.wip_limit
-FROM board_columns bc JOIN issue_statuses s ON s.id = bc.status_id
+FROM board_columns bc JOIN ticket_statuses s ON s.id = bc.status_id
 ORDER BY bc.sort_order
 )SQL";
 
@@ -752,14 +752,14 @@ namespace {
 constexpr const char* ProjectSelectSql = R"SQL(
 SELECT p.id, p.project_key, p.name, p.description,
        lead.id, lead.display_name, lead.email,
-       counts.issue_count, counts.open_issue_count,
+       counts.ticket_count, counts.open_ticket_count,
        p.archived
 FROM projects p
 LEFT JOIN users lead ON lead.id = p.lead_user_id
 LEFT JOIN LATERAL (
-    SELECT COUNT(i.id) AS issue_count,
-           COUNT(i.id) FILTER (WHERE s.category <> 'done') AS open_issue_count
-    FROM issues i JOIN issue_statuses s ON s.id = i.status_id
+    SELECT COUNT(i.id) AS ticket_count,
+           COUNT(i.id) FILTER (WHERE s.category <> 'done') AS open_ticket_count
+    FROM tickets i JOIN ticket_statuses s ON s.id = i.status_id
     WHERE i.project_id = p.id AND i.deleted_at IS NULL
 ) counts ON TRUE
 )SQL";
@@ -773,8 +773,8 @@ Domain::Project readProject(PGresult* result, int row) {
     if (PQgetisnull(result, row, 4) == 0) {
         project.lead = readUserSummary(result, row, 4);
     }
-    project.issueCount = int64Value(result, row, 7);
-    project.openIssueCount = int64Value(result, row, 8);
+    project.ticketCount = int64Value(result, row, 7);
+    project.openTicketCount = int64Value(result, row, 8);
     project.archived = boolValue(result, row, 9);
     return project;
 }
@@ -809,7 +809,7 @@ Domain::Project PostgresDatabase::createProject(const Domain::CreateProjectReque
         }
 
         execParams(connection.get(), R"SQL(
-INSERT INTO projects(id, project_key, name, description, lead_user_id, next_issue_number, archived, created_at, updated_at)
+INSERT INTO projects(id, project_key, name, description, lead_user_id, next_ticket_number, archived, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, 1, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL",
                    {projectId, request.key, request.name, request.description, creatorUserId},
@@ -912,20 +912,20 @@ ON CONFLICT (setting_key) DO UPDATE SET value = EXCLUDED.value, updated_at = CUR
                {key, value}, "Set installation setting");
 }
 
-// --- Issue tracker ---
+// --- Ticket tracker ---
 
 std::vector<Domain::Project> PostgresDatabase::listProjects() {
     auto connection = connect(connectionString_);
     auto result = exec(connection.get(), R"SQL(
 SELECT p.id, p.project_key, p.name, p.description,
        lead.id, lead.display_name, lead.email,
-       counts.issue_count, counts.open_issue_count
+       counts.ticket_count, counts.open_ticket_count
 FROM projects p
 LEFT JOIN users lead ON lead.id = p.lead_user_id
 LEFT JOIN LATERAL (
-    SELECT COUNT(i.id) AS issue_count,
-           COUNT(i.id) FILTER (WHERE s.category <> 'done') AS open_issue_count
-    FROM issues i JOIN issue_statuses s ON s.id = i.status_id
+    SELECT COUNT(i.id) AS ticket_count,
+           COUNT(i.id) FILTER (WHERE s.category <> 'done') AS open_ticket_count
+    FROM tickets i JOIN ticket_statuses s ON s.id = i.status_id
     WHERE i.project_id = p.id
 ) counts ON TRUE
 WHERE p.archived = FALSE AND p.deleted_at IS NULL
@@ -942,20 +942,20 @@ ORDER BY p.name
         if (PQgetisnull(result.get(), row, 4) == 0) {
             project.lead = readUserSummary(result.get(), row, 4);
         }
-        project.issueCount = int64Value(result.get(), row, 7);
-        project.openIssueCount = int64Value(result.get(), row, 8);
+        project.ticketCount = int64Value(result.get(), row, 7);
+        project.openTicketCount = int64Value(result.get(), row, 8);
         projects.push_back(std::move(project));
     }
     return projects;
 }
 
-std::vector<Domain::Issue> PostgresDatabase::listIssues(const Domain::IssueFilter& filter) {
+std::vector<Domain::Ticket> PostgresDatabase::listTickets(const Domain::TicketFilter& filter) {
     auto connection = connect(connectionString_);
     // `label` is checked via EXISTS rather than the already-aggregated `labels`
     // LATERAL join (which feeds the label-list summary column) -- filtering on
     // the joined row directly would restrict that aggregate to only the
-    // matching label instead of the issue's full label list.
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    // matching label instead of the ticket's full label list.
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
   AND ($1::text IS NULL OR p.project_key = $1)
@@ -965,33 +965,33 @@ WHERE i.deleted_at IS NULL
   AND ($5::text IS NULL OR assignee.email = $5)
   AND ($6::text IS NULL OR i.due_date <= $6::date)
   AND ($7::text IS NULL OR EXISTS (
-        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
-        WHERE il2.issue_id = i.id AND l2.name ILIKE $7))
-  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.issue_key ILIKE $8)
-ORDER BY i.updated_at DESC, i.issue_key DESC
+        SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
+  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
+ORDER BY i.updated_at DESC, i.ticket_key DESC
 LIMIT 200
 )SQL";
     auto result = execParams(connection.get(),
                              sql,
                              {filter.projectKey,
                               filter.statusKey,
-                              filter.issueTypeKey,
+                              filter.ticketTypeKey,
                               filter.priorityKey,
                               filter.assigneeEmail,
                               filter.dueBefore,
                               filter.label,
                               filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt},
-                             "List issues");
-    std::vector<Domain::Issue> issues;
+                             "List tickets");
+    std::vector<Domain::Ticket> tickets;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
-        issues.push_back(readIssue(result.get(), row));
+        tickets.push_back(readTicket(result.get(), row));
     }
-    return issues;
+    return tickets;
 }
 
-std::vector<Domain::Issue> PostgresDatabase::listIssues(const Domain::IssueFilter& filter, int limit, int offset) {
+std::vector<Domain::Ticket> PostgresDatabase::listTickets(const Domain::TicketFilter& filter, int limit, int offset) {
     auto connection = connect(connectionString_);
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
   AND ($1::text IS NULL OR p.project_key = $1)
@@ -1001,17 +1001,17 @@ WHERE i.deleted_at IS NULL
   AND ($5::text IS NULL OR assignee.email = $5)
   AND ($6::text IS NULL OR i.due_date <= $6::date)
   AND ($7::text IS NULL OR EXISTS (
-        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
-        WHERE il2.issue_id = i.id AND l2.name ILIKE $7))
-  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.issue_key ILIKE $8)
-ORDER BY i.updated_at DESC, i.issue_key DESC
+        SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
+  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
+ORDER BY i.updated_at DESC, i.ticket_key DESC
 LIMIT $9::int OFFSET $10::int
 )SQL";
     auto result = execParams(connection.get(),
                              sql,
                              {filter.projectKey,
                               filter.statusKey,
-                              filter.issueTypeKey,
+                              filter.ticketTypeKey,
                               filter.priorityKey,
                               filter.assigneeEmail,
                               filter.dueBefore,
@@ -1019,22 +1019,22 @@ LIMIT $9::int OFFSET $10::int
                               filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt,
                               std::optional<std::string>(std::to_string(limit)),
                               std::optional<std::string>(std::to_string(offset))},
-                             "List issues (paginated)");
-    std::vector<Domain::Issue> issues;
+                             "List tickets (paginated)");
+    std::vector<Domain::Ticket> tickets;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
-        issues.push_back(readIssue(result.get(), row));
+        tickets.push_back(readTicket(result.get(), row));
     }
-    return issues;
+    return tickets;
 }
 
-std::int64_t PostgresDatabase::countIssues(const Domain::IssueFilter& filter) {
+std::int64_t PostgresDatabase::countTickets(const Domain::TicketFilter& filter) {
     auto connection = connect(connectionString_);
     const std::string sql = R"SQL(
 SELECT COUNT(*)
-FROM issues i
+FROM tickets i
 JOIN projects p ON p.id = i.project_id
-JOIN issue_types it ON it.id = i.issue_type_id
-JOIN issue_statuses s ON s.id = i.status_id
+JOIN ticket_types it ON it.id = i.ticket_type_id
+JOIN ticket_statuses s ON s.id = i.status_id
 JOIN priorities pr ON pr.id = i.priority_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
 WHERE i.deleted_at IS NULL
@@ -1046,60 +1046,60 @@ WHERE i.deleted_at IS NULL
   AND ($5::text IS NULL OR assignee.email = $5)
   AND ($6::text IS NULL OR i.due_date <= $6::date)
   AND ($7::text IS NULL OR EXISTS (
-        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
-        WHERE il2.issue_id = i.id AND l2.name ILIKE $7))
-  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.issue_key ILIKE $8)
+        SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
+  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
 )SQL";
     auto result = execParams(connection.get(),
                              sql,
                              {filter.projectKey,
                               filter.statusKey,
-                              filter.issueTypeKey,
+                              filter.ticketTypeKey,
                               filter.priorityKey,
                               filter.assigneeEmail,
                               filter.dueBefore,
                               filter.label,
                               filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt},
-                             "Count issues");
+                             "Count tickets");
     if (PQntuples(result.get()) == 0) {
         return 0;
     }
     return int64Value(result.get(), 0, 0);
 }
 
-std::optional<Domain::Issue> PostgresDatabase::findIssueByKey(const std::string& issueKey) {
+std::optional<Domain::Ticket> PostgresDatabase::findTicketByKey(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
-    auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))", {issueKey}, "Find issue");
+    auto result = execParams(connection.get(), std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))", {ticketKey}, "Find ticket");
     if (PQntuples(result.get()) == 0) {
         return std::nullopt;
     }
-    return readIssue(result.get(), 0);
+    return readTicket(result.get(), 0);
 }
 
-Domain::Issue PostgresDatabase::createIssue(const Domain::CreateIssueRequest& request,
+Domain::Ticket PostgresDatabase::createTicket(const Domain::CreateTicketRequest& request,
                                             const std::string& reporterUserId) {
     auto connection = connect(connectionString_);
-    exec(connection.get(), "BEGIN", "Begin create issue transaction");
+    exec(connection.get(), "BEGIN", "Begin create ticket transaction");
     try {
         auto project = execParams(connection.get(),
-                                  "SELECT id, next_issue_number FROM projects WHERE project_key = $1 AND archived = FALSE AND deleted_at IS NULL FOR UPDATE",
+                                  "SELECT id, next_ticket_number FROM projects WHERE project_key = $1 AND archived = FALSE AND deleted_at IS NULL FOR UPDATE",
                                   {request.projectKey},
                                   "Lock project");
         if (PQntuples(project.get()) != 1) {
             throw std::invalid_argument("Unknown project: " + request.projectKey);
         }
         const std::string projectId = value(project.get(), 0, 0);
-        const std::int64_t issueNumber = int64Value(project.get(), 0, 1);
-        const std::string issueKey = request.projectKey + "-" + std::to_string(issueNumber);
+        const std::int64_t ticketNumber = int64Value(project.get(), 0, 1);
+        const std::string ticketKey = request.projectKey + "-" + std::to_string(ticketNumber);
 
         execParams(connection.get(),
-                   "UPDATE projects SET next_issue_number = next_issue_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                   "UPDATE projects SET next_ticket_number = next_ticket_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                    {projectId},
-                   "Increment project issue counter");
+                   "Increment project ticket counter");
 
-        const std::string issueId = Common::uuidV4();
-        const std::string issueTypeId = lookupId(connection.get(), "issue_types", "type_key", request.issueTypeKey);
-        const std::string statusId = lookupId(connection.get(), "issue_statuses", "status_key", "backlog");
+        const std::string ticketId = Common::uuidV4();
+        const std::string ticketTypeId = lookupId(connection.get(), "ticket_types", "type_key", request.ticketTypeKey);
+        const std::string statusId = lookupId(connection.get(), "ticket_statuses", "status_key", "backlog");
         const std::string priorityId = lookupId(connection.get(), "priorities", "priority_key", request.priorityKey);
         const std::string reporterId = requireUserId(connection.get(), reporterUserId);
         std::optional<std::string> assigneeId;
@@ -1107,34 +1107,34 @@ Domain::Issue PostgresDatabase::createIssue(const Domain::CreateIssueRequest& re
             assigneeId = lookupId(connection.get(), "users", "email", *request.assigneeEmail);
         }
         std::optional<std::string> parentId;
-        if (request.parentIssueKey && !request.parentIssueKey->empty()) {
-            parentId = lookupIssueId(connection.get(), *request.parentIssueKey);
+        if (request.parentTicketKey && !request.parentTicketKey->empty()) {
+            parentId = lookupTicketId(connection.get(), *request.parentTicketKey);
         }
 
-        // Simple integer manual order (D31): new issues are appended after
+        // Simple integer manual order (D31): new tickets are appended after
         // the highest existing rank within their project. The project row is
         // already FOR-UPDATE-locked above, which serializes this alongside
         // concurrent creates in the same project.
         auto maxRank = execParams(connection.get(),
-                                  "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM issues WHERE project_id = $1 AND deleted_at IS NULL",
+                                  "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM tickets WHERE project_id = $1 AND deleted_at IS NULL",
                                   {projectId},
                                   "Compute next rank order");
         const std::int64_t rankOrder = int64Value(maxRank.get(), 0, 0);
 
         execParams(connection.get(), R"SQL(
-INSERT INTO issues(id, project_id, issue_number, issue_key, summary, description,
-                   issue_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
-                   parent_issue_id, story_points, due_date, rank_order, created_at, updated_at)
+INSERT INTO tickets(id, project_id, ticket_number, ticket_key, summary, description,
+                   ticket_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
+                   parent_ticket_id, story_points, due_date, rank_order, created_at, updated_at)
 VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
         $12, $13::double precision, $14::date, $15::bigint, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL",
-                   {issueId,
+                   {ticketId,
                     projectId,
-                    std::to_string(issueNumber),
-                    issueKey,
+                    std::to_string(ticketNumber),
+                    ticketKey,
                     request.summary,
                     request.description,
-                    issueTypeId,
+                    ticketTypeId,
                     statusId,
                     priorityId,
                     reporterId,
@@ -1143,7 +1143,7 @@ VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
                     request.storyPoints ? std::optional<std::string>(std::to_string(*request.storyPoints)) : std::nullopt,
                     request.dueDate,
                     std::to_string(rankOrder)},
-                   "Insert issue");
+                   "Insert ticket");
 
         for (const auto& labelName : request.labels) {
             execParams(connection.get(),
@@ -1151,30 +1151,30 @@ VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
                        {Common::uuidV4(), labelName},
                        "Insert label");
             execParams(connection.get(), R"SQL(
-INSERT INTO issue_labels(issue_id, label_id)
+INSERT INTO ticket_labels(ticket_id, label_id)
 SELECT $1, id FROM labels WHERE name = $2
 ON CONFLICT DO NOTHING
 )SQL",
-                       {issueId, labelName},
+                       {ticketId, labelName},
                        "Link label");
         }
 
-        exec(connection.get(), "COMMIT", "Commit create issue transaction");
-        auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))", {issueKey}, "Read created issue");
+        exec(connection.get(), "COMMIT", "Commit create ticket transaction");
+        auto result = execParams(connection.get(), std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))", {ticketKey}, "Read created ticket");
         if (PQntuples(result.get()) != 1) {
-            throw std::runtime_error("Created issue could not be read back");
+            throw std::runtime_error("Created ticket could not be read back");
         }
-        return readIssue(result.get(), 0);
+        return readTicket(result.get(), 0);
     } catch (...) {
         try {
-            exec(connection.get(), "ROLLBACK", "Rollback create issue transaction");
+            exec(connection.get(), "ROLLBACK", "Rollback create ticket transaction");
         } catch (...) {
         }
         throw;
     }
 }
 
-bool PostgresDatabase::changeIssueStatus(const std::string& issueKey,
+bool PostgresDatabase::changeTicketStatus(const std::string& ticketKey,
                                          const std::string& statusKey,
                                          const std::string& actorUserId,
                                          const std::optional<std::string> resolution,
@@ -1184,23 +1184,23 @@ bool PostgresDatabase::changeIssueStatus(const std::string& issueKey,
     try {
         auto current = execParams(connection.get(), R"SQL(
 SELECT i.id, s.status_key, s.category, i.version
-FROM issues i JOIN issue_statuses s ON s.id = i.status_id
+FROM tickets i JOIN ticket_statuses s ON s.id = i.status_id
 WHERE i.deleted_at IS NULL
-  AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
+  AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
 FOR UPDATE OF i
 )SQL",
-                                  {issueKey},
-                                  "Lock issue");
+                                  {ticketKey},
+                                  "Lock ticket");
         if (PQntuples(current.get()) == 0) {
-            exec(connection.get(), "ROLLBACK", "Rollback missing issue transaction");
+            exec(connection.get(), "ROLLBACK", "Rollback missing ticket transaction");
             return false;
         }
-        const std::string issueId = value(current.get(), 0, 0);
+        const std::string ticketId = value(current.get(), 0, 0);
         const std::string oldStatus = value(current.get(), 0, 1);
         const std::string oldCategory = value(current.get(), 0, 2);
         const std::int64_t currentVersion = int64Value(current.get(), 0, 3);
         if (expectedVersion && *expectedVersion != currentVersion) {
-            throw Domain::ConcurrencyConflict("Issue was modified by another user");
+            throw Domain::ConcurrencyConflict("Ticket was modified by another user");
         }
         if (oldStatus == statusKey) {
             exec(connection.get(), "COMMIT", "Commit unchanged status transaction");
@@ -1208,17 +1208,17 @@ FOR UPDATE OF i
         }
 
         auto targetStatus = execParams(connection.get(),
-                                       "SELECT id, category FROM issue_statuses WHERE status_key = $1",
+                                       "SELECT id, category FROM ticket_statuses WHERE status_key = $1",
                                        {statusKey},
                                        "Lookup target status");
         if (PQntuples(targetStatus.get()) != 1) {
-            throw std::invalid_argument("Unknown issue_statuses key: " + statusKey);
+            throw std::invalid_argument("Unknown ticket_statuses key: " + statusKey);
         }
         const std::string statusId = value(targetStatus.get(), 0, 0);
         const std::string targetCategory = value(targetStatus.get(), 0, 1);
         const std::string actorId = requireUserId(connection.get(), actorUserId);
 
-        // The fixed workflow rules (D68-D70): completing an issue requires a
+        // The fixed workflow rules (D68-D70): completing a ticket requires a
         // resolution and is blocked while any sub-task is unfinished;
         // reopening (leaving Done) always clears resolution and never
         // cascades to sub-tasks; any other transition leaves resolution
@@ -1234,15 +1234,15 @@ FOR UPDATE OF i
             }
             auto unfinishedChild = execParams(connection.get(), R"SQL(
 SELECT 1
-FROM issues child
-JOIN issue_statuses cs ON cs.id = child.status_id
-WHERE child.parent_issue_id = $1 AND child.deleted_at IS NULL AND cs.category <> 'done'
+FROM tickets child
+JOIN ticket_statuses cs ON cs.id = child.status_id
+WHERE child.parent_ticket_id = $1 AND child.deleted_at IS NULL AND cs.category <> 'done'
 LIMIT 1
 )SQL",
-                                              {issueId},
+                                              {ticketId},
                                               "Check unfinished sub-tasks");
             if (PQntuples(unfinishedChild.get()) != 0) {
-                throw Domain::WorkflowViolation("Cannot complete an issue while it has unfinished sub-tasks");
+                throw Domain::WorkflowViolation("Cannot complete a ticket while it has unfinished sub-tasks");
             }
             touchResolution = true;
             resolutionValue = resolution;
@@ -1253,20 +1253,20 @@ LIMIT 1
 
         if (touchResolution) {
             execParams(connection.get(),
-                       "UPDATE issues SET status_id = $1, resolution = $2, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
-                       {statusId, resolutionValue, issueId},
-                       "Update issue status");
+                       "UPDATE tickets SET status_id = $1, resolution = $2, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+                       {statusId, resolutionValue, ticketId},
+                       "Update ticket status");
         } else {
             execParams(connection.get(),
-                       "UPDATE issues SET status_id = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
-                       {statusId, issueId},
-                       "Update issue status");
+                       "UPDATE tickets SET status_id = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+                       {statusId, ticketId},
+                       "Update ticket status");
         }
         execParams(connection.get(), R"SQL(
-INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+INSERT INTO ticket_history(id, ticket_id, actor_user_id, field_name, old_value, new_value)
 VALUES ($1, $2, $3, 'status', $4, $5)
 )SQL",
-                   {Common::uuidV4(), issueId, actorId, oldStatus, statusKey},
+                   {Common::uuidV4(), ticketId, actorId, oldStatus, statusKey},
                    "Insert status history");
         exec(connection.get(), "COMMIT", "Commit status transaction");
         return true;
@@ -1288,32 +1288,32 @@ std::string historyText(const std::optional<double>& value) {
 }
 } // namespace
 
-std::optional<Domain::Issue> PostgresDatabase::editIssue(const std::string& issueKey,
-                                                         const Domain::EditIssueRequest& request,
+std::optional<Domain::Ticket> PostgresDatabase::editTicket(const std::string& ticketKey,
+                                                         const Domain::EditTicketRequest& request,
                                                          const std::string& actorUserId,
                                                          const std::optional<std::int64_t> expectedVersion) {
     auto connection = connect(connectionString_);
-    exec(connection.get(), "BEGIN", "Begin edit issue transaction");
+    exec(connection.get(), "BEGIN", "Begin edit ticket transaction");
     try {
         auto current = execParams(connection.get(), R"SQL(
 SELECT i.id, i.summary, i.description, pr.priority_key, assignee.email,
        i.story_points, i.due_date::text, i.version, it.type_key,
-       (SELECT issue_key FROM issues WHERE id = i.parent_issue_id)
-FROM issues i
+       (SELECT ticket_key FROM tickets WHERE id = i.parent_ticket_id)
+FROM tickets i
 JOIN priorities pr ON pr.id = i.priority_id
-JOIN issue_types it ON it.id = i.issue_type_id
+JOIN ticket_types it ON it.id = i.ticket_type_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
 WHERE i.deleted_at IS NULL
-  AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
+  AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
 FOR UPDATE OF i
 )SQL",
-                                  {issueKey},
-                                  "Lock issue for edit");
+                                  {ticketKey},
+                                  "Lock ticket for edit");
         if (PQntuples(current.get()) == 0) {
-            exec(connection.get(), "ROLLBACK", "Rollback missing issue transaction");
+            exec(connection.get(), "ROLLBACK", "Rollback missing ticket transaction");
             return std::nullopt;
         }
-        const std::string issueId = value(current.get(), 0, 0);
+        const std::string ticketId = value(current.get(), 0, 0);
         const std::string oldSummary = value(current.get(), 0, 1);
         const std::string oldDescription = value(current.get(), 0, 2);
         const std::string oldPriorityKey = value(current.get(), 0, 3);
@@ -1327,19 +1327,19 @@ FOR UPDATE OF i
         const std::string oldTypeKey = value(current.get(), 0, 8);
         const std::optional<std::string> oldParentKey = optionalValue(current.get(), 0, 9);
         if (expectedVersion && *expectedVersion != currentVersion) {
-            throw Domain::ConcurrencyConflict("Issue was modified by another user");
+            throw Domain::ConcurrencyConflict("Ticket was modified by another user");
         }
 
-        // See the SQLite adapter's editIssue for why this must be checked
+        // See the SQLite adapter's editTicket for why this must be checked
         // transactionally rather than in TicketService.
-        if (Domain::issueTypeHierarchyLevel(oldTypeKey) != Domain::issueTypeHierarchyLevel(request.issueTypeKey)) {
+        if (Domain::ticketTypeHierarchyLevel(oldTypeKey) != Domain::ticketTypeHierarchyLevel(request.ticketTypeKey)) {
             auto childCheck = execParams(connection.get(),
-                                         "SELECT COUNT(*) FROM issues WHERE parent_issue_id = $1 AND deleted_at IS NULL",
-                                         {issueId},
-                                         "Count child issues");
+                                         "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = $1 AND deleted_at IS NULL",
+                                         {ticketId},
+                                         "Count child tickets");
             if (int64Value(childCheck.get(), 0, 0) > 0) {
                 throw std::invalid_argument(
-                    "Cannot change an issue's type across hierarchy levels while it has child issues");
+                    "Cannot change a ticket's type across hierarchy levels while it has child tickets");
             }
         }
 
@@ -1348,17 +1348,17 @@ FOR UPDATE OF i
         if (request.assigneeEmail && !request.assigneeEmail->empty()) {
             assigneeId = lookupId(connection.get(), "users", "email", *request.assigneeEmail);
         }
-        const std::string issueTypeId = lookupId(connection.get(), "issue_types", "type_key", request.issueTypeKey);
+        const std::string ticketTypeId = lookupId(connection.get(), "ticket_types", "type_key", request.ticketTypeKey);
         std::optional<std::string> parentId;
-        if (request.parentIssueKey && !request.parentIssueKey->empty()) {
-            parentId = lookupIssueId(connection.get(), *request.parentIssueKey);
+        if (request.parentTicketKey && !request.parentTicketKey->empty()) {
+            parentId = lookupTicketId(connection.get(), *request.parentTicketKey);
         }
         const std::string actorId = requireUserId(connection.get(), actorUserId);
 
         execParams(connection.get(), R"SQL(
-UPDATE issues
+UPDATE tickets
 SET summary = $1, description = $2, priority_id = $3, assignee_user_id = $4,
-    issue_type_id = $5, parent_issue_id = $6,
+    ticket_type_id = $5, parent_ticket_id = $6,
     story_points = $7::double precision, due_date = $8::date, version = version + 1, updated_at = CURRENT_TIMESTAMP
 WHERE id = $9
 )SQL",
@@ -1366,25 +1366,25 @@ WHERE id = $9
                     request.description,
                     priorityId,
                     assigneeId,
-                    issueTypeId,
+                    ticketTypeId,
                     parentId,
                     request.storyPoints ? std::optional<std::string>(std::to_string(*request.storyPoints)) : std::nullopt,
                     request.dueDate,
-                    issueId},
-                   "Update issue fields");
+                    ticketId},
+                   "Update ticket fields");
 
-        execParams(connection.get(), "DELETE FROM issue_labels WHERE issue_id = $1", {issueId}, "Clear issue labels");
+        execParams(connection.get(), "DELETE FROM ticket_labels WHERE ticket_id = $1", {ticketId}, "Clear ticket labels");
         for (const auto& labelName : request.labels) {
             execParams(connection.get(),
                        "INSERT INTO labels(id, name) VALUES ($1, $2) ON CONFLICT(name) DO NOTHING",
                        {Common::uuidV4(), labelName},
                        "Insert label");
             execParams(connection.get(), R"SQL(
-INSERT INTO issue_labels(issue_id, label_id)
+INSERT INTO ticket_labels(ticket_id, label_id)
 SELECT $1, id FROM labels WHERE name = $2
 ON CONFLICT DO NOTHING
 )SQL",
-                       {issueId, labelName},
+                       {ticketId, labelName},
                        "Link label");
         }
 
@@ -1395,10 +1395,10 @@ ON CONFLICT DO NOTHING
             std::optional<std::string> oldParam = oldValue.empty() ? std::nullopt : std::optional<std::string>(oldValue);
             std::optional<std::string> newParam = newValue.empty() ? std::nullopt : std::optional<std::string>(newValue);
             execParams(connection.get(), R"SQL(
-INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+INSERT INTO ticket_history(id, ticket_id, actor_user_id, field_name, old_value, new_value)
 VALUES ($1, $2, $3, $4, $5, $6)
 )SQL",
-                       {Common::uuidV4(), issueId, actorId, std::string(field), oldParam, newParam},
+                       {Common::uuidV4(), ticketId, actorId, std::string(field), oldParam, newParam},
                        "Insert edit history");
         };
         recordHistory("summary", oldSummary, request.summary);
@@ -1407,130 +1407,130 @@ VALUES ($1, $2, $3, $4, $5, $6)
         recordHistory("assignee", historyText(oldAssigneeEmail), historyText(request.assigneeEmail));
         recordHistory("story_points", historyText(oldStoryPoints), historyText(request.storyPoints));
         recordHistory("due_date", historyText(oldDueDate), historyText(request.dueDate));
-        recordHistory("issue_type", oldTypeKey, request.issueTypeKey);
-        recordHistory("parent", historyText(oldParentKey), historyText(request.parentIssueKey));
+        recordHistory("ticket_type", oldTypeKey, request.ticketTypeKey);
+        recordHistory("parent", historyText(oldParentKey), historyText(request.parentTicketKey));
 
-        exec(connection.get(), "COMMIT", "Commit edit issue transaction");
-        auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
-                                 {issueId}, "Read edited issue");
+        exec(connection.get(), "COMMIT", "Commit edit ticket transaction");
+        auto result = execParams(connection.get(), std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
+                                 {ticketId}, "Read edited ticket");
         if (PQntuples(result.get()) != 1) {
-            throw std::runtime_error("Edited issue could not be read back");
+            throw std::runtime_error("Edited ticket could not be read back");
         }
-        return readIssue(result.get(), 0);
+        return readTicket(result.get(), 0);
     } catch (...) {
         try {
-            exec(connection.get(), "ROLLBACK", "Rollback edit issue transaction");
+            exec(connection.get(), "ROLLBACK", "Rollback edit ticket transaction");
         } catch (...) {
         }
         throw;
     }
 }
 
-Domain::Issue PostgresDatabase::reorderIssue(const std::string& issueKey,
-                                             std::optional<std::string> beforeIssueKey) {
+Domain::Ticket PostgresDatabase::reorderTicket(const std::string& ticketKey,
+                                             std::optional<std::string> beforeTicketKey) {
     auto connection = connect(connectionString_);
-    exec(connection.get(), "BEGIN", "Begin reorder issue transaction");
+    exec(connection.get(), "BEGIN", "Begin reorder ticket transaction");
     try {
-        const std::string issueId = lookupIssueId(connection.get(), issueKey);
+        const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
         auto projectRow = execParams(connection.get(),
-                                     "SELECT project_id FROM issues WHERE id = $1 FOR UPDATE",
-                                     {issueId},
-                                     "Lock issue for reorder");
+                                     "SELECT project_id FROM tickets WHERE id = $1 FOR UPDATE",
+                                     {ticketId},
+                                     "Lock ticket for reorder");
         const std::string projectId = value(projectRow.get(), 0, 0);
 
-        std::optional<std::string> beforeIssueId;
-        if (beforeIssueKey.has_value() && !beforeIssueKey->empty()) {
-            const std::string resolvedBeforeId = lookupIssueId(connection.get(), *beforeIssueKey);
-            if (resolvedBeforeId == issueId) {
-                throw std::invalid_argument("Cannot reorder an issue before itself");
+        std::optional<std::string> beforeTicketId;
+        if (beforeTicketKey.has_value() && !beforeTicketKey->empty()) {
+            const std::string resolvedBeforeId = lookupTicketId(connection.get(), *beforeTicketKey);
+            if (resolvedBeforeId == ticketId) {
+                throw std::invalid_argument("Cannot reorder a ticket before itself");
             }
             auto beforeProjectRow = execParams(connection.get(),
-                                               "SELECT project_id FROM issues WHERE id = $1",
+                                               "SELECT project_id FROM tickets WHERE id = $1",
                                                {resolvedBeforeId},
                                                "Read reorder anchor project");
             if (value(beforeProjectRow.get(), 0, 0) != projectId) {
-                throw std::invalid_argument("Cannot reorder relative to an issue in a different project");
+                throw std::invalid_argument("Cannot reorder relative to a ticket in a different project");
             }
-            beforeIssueId = resolvedBeforeId;
+            beforeTicketId = resolvedBeforeId;
         }
 
-        // Full renumbering pass (D31): sufficient for small per-project issue
+        // Full renumbering pass (D31): sufficient for small per-project ticket
         // counts, and simpler than a minimal-diff fractional/shift scheme.
         auto listResult = execParams(connection.get(),
-                                     "SELECT id FROM issues WHERE project_id = $1 AND deleted_at IS NULL ORDER BY rank_order, issue_number",
+                                     "SELECT id FROM tickets WHERE project_id = $1 AND deleted_at IS NULL ORDER BY rank_order, ticket_number",
                                      {projectId},
-                                     "List project issues for reorder");
+                                     "List project tickets for reorder");
         std::vector<std::string> orderedIds;
         orderedIds.reserve(static_cast<std::size_t>(PQntuples(listResult.get())));
         for (int row = 0; row < PQntuples(listResult.get()); ++row) {
             orderedIds.push_back(value(listResult.get(), row, 0));
         }
 
-        orderedIds.erase(std::remove(orderedIds.begin(), orderedIds.end(), issueId), orderedIds.end());
-        if (beforeIssueId.has_value()) {
-            const auto position = std::find(orderedIds.begin(), orderedIds.end(), *beforeIssueId);
-            orderedIds.insert(position, issueId);
+        orderedIds.erase(std::remove(orderedIds.begin(), orderedIds.end(), ticketId), orderedIds.end());
+        if (beforeTicketId.has_value()) {
+            const auto position = std::find(orderedIds.begin(), orderedIds.end(), *beforeTicketId);
+            orderedIds.insert(position, ticketId);
         } else {
-            orderedIds.push_back(issueId);
+            orderedIds.push_back(ticketId);
         }
 
         for (std::size_t index = 0; index < orderedIds.size(); ++index) {
             const std::int64_t newRank = static_cast<std::int64_t>(index) + 1;
             execParams(connection.get(),
-                       "UPDATE issues SET rank_order = $1::bigint WHERE id = $2 AND rank_order <> $1::bigint",
+                       "UPDATE tickets SET rank_order = $1::bigint WHERE id = $2 AND rank_order <> $1::bigint",
                        {std::to_string(newRank), orderedIds[index]},
-                       "Update issue rank order");
+                       "Update ticket rank order");
         }
 
-        exec(connection.get(), "COMMIT", "Commit reorder issue transaction");
-        auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
-                                 {issueId}, "Read reordered issue");
+        exec(connection.get(), "COMMIT", "Commit reorder ticket transaction");
+        auto result = execParams(connection.get(), std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
+                                 {ticketId}, "Read reordered ticket");
         if (PQntuples(result.get()) != 1) {
-            throw std::runtime_error("Reordered issue could not be read back");
+            throw std::runtime_error("Reordered ticket could not be read back");
         }
-        return readIssue(result.get(), 0);
+        return readTicket(result.get(), 0);
     } catch (...) {
         try {
-            exec(connection.get(), "ROLLBACK", "Rollback reorder issue transaction");
+            exec(connection.get(), "ROLLBACK", "Rollback reorder ticket transaction");
         } catch (...) {
         }
         throw;
     }
 }
 
-Domain::Issue PostgresDatabase::moveIssue(const std::string& issueKey,
+Domain::Ticket PostgresDatabase::moveTicket(const std::string& ticketKey,
                                           const std::string& targetProjectKey,
                                           const std::string& actorUserId) {
     auto connection = connect(connectionString_);
-    exec(connection.get(), "BEGIN", "Begin move issue transaction");
+    exec(connection.get(), "BEGIN", "Begin move ticket transaction");
     try {
-        const std::string issueId = lookupIssueId(connection.get(), issueKey);
+        const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
         auto current = execParams(connection.get(), R"SQL(
-SELECT i.project_id, p.project_key, i.issue_key, i.parent_issue_id
-FROM issues i JOIN projects p ON p.id = i.project_id
+SELECT i.project_id, p.project_key, i.ticket_key, i.parent_ticket_id
+FROM tickets i JOIN projects p ON p.id = i.project_id
 WHERE i.id = $1
 FOR UPDATE OF i
 )SQL",
-                                  {issueId},
-                                  "Lock issue for move");
+                                  {ticketId},
+                                  "Lock ticket for move");
         const std::string currentProjectId = value(current.get(), 0, 0);
         const std::string currentProjectKey = value(current.get(), 0, 1);
-        const std::string currentIssueKey = value(current.get(), 0, 2);
+        const std::string currentTicketKey = value(current.get(), 0, 2);
         const bool hasParent = PQgetisnull(current.get(), 0, 3) == 0;
         if (hasParent) {
-            throw std::invalid_argument("Cannot move an issue that has a parent");
+            throw std::invalid_argument("Cannot move a ticket that has a parent");
         }
 
         auto childCheck = execParams(connection.get(),
-                                     "SELECT COUNT(*) FROM issues WHERE parent_issue_id = $1 AND deleted_at IS NULL",
-                                     {issueId},
-                                     "Count child issues");
+                                     "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = $1 AND deleted_at IS NULL",
+                                     {ticketId},
+                                     "Count child tickets");
         if (int64Value(childCheck.get(), 0, 0) > 0) {
-            throw std::invalid_argument("Cannot move an issue that has child issues");
+            throw std::invalid_argument("Cannot move a ticket that has child tickets");
         }
 
         auto project = execParams(connection.get(),
-                                  "SELECT id, next_issue_number FROM projects WHERE project_key = $1 AND archived = FALSE AND deleted_at IS NULL FOR UPDATE",
+                                  "SELECT id, next_ticket_number FROM projects WHERE project_key = $1 AND archived = FALSE AND deleted_at IS NULL FOR UPDATE",
                                   {targetProjectKey},
                                   "Lock target project");
         if (PQntuples(project.get()) != 1) {
@@ -1538,73 +1538,73 @@ FOR UPDATE OF i
         }
         const std::string targetProjectId = value(project.get(), 0, 0);
         if (targetProjectId == currentProjectId) {
-            throw std::invalid_argument("Issue is already in project: " + targetProjectKey);
+            throw std::invalid_argument("Ticket is already in project: " + targetProjectKey);
         }
-        const std::int64_t issueNumber = int64Value(project.get(), 0, 1);
-        const std::string newIssueKey = targetProjectKey + "-" + std::to_string(issueNumber);
+        const std::int64_t ticketNumber = int64Value(project.get(), 0, 1);
+        const std::string newTicketKey = targetProjectKey + "-" + std::to_string(ticketNumber);
 
         execParams(connection.get(),
-                   "UPDATE projects SET next_issue_number = next_issue_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                   "UPDATE projects SET next_ticket_number = next_ticket_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                    {targetProjectId},
-                   "Increment target project issue counter");
+                   "Increment target project ticket counter");
 
-        // Append-at-end within the target project, same as createIssue (D31).
+        // Append-at-end within the target project, same as createTicket (D31).
         auto maxRank = execParams(connection.get(),
-                                  "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM issues WHERE project_id = $1 AND deleted_at IS NULL",
+                                  "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM tickets WHERE project_id = $1 AND deleted_at IS NULL",
                                   {targetProjectId},
                                   "Compute next rank order for move");
         const std::int64_t rankOrder = int64Value(maxRank.get(), 0, 0);
 
         execParams(connection.get(), R"SQL(
-UPDATE issues
-SET project_id = $1, issue_number = $2::bigint, issue_key = $3, rank_order = $4::bigint, updated_at = CURRENT_TIMESTAMP
+UPDATE tickets
+SET project_id = $1, ticket_number = $2::bigint, ticket_key = $3, rank_order = $4::bigint, updated_at = CURRENT_TIMESTAMP
 WHERE id = $5
 )SQL",
-                   {targetProjectId, std::to_string(issueNumber), newIssueKey, std::to_string(rankOrder), issueId},
-                   "Update issue for move");
+                   {targetProjectId, std::to_string(ticketNumber), newTicketKey, std::to_string(rankOrder), ticketId},
+                   "Update ticket for move");
 
         // The vacated key becomes a permanent alias (D38); safe because
-        // issue_key_aliases.alias_key is a PRIMARY KEY (no collision) and
-        // issue numbers/keys are never reused.
+        // ticket_key_aliases.alias_key is a PRIMARY KEY (no collision) and
+        // ticket numbers/keys are never reused.
         execParams(connection.get(),
-                   "INSERT INTO issue_key_aliases(alias_key, issue_id) VALUES ($1, $2)",
-                   {currentIssueKey, issueId},
-                   "Insert issue key alias");
+                   "INSERT INTO ticket_key_aliases(alias_key, ticket_id) VALUES ($1, $2)",
+                   {currentTicketKey, ticketId},
+                   "Insert ticket key alias");
 
         const std::string actorId = requireUserId(connection.get(), actorUserId);
         execParams(connection.get(), R"SQL(
-INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+INSERT INTO ticket_history(id, ticket_id, actor_user_id, field_name, old_value, new_value)
 VALUES ($1, $2, $3, 'project', $4, $5)
 )SQL",
-                   {Common::uuidV4(), issueId, actorId, currentProjectKey, targetProjectKey},
+                   {Common::uuidV4(), ticketId, actorId, currentProjectKey, targetProjectKey},
                    "Insert move history");
 
-        exec(connection.get(), "COMMIT", "Commit move issue transaction");
-        auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
-                                 {issueId}, "Read moved issue");
+        exec(connection.get(), "COMMIT", "Commit move ticket transaction");
+        auto result = execParams(connection.get(), std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",
+                                 {ticketId}, "Read moved ticket");
         if (PQntuples(result.get()) != 1) {
-            throw std::runtime_error("Moved issue could not be read back");
+            throw std::runtime_error("Moved ticket could not be read back");
         }
-        return readIssue(result.get(), 0);
+        return readTicket(result.get(), 0);
     } catch (...) {
         try {
-            exec(connection.get(), "ROLLBACK", "Rollback move issue transaction");
+            exec(connection.get(), "ROLLBACK", "Rollback move ticket transaction");
         } catch (...) {
         }
         throw;
     }
 }
 
-std::vector<Domain::Comment> PostgresDatabase::listComments(const std::string& issueKey) {
+std::vector<Domain::Comment> PostgresDatabase::listComments(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), std::string(CommentSelect) + R"SQL(
-JOIN issues i ON i.id = c.issue_id
+JOIN tickets i ON i.id = c.ticket_id
 WHERE c.deleted_at IS NULL
   AND i.deleted_at IS NULL
-  AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
+  AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
 ORDER BY c.created_at
 )SQL",
-                             {issueKey},
+                             {ticketKey},
                              "List comments");
     std::vector<Domain::Comment> comments;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
@@ -1616,14 +1616,14 @@ ORDER BY c.created_at
 Domain::Comment PostgresDatabase::addComment(const Domain::AddCommentRequest& request,
                                              const std::string& authorUserId) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), request.issueKey);
+    const std::string ticketId = lookupTicketId(connection.get(), request.ticketKey);
     const std::string authorId = requireUserId(connection.get(), authorUserId);
     const std::string commentId = Common::uuidV4();
     execParams(connection.get(), R"SQL(
-INSERT INTO comments(id, issue_id, author_user_id, body, created_at, updated_at)
+INSERT INTO comments(id, ticket_id, author_user_id, body, created_at, updated_at)
 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL",
-               {commentId, issueId, authorId, request.body},
+               {commentId, ticketId, authorId, request.body},
                "Insert comment");
     auto result = execParams(connection.get(), std::string(CommentSelect) + "WHERE c.id = $1", {commentId}, "Read created comment");
     if (PQntuples(result.get()) != 1) {
@@ -1642,8 +1642,8 @@ std::optional<Domain::Comment> PostgresDatabase::findCommentById(const std::stri
 }
 
 // `actorUserId` is unused: D81's simplified edited-flag schema has no
-// per-edit actor column (unlike issue_history) -- only `edited_at` is
-// tracked. Kept in the signature for symmetry with editIssue and in case a
+// per-edit actor column (unlike ticket_history) -- only `edited_at` is
+// tracked. Kept in the signature for symmetry with editTicket and in case a
 // future decision adds an `edited_by_user_id` column.
 std::optional<Domain::Comment> PostgresDatabase::editComment(const std::string& commentId,
                                                               const std::string& body,
@@ -1749,29 +1749,29 @@ Domain::Notification readNotification(PGresult* result, int row) {
     Domain::Notification notification;
     notification.id = value(result, row, 0);
     notification.type = value(result, row, 1);
-    notification.issueKey = optionalValue(result, row, 2);
-    notification.issueSummary = optionalValue(result, row, 3);
+    notification.ticketKey = optionalValue(result, row, 2);
+    notification.ticketSummary = optionalValue(result, row, 3);
     notification.readAt = optionalValue(result, row, 4);
     notification.createdAt = value(result, row, 5);
     return notification;
 }
 
 constexpr const char* NotificationSelect = R"SQL(
-SELECT n.id, n.type, i.issue_key, i.summary, n.read_at::text, n.created_at::text
+SELECT n.id, n.type, i.ticket_key, i.summary, n.read_at::text, n.created_at::text
 FROM notifications n
-LEFT JOIN issues i ON i.id = n.issue_id
+LEFT JOIN tickets i ON i.id = n.ticket_id
 )SQL";
 } // namespace
 
 Domain::Notification PostgresDatabase::createNotification(const std::string& userId,
                                                            const std::string& type,
-                                                           const std::string& issueId) {
+                                                           const std::string& ticketId) {
     auto connection = connect(connectionString_);
     const std::string notificationId = Common::uuidV4();
     execParams(connection.get(), R"SQL(
-INSERT INTO notifications(id, user_id, type, issue_id, created_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+INSERT INTO notifications(id, user_id, type, ticket_id, created_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
 )SQL",
-               {notificationId, userId, type, issueId},
+               {notificationId, userId, type, ticketId},
                "Insert notification");
 
     auto result = execParams(connection.get(), std::string(NotificationSelect) + "WHERE n.id = $1",
@@ -1827,16 +1827,16 @@ bool PostgresDatabase::markAllNotificationsRead(const std::string& userId) {
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
-std::vector<Domain::Worklog> PostgresDatabase::listWorklogs(const std::string& issueKey) {
+std::vector<Domain::Worklog> PostgresDatabase::listWorklogs(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), std::string(WorklogSelect) + R"SQL(
-JOIN issues i ON i.id = w.issue_id
+JOIN tickets i ON i.id = w.ticket_id
 WHERE w.deleted_at IS NULL
   AND i.deleted_at IS NULL
-  AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
+  AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
 ORDER BY w.work_date DESC, w.created_at DESC
 )SQL",
-                             {issueKey},
+                             {ticketKey},
                              "List worklogs");
     std::vector<Domain::Worklog> worklogs;
     const int rowCount = PQntuples(result.get());
@@ -1848,15 +1848,15 @@ ORDER BY w.work_date DESC, w.created_at DESC
 
 Domain::Worklog PostgresDatabase::addWorklog(const Domain::AddWorklogRequest& request, const std::string& authorUserId) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), request.issueKey);
+    const std::string ticketId = lookupTicketId(connection.get(), request.ticketKey);
     const std::string authorId = requireUserId(connection.get(), authorUserId);
     const std::string worklogId = Common::uuidV4();
 
     execParams(connection.get(), R"SQL(
-INSERT INTO worklogs(id, issue_id, author_user_id, work_date, time_spent_seconds, comment, created_at, updated_at)
+INSERT INTO worklogs(id, ticket_id, author_user_id, work_date, time_spent_seconds, comment, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL",
-               {worklogId, issueId, authorId, request.workDate, std::to_string(request.timeSpentSeconds), request.comment},
+               {worklogId, ticketId, authorId, request.workDate, std::to_string(request.timeSpentSeconds), request.comment},
                "Insert worklog");
 
     auto result = execParams(connection.get(), std::string(WorklogSelect) + "WHERE w.id = $1", {worklogId}, "Read created worklog");
@@ -1963,20 +1963,20 @@ SELECT COUNT(i.id),
        COUNT(i.id) FILTER (WHERE s.category = 'todo'),
        COUNT(i.id) FILTER (WHERE s.category = 'in_progress'),
        COUNT(i.id) FILTER (WHERE s.category = 'done')
-FROM issues i JOIN issue_statuses s ON s.id = i.status_id
+FROM tickets i JOIN ticket_statuses s ON s.id = i.status_id
 WHERE i.deleted_at IS NULL
 )SQL",
                        "Dashboard statistics");
     Domain::DashboardStats stats;
-    stats.totalIssues = int64Value(result.get(), 0, 0);
-    stats.todoIssues = int64Value(result.get(), 0, 1);
-    stats.inProgressIssues = int64Value(result.get(), 0, 2);
-    stats.doneIssues = int64Value(result.get(), 0, 3);
-    auto recent = listIssues({});
+    stats.totalTickets = int64Value(result.get(), 0, 0);
+    stats.todoTickets = int64Value(result.get(), 0, 1);
+    stats.inProgressTickets = int64Value(result.get(), 0, 2);
+    stats.doneTickets = int64Value(result.get(), 0, 3);
+    auto recent = listTickets({});
     if (recent.size() > 8) {
         recent.resize(8);
     }
-    stats.recentIssues = std::move(recent);
+    stats.recentTickets = std::move(recent);
     return stats;
 }
 
@@ -1994,134 +1994,134 @@ bool PostgresDatabase::setBoardColumnWipLimit(const std::string& statusKey, cons
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), R"SQL(
 UPDATE board_columns SET wip_limit = $1
-WHERE status_id = (SELECT id FROM issue_statuses WHERE status_key = $2)
+WHERE status_id = (SELECT id FROM ticket_statuses WHERE status_key = $2)
 )SQL",
                              {wipLimit ? std::optional<std::string>(std::to_string(*wipLimit)) : std::nullopt, statusKey},
                              "Set board column WIP limit");
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
-Domain::IssueLink PostgresDatabase::createIssueLink(const std::string& sourceIssueKey,
-                                                    const std::string& targetIssueKey,
+Domain::TicketLink PostgresDatabase::createTicketLink(const std::string& sourceTicketKey,
+                                                    const std::string& targetTicketKey,
                                                     const std::string& linkType) {
     auto connection = connect(connectionString_);
-    const std::string sourceId = lookupIssueId(connection.get(), sourceIssueKey);
-    const std::string targetId = lookupIssueId(connection.get(), targetIssueKey);
+    const std::string sourceId = lookupTicketId(connection.get(), sourceTicketKey);
+    const std::string targetId = lookupTicketId(connection.get(), targetTicketKey);
 
     auto duplicate = execParams(connection.get(),
-        "SELECT 1 FROM issue_links WHERE source_issue_id = $1 AND target_issue_id = $2 AND link_type = $3",
+        "SELECT 1 FROM ticket_links WHERE source_ticket_id = $1 AND target_ticket_id = $2 AND link_type = $3",
         {sourceId, targetId, linkType},
-        "Check duplicate issue link");
+        "Check duplicate ticket link");
     if (PQntuples(duplicate.get()) != 0) {
         throw std::invalid_argument("That link already exists");
     }
 
     const std::string linkId = Common::uuidV4();
     execParams(connection.get(),
-               "INSERT INTO issue_links(id, source_issue_id, target_issue_id, link_type) VALUES ($1, $2, $3, $4)",
+               "INSERT INTO ticket_links(id, source_ticket_id, target_ticket_id, link_type) VALUES ($1, $2, $3, $4)",
                {linkId, sourceId, targetId, linkType},
-               "Insert issue link");
+               "Insert ticket link");
 
-    Domain::IssueLink link;
+    Domain::TicketLink link;
     link.id = linkId;
     link.linkType = linkType;
     link.outward = true;
 
-    auto targetRow = execParams(connection.get(), "SELECT issue_key, summary FROM issues WHERE id = $1",
-                                {targetId}, "Read linked issue");
+    auto targetRow = execParams(connection.get(), "SELECT ticket_key, summary FROM tickets WHERE id = $1",
+                                {targetId}, "Read linked ticket");
     if (PQntuples(targetRow.get()) == 1) {
-        link.otherIssueKey = value(targetRow.get(), 0, 0);
-        link.otherIssueSummary = value(targetRow.get(), 0, 1);
+        link.otherTicketKey = value(targetRow.get(), 0, 0);
+        link.otherTicketSummary = value(targetRow.get(), 0, 1);
     }
     return link;
 }
 
-std::vector<Domain::IssueLink> PostgresDatabase::listIssueLinks(const std::string& issueKey) {
+std::vector<Domain::TicketLink> PostgresDatabase::listTicketLinks(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
 
     auto result = execParams(connection.get(), R"SQL(
-SELECT l.id, l.link_type, TRUE AS outward, tgt.issue_key, tgt.summary
-FROM issue_links l JOIN issues tgt ON tgt.id = l.target_issue_id
-WHERE l.source_issue_id = $1 AND tgt.deleted_at IS NULL
+SELECT l.id, l.link_type, TRUE AS outward, tgt.ticket_key, tgt.summary
+FROM ticket_links l JOIN tickets tgt ON tgt.id = l.target_ticket_id
+WHERE l.source_ticket_id = $1 AND tgt.deleted_at IS NULL
 UNION ALL
-SELECT l.id, l.link_type, FALSE AS outward, src.issue_key, src.summary
-FROM issue_links l JOIN issues src ON src.id = l.source_issue_id
-WHERE l.target_issue_id = $1 AND src.deleted_at IS NULL
+SELECT l.id, l.link_type, FALSE AS outward, src.ticket_key, src.summary
+FROM ticket_links l JOIN tickets src ON src.id = l.source_ticket_id
+WHERE l.target_ticket_id = $1 AND src.deleted_at IS NULL
 )SQL",
-                             {issueId},
-                             "List issue links");
-    std::vector<Domain::IssueLink> links;
+                             {ticketId},
+                             "List ticket links");
+    std::vector<Domain::TicketLink> links;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
-        Domain::IssueLink link;
+        Domain::TicketLink link;
         link.id = value(result.get(), row, 0);
         link.linkType = value(result.get(), row, 1);
         link.outward = boolValue(result.get(), row, 2);
-        link.otherIssueKey = value(result.get(), row, 3);
-        link.otherIssueSummary = value(result.get(), row, 4);
+        link.otherTicketKey = value(result.get(), row, 3);
+        link.otherTicketSummary = value(result.get(), row, 4);
         links.push_back(std::move(link));
     }
     return links;
 }
 
-std::optional<Domain::IssueLinkDetail> PostgresDatabase::findIssueLinkById(const std::string& linkId) {
+std::optional<Domain::TicketLinkDetail> PostgresDatabase::findTicketLinkById(const std::string& linkId) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), R"SQL(
-SELECT l.id, l.link_type, src.issue_key, srcProj.project_key, tgt.issue_key, tgtProj.project_key
-FROM issue_links l
-JOIN issues src ON src.id = l.source_issue_id
+SELECT l.id, l.link_type, src.ticket_key, srcProj.project_key, tgt.ticket_key, tgtProj.project_key
+FROM ticket_links l
+JOIN tickets src ON src.id = l.source_ticket_id
 JOIN projects srcProj ON srcProj.id = src.project_id
-JOIN issues tgt ON tgt.id = l.target_issue_id
+JOIN tickets tgt ON tgt.id = l.target_ticket_id
 JOIN projects tgtProj ON tgtProj.id = tgt.project_id
 WHERE l.id = $1
 )SQL",
                              {linkId},
-                             "Find issue link");
+                             "Find ticket link");
     if (PQntuples(result.get()) != 1) {
         return std::nullopt;
     }
-    Domain::IssueLinkDetail detail;
+    Domain::TicketLinkDetail detail;
     detail.id = value(result.get(), 0, 0);
     detail.linkType = value(result.get(), 0, 1);
-    detail.sourceIssueKey = value(result.get(), 0, 2);
+    detail.sourceTicketKey = value(result.get(), 0, 2);
     detail.sourceProjectKey = value(result.get(), 0, 3);
-    detail.targetIssueKey = value(result.get(), 0, 4);
+    detail.targetTicketKey = value(result.get(), 0, 4);
     detail.targetProjectKey = value(result.get(), 0, 5);
     return detail;
 }
 
-bool PostgresDatabase::deleteIssueLink(const std::string& linkId) {
+bool PostgresDatabase::deleteTicketLink(const std::string& linkId) {
     auto connection = connect(connectionString_);
-    auto result = execParams(connection.get(), "DELETE FROM issue_links WHERE id = $1", {linkId}, "Delete issue link");
+    auto result = execParams(connection.get(), "DELETE FROM ticket_links WHERE id = $1", {linkId}, "Delete ticket link");
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
 namespace {
-// Shared by the two structurally-identical watch/vote tables (issue_watchers,
-// issue_votes: both (issue_id, user_id) composite-PK many-to-many tables with
+// Shared by the two structurally-identical watch/vote tables (ticket_watchers,
+// ticket_votes: both (ticket_id, user_id) composite-PK many-to-many tables with
 // no other columns worth reading back). `table` is always a fixed internal
 // literal, never caller input, matching the existing `lookupId` pattern.
-bool insertMembership(PGconn* connection, const char* table, const std::string& issueId, const std::string& userId) {
+bool insertMembership(PGconn* connection, const char* table, const std::string& ticketId, const std::string& userId) {
     auto result = execParams(connection,
-                             std::string("INSERT INTO ") + table + "(issue_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                             {issueId, userId},
+                             std::string("INSERT INTO ") + table + "(ticket_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                             {ticketId, userId},
                              std::string("Insert into ") + table);
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
-bool deleteMembership(PGconn* connection, const char* table, const std::string& issueId, const std::string& userId) {
+bool deleteMembership(PGconn* connection, const char* table, const std::string& ticketId, const std::string& userId) {
     auto result = execParams(connection,
-                             std::string("DELETE FROM ") + table + " WHERE issue_id = $1 AND user_id = $2",
-                             {issueId, userId},
+                             std::string("DELETE FROM ") + table + " WHERE ticket_id = $1 AND user_id = $2",
+                             {ticketId, userId},
                              std::string("Delete from ") + table);
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
-std::vector<Domain::UserSummary> listMembers(PGconn* connection, const char* table, const std::string& issueId) {
+std::vector<Domain::UserSummary> listMembers(PGconn* connection, const char* table, const std::string& ticketId) {
     auto result = execParams(connection,
                              std::string("SELECT u.id, u.display_name, u.email FROM ") + table
-                                 + " t JOIN users u ON u.id = t.user_id WHERE t.issue_id = $1 ORDER BY u.display_name",
-                             {issueId},
+                                 + " t JOIN users u ON u.id = t.user_id WHERE t.ticket_id = $1 ORDER BY u.display_name",
+                             {ticketId},
                              std::string("List ") + table);
     std::vector<Domain::UserSummary> users;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
@@ -2131,123 +2131,123 @@ std::vector<Domain::UserSummary> listMembers(PGconn* connection, const char* tab
 }
 } // namespace
 
-bool PostgresDatabase::watchIssue(const std::string& issueKey, const std::string& userId) {
+bool PostgresDatabase::watchTicket(const std::string& ticketKey, const std::string& userId) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
     const std::string resolvedUserId = requireUserId(connection.get(), userId);
-    return insertMembership(connection.get(), "issue_watchers", issueId, resolvedUserId);
+    return insertMembership(connection.get(), "ticket_watchers", ticketId, resolvedUserId);
 }
 
-bool PostgresDatabase::unwatchIssue(const std::string& issueKey, const std::string& userId) {
+bool PostgresDatabase::unwatchTicket(const std::string& ticketKey, const std::string& userId) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
-    return deleteMembership(connection.get(), "issue_watchers", issueId, userId);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
+    return deleteMembership(connection.get(), "ticket_watchers", ticketId, userId);
 }
 
-std::vector<Domain::UserSummary> PostgresDatabase::listWatchers(const std::string& issueKey) {
+std::vector<Domain::UserSummary> PostgresDatabase::listWatchers(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
-    return listMembers(connection.get(), "issue_watchers", issueId);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
+    return listMembers(connection.get(), "ticket_watchers", ticketId);
 }
 
-std::vector<Domain::Issue> PostgresDatabase::listWatchedIssues(const std::string& userId, int limit) {
+std::vector<Domain::Ticket> PostgresDatabase::listWatchedTickets(const std::string& userId, int limit) {
     auto connection = connect(connectionString_);
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM issue_watchers w WHERE w.issue_id = i.id AND w.user_id = $1)
+  AND EXISTS (SELECT 1 FROM ticket_watchers w WHERE w.ticket_id = i.id AND w.user_id = $1)
 ORDER BY i.updated_at DESC
 LIMIT $2
 )SQL";
-    auto result = execParams(connection.get(), sql, {userId, std::to_string(limit)}, "List watched issues");
-    std::vector<Domain::Issue> issues;
+    auto result = execParams(connection.get(), sql, {userId, std::to_string(limit)}, "List watched tickets");
+    std::vector<Domain::Ticket> tickets;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
-        issues.push_back(readIssue(result.get(), row));
+        tickets.push_back(readTicket(result.get(), row));
     }
-    return issues;
+    return tickets;
 }
 
-bool PostgresDatabase::voteIssue(const std::string& issueKey, const std::string& userId) {
+bool PostgresDatabase::voteTicket(const std::string& ticketKey, const std::string& userId) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
     const std::string resolvedUserId = requireUserId(connection.get(), userId);
-    return insertMembership(connection.get(), "issue_votes", issueId, resolvedUserId);
+    return insertMembership(connection.get(), "ticket_votes", ticketId, resolvedUserId);
 }
 
-bool PostgresDatabase::unvoteIssue(const std::string& issueKey, const std::string& userId) {
+bool PostgresDatabase::unvoteTicket(const std::string& ticketKey, const std::string& userId) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
-    return deleteMembership(connection.get(), "issue_votes", issueId, userId);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
+    return deleteMembership(connection.get(), "ticket_votes", ticketId, userId);
 }
 
-std::vector<Domain::UserSummary> PostgresDatabase::listVoters(const std::string& issueKey) {
+std::vector<Domain::UserSummary> PostgresDatabase::listVoters(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
-    return listMembers(connection.get(), "issue_votes", issueId);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
+    return listMembers(connection.get(), "ticket_votes", ticketId);
 }
 
-bool PostgresDatabase::softDeleteIssue(const std::string& issueKey, const std::string& actorUserId) {
+bool PostgresDatabase::softDeleteTicket(const std::string& ticketKey, const std::string& actorUserId) {
     auto connection = connect(connectionString_);
     const std::string actorId = requireUserId(connection.get(), actorUserId);
     auto result = execParams(connection.get(), R"SQL(
-UPDATE issues SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = $1, updated_at = CURRENT_TIMESTAMP
-WHERE (issue_key = $2 OR id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $2)) AND deleted_at IS NULL
+UPDATE tickets SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = $1, updated_at = CURRENT_TIMESTAMP
+WHERE (ticket_key = $2 OR id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $2)) AND deleted_at IS NULL
 )SQL",
-                             {actorId, issueKey},
-                             "Soft delete issue");
+                             {actorId, ticketKey},
+                             "Soft delete ticket");
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
-bool PostgresDatabase::restoreIssue(const std::string& issueKey) {
+bool PostgresDatabase::restoreTicket(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), R"SQL(
-UPDATE issues SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
-WHERE issue_key = $1 AND deleted_at IS NOT NULL
+UPDATE tickets SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE ticket_key = $1 AND deleted_at IS NOT NULL
 )SQL",
-                             {issueKey},
-                             "Restore issue");
+                             {ticketKey},
+                             "Restore ticket");
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
-std::vector<Domain::Issue> PostgresDatabase::listDeletedIssues() {
+std::vector<Domain::Ticket> PostgresDatabase::listDeletedTickets() {
     auto connection = connect(connectionString_);
-    exec(connection.get(), "DELETE FROM issues WHERE deleted_at IS NOT NULL AND deleted_at <= CURRENT_TIMESTAMP - INTERVAL '90 days'",
-        "Purge expired deleted issues");
+    exec(connection.get(), "DELETE FROM tickets WHERE deleted_at IS NOT NULL AND deleted_at <= CURRENT_TIMESTAMP - INTERVAL '90 days'",
+        "Purge expired deleted tickets");
 
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NOT NULL
 ORDER BY i.deleted_at DESC
 )SQL";
-    auto result = exec(connection.get(), sql, "List deleted issues");
-    std::vector<Domain::Issue> issues;
+    auto result = exec(connection.get(), sql, "List deleted tickets");
+    std::vector<Domain::Ticket> tickets;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
-        issues.push_back(readIssue(result.get(), row));
+        tickets.push_back(readTicket(result.get(), row));
     }
-    return issues;
+    return tickets;
 }
 
-bool PostgresDatabase::permanentlyDeleteIssue(const std::string& issueKey) {
+bool PostgresDatabase::permanentlyDeleteTicket(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
-    auto result = execParams(connection.get(), "DELETE FROM issues WHERE issue_key = $1 AND deleted_at IS NOT NULL",
-                             {issueKey}, "Permanently delete issue");
+    auto result = execParams(connection.get(), "DELETE FROM tickets WHERE ticket_key = $1 AND deleted_at IS NOT NULL",
+                             {ticketKey}, "Permanently delete ticket");
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
 Domain::Attachment PostgresDatabase::createAttachment(const std::string& id,
-                                                      const std::string& issueKey,
+                                                      const std::string& ticketKey,
                                                       const std::string& uploaderUserId,
                                                       const std::string& fileName,
                                                       const std::string& contentType,
                                                       const std::int64_t byteSize,
                                                       const std::string& sha256) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
     const std::string uploaderId = requireUserId(connection.get(), uploaderUserId);
     execParams(connection.get(), R"SQL(
-INSERT INTO attachments(id, issue_id, uploader_user_id, file_name, content_type, byte_size, storage_key, sha256)
+INSERT INTO attachments(id, ticket_id, uploader_user_id, file_name, content_type, byte_size, storage_key, sha256)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 )SQL",
-              {id, issueId, uploaderId, fileName, contentType, std::to_string(byteSize), id, sha256},
+              {id, ticketId, uploaderId, fileName, contentType, std::to_string(byteSize), id, sha256},
               "Create attachment");
 
     auto result = execParams(connection.get(), std::string(AttachmentSelect) + "WHERE a.id = $1", {id}, "Read created attachment");
@@ -2257,12 +2257,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     return readAttachment(result.get(), 0);
 }
 
-std::vector<Domain::Attachment> PostgresDatabase::listAttachments(const std::string& issueKey) {
+std::vector<Domain::Attachment> PostgresDatabase::listAttachments(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
-    const std::string issueId = lookupIssueId(connection.get(), issueKey);
+    const std::string ticketId = lookupTicketId(connection.get(), ticketKey);
     auto result = execParams(connection.get(),
-                             std::string(AttachmentSelect) + "WHERE a.issue_id = $1 AND a.deleted_at IS NULL ORDER BY a.created_at",
-                             {issueId}, "List attachments");
+                             std::string(AttachmentSelect) + "WHERE a.ticket_id = $1 AND a.deleted_at IS NULL ORDER BY a.created_at",
+                             {ticketId}, "List attachments");
     std::vector<Domain::Attachment> attachments;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
         attachments.push_back(readAttachment(result.get(), row));
@@ -2318,16 +2318,16 @@ bool PostgresDatabase::permanentlyDeleteAttachment(const std::string& attachment
     return std::string(PQcmdTuples(result.get())) != "0";
 }
 
-std::vector<std::string> PostgresDatabase::listAttachmentStorageKeysForIssue(const std::string& issueKey) {
+std::vector<std::string> PostgresDatabase::listAttachmentStorageKeysForTicket(const std::string& ticketKey) {
     auto connection = connect(connectionString_);
-    // Deliberately does not use lookupIssueId (which excludes soft-deleted
-    // issues): this is called right before a permanent delete, at which
-    // point the issue is expected to already be soft-deleted.
+    // Deliberately does not use lookupTicketId (which excludes soft-deleted
+    // tickets): this is called right before a permanent delete, at which
+    // point the ticket is expected to already be soft-deleted.
     auto result = execParams(connection.get(), R"SQL(
-SELECT a.storage_key FROM attachments a JOIN issues i ON i.id = a.issue_id
-WHERE i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1)
+SELECT a.storage_key FROM attachments a JOIN tickets i ON i.id = a.ticket_id
+WHERE i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1)
 )SQL",
-                             {issueKey}, "List attachment storage keys for issue");
+                             {ticketKey}, "List attachment storage keys for ticket");
     std::vector<std::string> keys;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
         keys.push_back(value(result.get(), row, 0));
@@ -2339,7 +2339,7 @@ std::vector<std::string> PostgresDatabase::listAttachmentStorageKeysForProject(c
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), R"SQL(
 SELECT a.storage_key FROM attachments a
-JOIN issues i ON i.id = a.issue_id
+JOIN tickets i ON i.id = a.ticket_id
 JOIN projects p ON p.id = i.project_id
 WHERE p.project_key = $1
 )SQL",

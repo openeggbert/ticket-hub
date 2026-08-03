@@ -1,6 +1,6 @@
 # Ticket Hub
 
-Ticket Hub is a self-hosted Jira-like Software issue tracker written in C++20. It uses Crow for HTTP, vanilla HTML/CSS/JavaScript for the web interface, PostgreSQL as the primary production database and SQLite as a smaller single-process backend.
+Ticket Hub is a self-hosted Jira-like Software ticket tracker written in C++20. It uses Crow for HTTP, vanilla HTML/CSS/JavaScript for the web interface, PostgreSQL as the primary production database and SQLite as a smaller single-process backend.
 
 License: MIT.  
 Main namespace: `TicketHub`.
@@ -13,79 +13,79 @@ reference. **The entire reduced-scope V1 roadmap is now complete** (`docs/REDUCE
 Milestones 1-4 / Phases 1-8), including Docker/Compose packaging, light/dark theme, an accessibility
 baseline pass, and a threat-model/security self-review (`docs/THREAT_MODEL.md`) that found and fixed a
 real access-control bug. Four batches of optional, non-roadmap follow-up have been added since -- a web UI
-for managing personal access tokens/active sessions, re-typing/re-parenting an issue after creation (the
+for managing personal access tokens/active sessions, re-typing/re-parenting a ticket after creation (the
 one gap left open since Phase 3), Kanban board drag-and-drop, and a bulk Done-status picker plus keyboard
 multi-select -- which closed out the entire optional-follow-up list identified when the roadmap closed.
-Since then, one further user-requested addition: Jira-style `/browse/{key}` direct issue links with full
+Since then, one further user-requested addition: Jira-style `/browse/{key}` direct ticket links with full
 browser history support. See `NEXT.md`'s "The roadmap is now complete" section for the exact closing
 detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
 Implemented now:
 
-- projects and transactional project-local issue keys,
-- issue list/detail/create, status changes, labels and comments,
-- **a demo web UI covering every Phase 1-3 write route** (login, hierarchy/resolution pickers, full issue
+- projects and transactional project-local ticket keys,
+- ticket list/detail/create, status changes, labels and comments,
+- **a demo web UI covering every Phase 1-3 write route** (login, hierarchy/resolution pickers, full ticket
   edit/clone/links/watch-vote/delete, project management, both recycle bins, reorder/move/bulk actions —
   browser-verified with Playwright/Chromium, see "Server verification" below) plus a simple Kanban board,
 - **local accounts: Argon2id password hashing, server-side sessions, minimal login-attempt lockout**
   (`AuthService` — Phase 1 of `docs/REDUCED_SCOPE_ROADMAP.md`),
 - **administrator-only account creation via `ticket-hub-cli create-user`** — there is no
   self-registration or invitation flow in V1,
-- **fixed project roles (Viewer/Member/Admin) and a global administrator flag, enforced on every issue
+- **fixed project roles (Viewer/Member/Admin) and a global administrator flag, enforced on every ticket
   and project write** (`TicketService::requireProjectRole`/`requireGlobalAdmin` — Phase 2 of
   `docs/REDUCED_SCOPE_ROADMAP.md`),
 - **project lifecycle: create (global admin), archive/unarchive (project admin), recycle bin with fixed
   90-day on-demand retention, restore, and permanent delete (global admin)**,
 - **installation-wide anonymous read-access toggle, off by default** — every read use case takes an
   optional `Principal`; an anonymous caller is rejected unless the toggle is on,
-- **fixed Epic → Story/Task/Bug → Sub-task hierarchy, enforced on issue creation** (`TicketService::
+- **fixed Epic → Story/Task/Bug → Sub-task hierarchy, enforced on ticket creation** (`TicketService::
   requireValidHierarchy` — Phase 3 of `docs/REDUCED_SCOPE_ROADMAP.md`, partial): a Sub-task requires a
   same-project Story/Task/Bug parent, an Epic may not have a parent, an optional Story/Task/Bug parent
   must be an Epic,
-- **the fixed workflow's hardcoded transition rules, enforced transactionally in `changeIssueStatus`**:
-  a resolution is required to complete an issue and is cleared automatically on reopen, and an issue
+- **the fixed workflow's hardcoded transition rules, enforced transactionally in `changeTicketStatus`**:
+  a resolution is required to complete a ticket and is cleared automatically on reopen, and a ticket
   cannot complete while it has an unfinished sub-task,
-- **full-replacement issue edit with optimistic locking** (D129): summary, description, priority,
+- **full-replacement ticket edit with optimistic locking** (D129): summary, description, priority,
   assignee, story points, due date and labels, sharing the same `expectedVersion`/409 contract as status
-  changes, with one `issue_history` row per field that actually changed,
-- **the fixed issue-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
-  both linked issues with the correct outward/inward label; creating or deleting a link requires access
+  changes, with one `ticket_history` row per field that actually changed,
+- **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
+  both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
-- **simple field-copy cloning** (D60): summary/description/type/priority/labels copied into a new issue,
+- **simple field-copy cloning** (D60): summary/description/type/priority/labels copied into a new ticket,
   with an automatic `clones` link back to the original,
-- **self-service watching and voting** (D20/D79): any authenticated user may watch or vote on any issue
+- **self-service watching and voting** (D20/D79): any authenticated user may watch or vote on any ticket
   — the one write with no project-role requirement — idempotent on repeat, with a visible watcher/voter
   list,
-- **issue recycle bin** (D22): soft delete (project admin), restore/list/permanent delete (global admin
+- **ticket recycle bin** (D22): soft delete (project admin), restore/list/permanent delete (global admin
   only), fixed 90-day on-demand retention — mirrors the project recycle bin exactly,
-- **simple bulk actions** (D36): status/assignee/label/recycle applied to a list of issue keys, each
-  through the same single-issue operation and authorization as doing it one at a time; a partial failure
+- **simple bulk actions** (D36): status/assignee/label/recycle applied to a list of ticket keys, each
+  through the same single-ticket operation and authorization as doing it one at a time; a partial failure
   is reported, not rolled back,
 - **simple integer manual ordering with renumbering** (D31): a per-project `rank_order`, replacing the
-  never-used LexoRank-style `rank_value` placeholder; moving an issue renumbers the whole project's issue
+  never-used LexoRank-style `rank_value` placeholder; moving a ticket renumbers the whole project's ticket
   list in one pass rather than using a minimal-diff/fractional scheme,
-- **moving an issue to a different project** (D37): no compatibility check is needed since every project
+- **moving a ticket to a different project** (D37): no compatibility check is needed since every project
   shares the same fixed types/workflow/fields — a move is a `project_id` change plus a freshly allocated
-  key/number, exactly like creating a new issue there; rejected if the issue has a parent or any children;
+  key/number, exactly like creating a new ticket there; rejected if the ticket has a parent or any children;
   requires project-Member-or-above on both the source and target projects,
 - **comment editing and tombstone delete** (D81/D82/D83, Phase 4, partial): an `edited_at` timestamp
-  instead of a version-history table; soft-delete via the same columns issues/projects already use, no
+  instead of a version-history table; soft-delete via the same columns tickets/projects already use, no
   separate admin recycle-bin API for comments; simplified permissions — the comment's own author can
   always edit/delete it, otherwise the actor needs project-Admin-or-above (or global admin),
-- every issue/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
+- every ticket/comment/project write now takes an explicit `Principal` instead of a fixed demo user,
 - PostgreSQL and SQLite adapters,
 - ordered schema migration discovery with stored checksums,
 - PostgreSQL migration advisory lock,
-- issue optimistic-lock versioning for status updates,
-- permanent project key-alias schema foundation, and a permanent issue key-alias mechanism actually
-  written to by `moveIssue` (D38): the vacated key stays permanently resolvable to the moved issue,
+- ticket optimistic-lock versioning for status updates,
+- permanent project key-alias schema foundation, and a permanent ticket key-alias mechanism actually
+  written to by `moveTicket` (D38): the vacated key stays permanently resolvable to the moved ticket,
 - recycle-bin schema foundations and live-query filtering,
 - domain, migration, crypto, SQLite integration, identity, authorization, and workflow tests (see "Known
   verification limitation" below for what is *not* yet compiled/tested in this environment),
 - **Phase 4 (Collaboration) and Phase 5 (Attachments and Kanban board) are both fully complete**, closing
   out Milestone 2: fixed emoji reactions, @mention handles and in-app notifications, the Markdown editor
   (toolbar/live preview/full upload+drag-drop+paste attachment support), simplified worklogs, the
-  admin/security audit log, ad-hoc issue filter/search widening, the personal dashboard, Kanban board WIP
+  admin/security audit log, ad-hoc ticket filter/search widening, the personal dashboard, Kanban board WIP
   limits, and the full attachments vertical (local filesystem storage, four native-element previews,
   sortable list, recycle bin) — see the batch-by-batch history below and `docs/VERIFICATION.md` for exactly
   what was built and verified in each.
@@ -282,14 +282,14 @@ build and run normally in any environment with ordinary Docker Hub network acces
 The API now lives under a formal `/api/v1` prefix (D127) -- every route below except `GET /api/health`
 (kept unversioned, following the common convention that infra/monitoring health checks live outside API
 versioning; not specified by any decision text, a conservative choice documented here explicitly).
-`GET /api/v1/issues` supports numbered/offset pagination (D126): optional `page` (1-based, default 1) and
+`GET /api/v1/tickets` supports numbered/offset pagination (D126): optional `page` (1-based, default 1) and
 `pageSize` (default and max 200, D125's "max page size" -- no admin exceptions) query parameters. The
 response envelope is `{"items": [...], "page", "pageSize", "totalItems", "totalPages"}`; a caller that
 sends neither parameter gets exactly the same result set the route always returned (the pre-existing,
 previously undocumented 200-row cap this fixes the silent-truncation transparency of), now with an
 honest `totalItems` so a caller can tell whether more rows exist. No other list endpoint is paginated yet
 -- this is a deliberate, documented partial rollout of D126, not full coverage. Every JSON request body
-is capped at 1 MiB (`413` if exceeded) and every bulk-action `issueKeys` array is capped at 200 items
+is capped at 1 MiB (`413` if exceeded) and every bulk-action `ticketKeys` array is capped at 200 items
 (`400` if exceeded) -- fixed constants, no admin configuration, per D125. PAT authentication (D39/D40) is
 already live: every
 route below marked "session" also accepts an `Authorization: Bearer <token>` header from a personal
@@ -315,7 +315,7 @@ trip; there is no admin configuration for either limit.
 | `DELETE` | `/api/v1/tokens/{id}` | session + CSRF | revoke one of the caller's own tokens |
 | `GET` | `/api/v1/sessions` | session (not PAT) | the caller's own active web sessions, with `isCurrent` marked (D54) |
 | `POST` | `/api/v1/sessions/sign-out-others` | session + CSRF (not PAT) | signs out every other session for the caller, keeps the current one |
-| `GET` | `/api/v1/dashboard` | session, or anon if enabled | counts, recent issues, and (authenticated only, D24) assigned-to-me/watched/upcoming-deadline issues |
+| `GET` | `/api/v1/dashboard` | session, or anon if enabled | counts, recent tickets, and (authenticated only, D24) assigned-to-me/watched/upcoming-deadline tickets |
 | `GET` | `/api/v1/board-columns` | session, or anon if enabled | one entry per fixed workflow status with its optional soft WIP limit (D32/D33) |
 | `PUT` | `/api/v1/board-columns/{statusKey}` | session + CSRF, global admin | `{wipLimit}` (number or null); installation-wide, not per-project |
 | `GET` | `/api/v1/users` | session | user directory (id/displayName/email/handle) for @mention autocomplete (D80) |
@@ -335,117 +335,117 @@ trip; there is no admin configuration for either limit.
 | `PUT` | `/api/v1/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
 | `GET` | `/api/v1/settings/latest-known-version` | session, global admin | `{currentVersion, latestKnownVersion, updateAvailable}` (D112) |
 | `PUT` | `/api/v1/settings/latest-known-version` | session + CSRF, global admin | `{version}` -- sets what the admin banner compares against |
-| `GET` | `/api/v1/issues` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126) |
-| `GET` | `/api/v1/issues/export.csv` | session, or anon if enabled | read-only CSV export of issues (D48), same filters as above |
-| `POST` | `/api/v1/issues` | session + CSRF, project member | create issue (`assigneeEmail`, `parentIssueKey`) |
-| `GET` | `/api/v1/issues/{key}` | session, or anon if enabled | current key or permanent alias |
-| `PATCH` | `/api/v1/issues/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
-| `PATCH` | `/api/v1/issues/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
-| `GET` | `/api/v1/issues/{key}/comments` | session, or anon if enabled | live comments |
-| `POST` | `/api/v1/issues/{key}/comments` | session + CSRF, project member | add comment |
-| `PATCH` | `/api/v1/issues/{key}/comments/{id}` | session + CSRF, author or project admin | `{body, expectedVersion?}` — full-replacement edit (D81) |
-| `DELETE` | `/api/v1/issues/{key}/comments/{id}` | session + CSRF, author or project admin | tombstone delete (D82) |
-| `GET` | `/api/v1/issues/{key}/comments/{id}/reactions` | session, or anon if enabled | current reactions |
-| `POST`/`DELETE` | `/api/v1/issues/{key}/comments/{id}/reactions/{key}` | session + CSRF | react/un-react (no project role required, D84) |
-| `GET` | `/api/v1/issues/{key}/worklogs` | session, or anon if enabled | logged time entries |
-| `POST` | `/api/v1/issues/{key}/worklogs` | session + CSRF, project member | `{workDate, timeSpentSeconds, comment?}` (D12/D13) |
-| `PATCH` | `/api/v1/issues/{key}/worklogs/{id}` | session + CSRF, project member | full-replacement edit, no own-vs-others split |
-| `DELETE` | `/api/v1/issues/{key}/worklogs/{id}` | session + CSRF, project member | tombstone delete, no own-vs-others split |
-| `GET` | `/api/v1/issues/{key}/attachments` | session, or anon if enabled | active attachments (D15/D98-D105) |
-| `POST` | `/api/v1/issues/{key}/attachments` | session + CSRF, project member | `multipart/form-data`, one `file` part; fixed 25MB/20-per-issue limits, D98 |
-| `DELETE` | `/api/v1/issues/{key}/attachments/{id}` | session + CSRF, uploader or project admin | tombstone delete (D101) |
-| `GET` | `/api/v1/attachments/{id}/download` | session, or anon if enabled | raw bytes with `Content-Type`/`Content-Disposition`; not nested under `/issues/{key}`, since a download/preview URL only ever needs the id |
+| `GET` | `/api/v1/tickets` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126) |
+| `GET` | `/api/v1/tickets/export.csv` | session, or anon if enabled | read-only CSV export of tickets (D48), same filters as above |
+| `POST` | `/api/v1/tickets` | session + CSRF, project member | create ticket (`assigneeEmail`, `parentTicketKey`) |
+| `GET` | `/api/v1/tickets/{key}` | session, or anon if enabled | current key or permanent alias |
+| `PATCH` | `/api/v1/tickets/{key}` | session + CSRF, project member | full-replacement edit (D129); see below |
+| `PATCH` | `/api/v1/tickets/{key}/status` | session + CSRF, project member | `{statusKey, resolution?, expectedVersion?}` |
+| `GET` | `/api/v1/tickets/{key}/comments` | session, or anon if enabled | live comments |
+| `POST` | `/api/v1/tickets/{key}/comments` | session + CSRF, project member | add comment |
+| `PATCH` | `/api/v1/tickets/{key}/comments/{id}` | session + CSRF, author or project admin | `{body, expectedVersion?}` — full-replacement edit (D81) |
+| `DELETE` | `/api/v1/tickets/{key}/comments/{id}` | session + CSRF, author or project admin | tombstone delete (D82) |
+| `GET` | `/api/v1/tickets/{key}/comments/{id}/reactions` | session, or anon if enabled | current reactions |
+| `POST`/`DELETE` | `/api/v1/tickets/{key}/comments/{id}/reactions/{key}` | session + CSRF | react/un-react (no project role required, D84) |
+| `GET` | `/api/v1/tickets/{key}/worklogs` | session, or anon if enabled | logged time entries |
+| `POST` | `/api/v1/tickets/{key}/worklogs` | session + CSRF, project member | `{workDate, timeSpentSeconds, comment?}` (D12/D13) |
+| `PATCH` | `/api/v1/tickets/{key}/worklogs/{id}` | session + CSRF, project member | full-replacement edit, no own-vs-others split |
+| `DELETE` | `/api/v1/tickets/{key}/worklogs/{id}` | session + CSRF, project member | tombstone delete, no own-vs-others split |
+| `GET` | `/api/v1/tickets/{key}/attachments` | session, or anon if enabled | active attachments (D15/D98-D105) |
+| `POST` | `/api/v1/tickets/{key}/attachments` | session + CSRF, project member | `multipart/form-data`, one `file` part; fixed 25MB/20-per-ticket limits, D98 |
+| `DELETE` | `/api/v1/tickets/{key}/attachments/{id}` | session + CSRF, uploader or project admin | tombstone delete (D101) |
+| `GET` | `/api/v1/attachments/{id}/download` | session, or anon if enabled | raw bytes with `Content-Type`/`Content-Disposition`; not nested under `/tickets/{key}`, since a download/preview URL only ever needs the id |
 | `GET` | `/api/v1/attachments/deleted` | session, global admin | recycle bin, 90-day on-demand retention (D102) |
 | `POST` | `/api/v1/attachments/{id}/restore` | session + CSRF, global admin | restore from recycle bin |
 | `DELETE` | `/api/v1/attachments/{id}/permanent` | session + CSRF, global admin | permanently delete (and its file) |
-| `POST` | `/api/v1/issues/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
-| `POST` | `/api/v1/issues/{key}/reorder` | session + CSRF, project member | `{beforeIssueKey?}` — manual ordering (D31) |
-| `POST` | `/api/v1/issues/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
-| `GET` | `/api/v1/issues/{key}/links` | session, or anon if enabled | links from both ends |
-| `POST` | `/api/v1/issues/{key}/links` | session + CSRF, member of both projects | `{targetIssueKey, linkType}` |
-| `DELETE` | `/api/v1/issue-links/{id}` | session + CSRF, member of both projects | remove a link |
-| `GET` | `/api/v1/issues/{key}/watchers` | session, or anon if enabled | current watchers |
-| `POST`/`DELETE` | `/api/v1/issues/{key}/watch` | session + CSRF | watch/unwatch (no project role required) |
-| `GET` | `/api/v1/issues/{key}/voters` | session, or anon if enabled | current voters |
-| `POST`/`DELETE` | `/api/v1/issues/{key}/vote` | session + CSRF | vote/unvote (no project role required) |
-| `DELETE` | `/api/v1/issues/{key}` | session + CSRF, project admin | move issue to recycle bin |
-| `GET` | `/api/v1/issues/deleted` | session, global admin | list issue recycle bin |
-| `POST` | `/api/v1/issues/{key}/restore` | session + CSRF, global admin | restore issue from recycle bin |
-| `DELETE` | `/api/v1/issues/{key}/permanent` | session + CSRF, global admin | permanently delete issue |
-| `POST` | `/api/v1/issues/bulk/status` | session + CSRF, project member per issue | `{issueKeys[], statusKey, resolution?}` |
-| `POST` | `/api/v1/issues/bulk/assign` | session + CSRF, project member per issue | `{issueKeys[], assigneeEmail?}` |
-| `POST` | `/api/v1/issues/bulk/label` | session + CSRF, project member per issue | `{issueKeys[], label}` |
-| `POST` | `/api/v1/issues/bulk/delete` | session + CSRF, project admin per issue | `{issueKeys[]}` |
+| `POST` | `/api/v1/tickets/{key}/clone` | session + CSRF, project member | simple field-copy clone (D60) |
+| `POST` | `/api/v1/tickets/{key}/reorder` | session + CSRF, project member | `{beforeTicketKey?}` — manual ordering (D31) |
+| `POST` | `/api/v1/tickets/{key}/move` | session + CSRF, member of both projects | `{targetProjectKey}` — move to another project (D37) |
+| `GET` | `/api/v1/tickets/{key}/links` | session, or anon if enabled | links from both ends |
+| `POST` | `/api/v1/tickets/{key}/links` | session + CSRF, member of both projects | `{targetTicketKey, linkType}` |
+| `DELETE` | `/api/v1/ticket-links/{id}` | session + CSRF, member of both projects | remove a link |
+| `GET` | `/api/v1/tickets/{key}/watchers` | session, or anon if enabled | current watchers |
+| `POST`/`DELETE` | `/api/v1/tickets/{key}/watch` | session + CSRF | watch/unwatch (no project role required) |
+| `GET` | `/api/v1/tickets/{key}/voters` | session, or anon if enabled | current voters |
+| `POST`/`DELETE` | `/api/v1/tickets/{key}/vote` | session + CSRF | vote/unvote (no project role required) |
+| `DELETE` | `/api/v1/tickets/{key}` | session + CSRF, project admin | move ticket to recycle bin |
+| `GET` | `/api/v1/tickets/deleted` | session, global admin | list ticket recycle bin |
+| `POST` | `/api/v1/tickets/{key}/restore` | session + CSRF, global admin | restore ticket from recycle bin |
+| `DELETE` | `/api/v1/tickets/{key}/permanent` | session + CSRF, global admin | permanently delete ticket |
+| `POST` | `/api/v1/tickets/bulk/status` | session + CSRF, project member per ticket | `{ticketKeys[], statusKey, resolution?}` |
+| `POST` | `/api/v1/tickets/bulk/assign` | session + CSRF, project member per ticket | `{ticketKeys[], assigneeEmail?}` |
+| `POST` | `/api/v1/tickets/bulk/label` | session + CSRF, project member per ticket | `{ticketKeys[], label}` |
+| `POST` | `/api/v1/tickets/bulk/delete` | session + CSRF, project admin per ticket | `{ticketKeys[]}` |
 
-Every `POST /api/v1/issues/bulk/*` route returns `{succeeded: [...], failed: [...]}` — issue keys, not a
+Every `POST /api/v1/tickets/bulk/*` route returns `{succeeded: [...], failed: [...]}` — ticket keys, not a
 single status code — since each key is authorized and processed independently and a partial failure
-(unknown key, insufficient role for that particular issue, a workflow-rule violation) does not roll back
+(unknown key, insufficient role for that particular ticket, a workflow-rule violation) does not roll back
 the keys that already succeeded.
 
-`PATCH /api/v1/issues/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
-priorityKey, issueTypeKey, parentIssueKey?, assigneeEmail?, storyPoints?, dueDate?, labels?,
+`PATCH /api/v1/tickets/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
+priorityKey, ticketTypeKey, parentTicketKey?, assigneeEmail?, storyPoints?, dueDate?, labels?,
 expectedVersion?}`. Every editable field is always the caller's intended final value (e.g. omitting
-`assigneeEmail` unassigns the issue, it does not leave the current assignee alone) -- the caller is
-expected to pre-populate the request from the current issue. `issueTypeKey`/`parentIssueKey` re-typing/
-re-parenting (post-V1 follow-up) re-validates the fixed hierarchy shape exactly like `POST /api/v1/issues`
+`assigneeEmail` unassigns the ticket, it does not leave the current assignee alone) -- the caller is
+expected to pre-populate the request from the current ticket. `ticketTypeKey`/`parentTicketKey` re-typing/
+re-parenting (post-V1 follow-up) re-validates the fixed hierarchy shape exactly like `POST /api/v1/tickets`
 does at creation, plus rejects self-parenting; retyping across hierarchy levels (Epic <-> Story/Task/Bug
-<-> Sub-task) is additionally rejected while the issue currently has child issues (checked transactionally
+<-> Sub-task) is additionally rejected while the ticket currently has child tickets (checked transactionally
 inside the database layer, since it depends on concurrent state) -- same-level retyping (e.g. Task -> Bug)
 is always allowed.
 
-Issue responses include `version` and `resolution`. A stale `expectedVersion` returns HTTP 409. A
+Ticket responses include `version` and `resolution`. A stale `expectedVersion` returns HTTP 409. A
 missing/insufficient project role or global-admin requirement returns HTTP 403. An anonymous read while
 the toggle is off returns HTTP 401. A request that violates the fixed workflow's hardcoded rules --
-completing an issue without a `resolution`, an unrecognized `resolution`, or completing an issue that
-still has an unfinished sub-task -- returns HTTP 422. `parentIssueKey` on issue creation is validated
+completing a ticket without a `resolution`, an unrecognized `resolution`, or completing a ticket that
+still has an unfinished sub-task -- returns HTTP 422. `parentTicketKey` on ticket creation is validated
 against the fixed Epic/Sub-task hierarchy (a Sub-task requires a same-project Story/Task/Bug parent, an
 Epic may not have one, a Story/Task/Bug's optional parent must be a same-project Epic); a violation
 returns HTTP 400, same as any other invalid request field.
 
-`POST /api/v1/issues/{key}/reorder` moves the issue to immediately before `beforeIssueKey` (which must be in
-the same project), or to the end of the project if `beforeIssueKey` is omitted/null; the response is the
-reordered issue, with the whole project's `rankOrder` values renumbered in one pass. `POST
-/api/v1/issues/{key}/move` moves the issue to `targetProjectKey`, allocating a new key/number there; the
-vacated key becomes a permanent alias (`GET /api/v1/issues/{oldKey}` keeps resolving to it). Both return
-HTTP 400 for an unknown/cross-project anchor, an unknown target project, moving to the issue's current
-project, or moving an issue that has a parent or any children.
+`POST /api/v1/tickets/{key}/reorder` moves the ticket to immediately before `beforeTicketKey` (which must be in
+the same project), or to the end of the project if `beforeTicketKey` is omitted/null; the response is the
+reordered ticket, with the whole project's `rankOrder` values renumbered in one pass. `POST
+/api/v1/tickets/{key}/move` moves the ticket to `targetProjectKey`, allocating a new key/number there; the
+vacated key becomes a permanent alias (`GET /api/v1/tickets/{oldKey}` keeps resolving to it). Both return
+HTTP 400 for an unknown/cross-project anchor, an unknown target project, moving to the ticket's current
+project, or moving a ticket that has a parent or any children.
 
-`linkType` on `POST /api/v1/issues/{key}/links` must be one of the fixed catalog (`blocks`, `relates_to`,
+`linkType` on `POST /api/v1/tickets/{key}/links` must be one of the fixed catalog (`blocks`, `relates_to`,
 `duplicates`, `clones`); there is no admin-configurable link-type list. Both the source and target
-issue's projects must be accessible to the actor (project-Member-or-above), not just the source's.
+ticket's projects must be accessible to the actor (project-Member-or-above), not just the source's.
 
-`PATCH /api/v1/issues/{key}/comments/{id}` is a full-replacement edit of `body` (D81), sharing the same
-`expectedVersion`/409 optimistic-locking contract as issue edits, and sets an `editedAt` timestamp on the
+`PATCH /api/v1/tickets/{key}/comments/{id}` is a full-replacement edit of `body` (D81), sharing the same
+`expectedVersion`/409 optimistic-locking contract as ticket edits, and sets an `editedAt` timestamp on the
 response -- there is no stored history of the comment's prior text, just the fact that it was edited.
-`DELETE /api/v1/issues/{key}/comments/{id}` is a tombstone delete (D82): the row and original body stay in
-the database, simply excluded from `GET /api/v1/issues/{key}/comments` afterward -- there is no separate
-recycle-bin API for comments, unlike issues and projects. Permissions on both are simplified (D83): the
+`DELETE /api/v1/tickets/{key}/comments/{id}` is a tombstone delete (D82): the row and original body stay in
+the database, simply excluded from `GET /api/v1/tickets/{key}/comments` afterward -- there is no separate
+recycle-bin API for comments, unlike tickets and projects. Permissions on both are simplified (D83): the
 comment's own author may always edit/delete it; otherwise the actor needs project-Admin-or-above (or
 global admin) — not the edit-own/edit-all/delete-own/delete-all matrix the original spec described.
 
-The watch/vote routes are the one exception among issue writes: they require only an authenticated
+The watch/vote routes are the one exception among ticket writes: they require only an authenticated
 session, not project-Member-or-above, since watching/voting is self-referential and doesn't mutate the
-issue itself. `POST` is idempotent (watching/voting twice is a no-op, still `200`); `DELETE` on a watch/
+ticket itself. `POST` is idempotent (watching/voting twice is a no-op, still `200`); `DELETE` on a watch/
 vote that doesn't exist is also `200`, not `404`.
 
-`{key}` in `POST`/`DELETE /api/v1/issues/{key}/comments/{id}/reactions/{key}` is a path segment from the
+`{key}` in `POST`/`DELETE /api/v1/tickets/{key}/comments/{id}/reactions/{key}` is a path segment from the
 fixed eight-reaction catalog (D84: `thumbs_up`, `thumbs_down`, `laugh`, `hooray`, `confused`, `heart`,
 `rocket`, `eyes` -- GitHub's well-known reaction set, chosen as a conservative default since the decision
 register calls for "a fixed reaction set" without enumerating one). Reactions are self-service like
 watch/vote (no project-role check), and each user may add each reaction key at most once per comment;
 `POST`/`DELETE` are idempotent the same way watch/vote are. `GET .../reactions` returns
 `{items: [{reactionKey, user}, ...]}` -- the caller groups by `reactionKey` for counts/highlighting, the
-same "server stays dumb, client aggregates" split used for issue links.
+same "server stays dumb, client aggregates" split used for ticket links.
 
 `GET /api/v1/users` is a directory listing (id/displayName/email/handle only -- no isAdmin/active/timeZone),
 requiring a session even when the installation-wide anonymous-read toggle is on, since the user directory
-is more sensitive than issue data. It backs @mention autocomplete (D80) and is the only way the demo UI
+is more sensitive than ticket data. It backs @mention autocomplete (D80) and is the only way the demo UI
 discovers handles.
 
 The fixed in-app notification set (D14) is created as a side effect of three existing writes, never
-directly by an API caller: `POST`/`PATCH /api/v1/issues` notifies a newly-set or changed assignee (skipping
-self-assignment and a no-op re-save with the same assignee); `POST /api/v1/issues/{key}/comments` notifies
-every `@handle` mention resolved in the body (D80) and every watcher of the issue except the comment's
+directly by an API caller: `POST`/`PATCH /api/v1/tickets` notifies a newly-set or changed assignee (skipping
+self-assignment and a no-op re-save with the same assignee); `POST /api/v1/tickets/{key}/comments` notifies
+every `@handle` mention resolved in the body (D80) and every watcher of the ticket except the comment's
 own author, with mentioned taking priority over watched for a recipient who is both (one notification,
 not two). `GET /api/v1/notifications` and `GET /api/v1/notifications/unread-count` are always scoped to the
 caller's own notifications; `POST /api/v1/notifications/{id}/read` returns `{ok: false}` rather than 404 for

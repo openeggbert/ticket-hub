@@ -55,20 +55,20 @@ std::set<std::string> extractMentionedHandles(const std::string& body) {
     return handles;
 }
 
-// Used by the single-field bulk actions (assign, add label): editIssue is a
+// Used by the single-field bulk actions (assign, add label): editTicket is a
 // full-replacement PUT, so a single-field bulk change still has to carry
 // every other current field forward unchanged.
-Domain::EditIssueRequest editRequestFrom(const Domain::Issue& issue) {
-    Domain::EditIssueRequest request;
-    request.summary = issue.summary;
-    request.description = issue.description;
-    request.priorityKey = issue.priority.key;
-    request.assigneeEmail = issue.assignee ? std::optional<std::string>(issue.assignee->email) : std::nullopt;
-    request.labels = issue.labels;
-    request.storyPoints = issue.storyPoints;
-    request.dueDate = issue.dueDate;
-    request.issueTypeKey = issue.type.key;
-    request.parentIssueKey = issue.parentIssueKey;
+Domain::EditTicketRequest editRequestFrom(const Domain::Ticket& ticket) {
+    Domain::EditTicketRequest request;
+    request.summary = ticket.summary;
+    request.description = ticket.description;
+    request.priorityKey = ticket.priority.key;
+    request.assigneeEmail = ticket.assignee ? std::optional<std::string>(ticket.assignee->email) : std::nullopt;
+    request.labels = ticket.labels;
+    request.storyPoints = ticket.storyPoints;
+    request.dueDate = ticket.dueDate;
+    request.ticketTypeKey = ticket.type.key;
+    request.parentTicketKey = ticket.parentTicketKey;
     return request;
 }
 } // namespace
@@ -108,47 +108,47 @@ void TicketService::requireReadAccess(const std::optional<Domain::Principal>& ac
     }
 }
 
-void TicketService::requireValidHierarchy(Domain::CreateIssueRequest& request) {
-    validateHierarchyShape(request.issueTypeKey, request.parentIssueKey, request.projectKey, std::nullopt);
+void TicketService::requireValidHierarchy(Domain::CreateTicketRequest& request) {
+    validateHierarchyShape(request.ticketTypeKey, request.parentTicketKey, request.projectKey, std::nullopt);
 }
 
-void TicketService::validateHierarchyShape(const std::string& issueTypeKey,
-                                           std::optional<std::string>& parentIssueKey,
+void TicketService::validateHierarchyShape(const std::string& ticketTypeKey,
+                                           std::optional<std::string>& parentTicketKey,
                                            const std::string& projectKey,
                                            const std::optional<std::string>& excludeSelfKey) {
-    const int level = Domain::issueTypeHierarchyLevel(issueTypeKey);
-    const bool hasParent = parentIssueKey.has_value() && !parentIssueKey->empty();
+    const int level = Domain::ticketTypeHierarchyLevel(ticketTypeKey);
+    const bool hasParent = parentTicketKey.has_value() && !parentTicketKey->empty();
 
     if (level == 1 && hasParent) {
-        throw std::invalid_argument("An Epic cannot have a parent issue");
+        throw std::invalid_argument("An Epic cannot have a parent ticket");
     }
     if (level == -1 && !hasParent) {
-        throw std::invalid_argument("A sub-task must have a parent issue");
+        throw std::invalid_argument("A sub-task must have a parent ticket");
     }
     if (!hasParent) {
-        parentIssueKey = std::nullopt;
+        parentTicketKey = std::nullopt;
         return;
     }
 
-    const std::string parentKey = Domain::normalizeIssueKey(*parentIssueKey);
+    const std::string parentKey = Domain::normalizeTicketKey(*parentTicketKey);
     if (excludeSelfKey && parentKey == *excludeSelfKey) {
-        throw std::invalid_argument("An issue cannot be its own parent");
+        throw std::invalid_argument("A ticket cannot be its own parent");
     }
-    const auto parent = database_->findIssueByKey(parentKey);
+    const auto parent = database_->findTicketByKey(parentKey);
     if (!parent) {
-        throw std::invalid_argument("Unknown parent issue: " + parentKey);
+        throw std::invalid_argument("Unknown parent ticket: " + parentKey);
     }
     if (parent->projectKey != projectKey) {
-        throw std::invalid_argument("A parent issue must be in the same project");
+        throw std::invalid_argument("A parent ticket must be in the same project");
     }
-    const int parentLevel = Domain::issueTypeHierarchyLevel(parent->type.key);
+    const int parentLevel = Domain::ticketTypeHierarchyLevel(parent->type.key);
     if (level == -1 && parentLevel != 0) {
         throw std::invalid_argument("A sub-task's parent must be a Story, Task, or Bug");
     }
     if (level == 0 && parentLevel != 1) {
         throw std::invalid_argument("A Story/Task/Bug's parent must be an Epic");
     }
-    parentIssueKey = parentKey;
+    parentTicketKey = parentKey;
 }
 
 std::string TicketService::backendName() const {
@@ -188,17 +188,17 @@ std::vector<Domain::Project> TicketService::listProjects(const std::optional<Dom
     return database_->listProjects();
 }
 
-std::vector<Domain::Issue> TicketService::listIssues(const Domain::IssueFilter& filter,
+std::vector<Domain::Ticket> TicketService::listTickets(const Domain::TicketFilter& filter,
                                                       const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
     auto normalized = filter;
     if (normalized.projectKey) {
         normalized.projectKey = Domain::normalizeProjectKey(*normalized.projectKey);
     }
-    return database_->listIssues(normalized);
+    return database_->listTickets(normalized);
 }
 
-Domain::Page<Domain::Issue> TicketService::listIssuesPaged(const Domain::IssueFilter& filter,
+Domain::Page<Domain::Ticket> TicketService::listTicketsPaged(const Domain::TicketFilter& filter,
                                                             int page,
                                                             int pageSize,
                                                             const std::optional<Domain::Principal>& actor) {
@@ -216,21 +216,21 @@ Domain::Page<Domain::Issue> TicketService::listIssuesPaged(const Domain::IssueFi
     const int clampedPageSize = std::clamp(pageSize, 1, Domain::MaxPageSize);
     const int offset = (clampedPage - 1) * clampedPageSize;
 
-    Domain::Page<Domain::Issue> result;
+    Domain::Page<Domain::Ticket> result;
     result.page = clampedPage;
     result.pageSize = clampedPageSize;
-    result.totalItems = database_->countIssues(normalized);
-    result.items = database_->listIssues(normalized, clampedPageSize, offset);
+    result.totalItems = database_->countTickets(normalized);
+    result.items = database_->listTickets(normalized, clampedPageSize, offset);
     return result;
 }
 
-std::optional<Domain::Issue> TicketService::findIssue(const std::string& issueKey,
+std::optional<Domain::Ticket> TicketService::findTicket(const std::string& ticketKey,
                                                        const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    return database_->findIssueByKey(Domain::normalizeIssueKey(issueKey));
+    return database_->findTicketByKey(Domain::normalizeTicketKey(ticketKey));
 }
 
-Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, const Domain::Principal& actor) {
+Domain::Ticket TicketService::createTicket(Domain::CreateTicketRequest request, const Domain::Principal& actor) {
     request.projectKey = Domain::normalizeProjectKey(request.projectKey);
     requireProjectRole(actor, request.projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     requireValidHierarchy(request);
@@ -238,131 +238,131 @@ Domain::Issue TicketService::createIssue(Domain::CreateIssueRequest request, con
         request.assigneeEmail = Domain::normalizeEmail(*request.assigneeEmail);
     }
     normalizeLabels(request.labels);
-    const auto errors = Domain::validateCreateIssue(request);
+    const auto errors = Domain::validateCreateTicket(request);
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
     }
-    const auto created = database_->createIssue(request, actor.userId);
+    const auto created = database_->createTicket(request, actor.userId);
     dispatchAssignmentNotification(created, std::nullopt, actor);
     return created;
 }
 
-bool TicketService::changeStatus(const std::string& issueKey,
+bool TicketService::changeStatus(const std::string& ticketKey,
                                  const std::string& statusKey,
                                  const Domain::Principal& actor,
                                  const std::optional<std::string> resolution,
                                  const std::optional<std::int64_t> expectedVersion) {
-    if (issueKey.empty() || statusKey.empty()) {
-        throw std::invalid_argument("issueKey and statusKey are required");
+    if (ticketKey.empty() || statusKey.empty()) {
+        throw std::invalid_argument("ticketKey and statusKey are required");
     }
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
         return false;
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
-    return database_->changeIssueStatus(normalizedKey, statusKey, actor.userId, resolution, expectedVersion);
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    return database_->changeTicketStatus(normalizedKey, statusKey, actor.userId, resolution, expectedVersion);
 }
 
-std::optional<Domain::Issue> TicketService::editIssue(const std::string& issueKey,
-                                                       Domain::EditIssueRequest request,
+std::optional<Domain::Ticket> TicketService::editTicket(const std::string& ticketKey,
+                                                       Domain::EditTicketRequest request,
                                                        const Domain::Principal& actor,
                                                        const std::optional<std::int64_t> expectedVersion) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
         return std::nullopt;
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     if (request.assigneeEmail) {
         request.assigneeEmail = Domain::normalizeEmail(*request.assigneeEmail);
     }
     normalizeLabels(request.labels);
-    const auto errors = Domain::validateEditIssue(request);
+    const auto errors = Domain::validateEditTicket(request);
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
     }
-    // Re-typing (issueTypeKey) and re-parenting (parentIssueKey) an issue
+    // Re-typing (ticketTypeKey) and re-parenting (parentTicketKey) a ticket
     // after creation (previously unimplemented -- see NEXT.md history).
     // Shape validation (Epic/Sub-task/same-project/parent-level) happens
-    // here, same as at creation; whether the issue currently has *children*
+    // here, same as at creation; whether the ticket currently has *children*
     // that a hierarchy-level change would orphan/invalidate depends on
     // concurrent database state and is therefore checked transactionally
-    // inside IDatabase::editIssue, the same split changeIssueStatus and
-    // moveIssue already use for their own database-state-dependent rules.
-    validateHierarchyShape(request.issueTypeKey, request.parentIssueKey, issue->projectKey, issue->key);
-    const auto assigneeBefore = issue->assignee;
-    const auto edited = database_->editIssue(normalizedKey, request, actor.userId, expectedVersion);
+    // inside IDatabase::editTicket, the same split changeTicketStatus and
+    // moveTicket already use for their own database-state-dependent rules.
+    validateHierarchyShape(request.ticketTypeKey, request.parentTicketKey, ticket->projectKey, ticket->key);
+    const auto assigneeBefore = ticket->assignee;
+    const auto edited = database_->editTicket(normalizedKey, request, actor.userId, expectedVersion);
     if (edited) {
         dispatchAssignmentNotification(*edited, assigneeBefore, actor);
     }
     return edited;
 }
 
-std::vector<Domain::Comment> TicketService::listComments(const std::string& issueKey,
+std::vector<Domain::Comment> TicketService::listComments(const std::string& ticketKey,
                                                           const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    return database_->listComments(Domain::normalizeIssueKey(issueKey));
+    return database_->listComments(Domain::normalizeTicketKey(ticketKey));
 }
 
-Domain::Comment TicketService::addComment(const std::string& issueKey, const std::string& body, const Domain::Principal& actor) {
+Domain::Comment TicketService::addComment(const std::string& ticketKey, const std::string& body, const Domain::Principal& actor) {
     validateCommentBody(body);
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     const auto comment = database_->addComment(Domain::AddCommentRequest{normalizedKey, body}, actor.userId);
-    dispatchCommentNotifications(*issue, comment, actor);
+    dispatchCommentNotifications(*ticket, comment, actor);
     return comment;
 }
 
-std::optional<Domain::Comment> TicketService::editComment(const std::string& issueKey,
+std::optional<Domain::Comment> TicketService::editComment(const std::string& ticketKey,
                                                            const std::string& commentId,
                                                            const std::string& body,
                                                            const Domain::Principal& actor,
                                                            const std::optional<std::int64_t> expectedVersion) {
     validateCommentBody(body);
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
     const auto comment = database_->findCommentById(commentId);
-    if (!comment || comment->issueId != issue->id) {
+    if (!comment || comment->ticketId != ticket->id) {
         return std::nullopt;
     }
     if (comment->author.id != actor.userId) {
-        requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+        requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
     }
     return database_->editComment(commentId, body, actor.userId, expectedVersion);
 }
 
-bool TicketService::deleteComment(const std::string& issueKey, const std::string& commentId, const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+bool TicketService::deleteComment(const std::string& ticketKey, const std::string& commentId, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
     const auto comment = database_->findCommentById(commentId);
-    if (!comment || comment->issueId != issue->id) {
+    if (!comment || comment->ticketId != ticket->id) {
         return false;
     }
     if (comment->author.id != actor.userId) {
-        requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+        requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
     }
     return database_->deleteComment(commentId, actor.userId);
 }
 
-bool TicketService::addCommentReaction(const std::string& issueKey, const std::string& commentId,
+bool TicketService::addCommentReaction(const std::string& ticketKey, const std::string& commentId,
                                        const std::string& reactionKey, const Domain::Principal& actor) {
     if (!Domain::isValidCommentReactionKey(reactionKey)) {
         throw std::invalid_argument("Unknown reaction key: " + reactionKey);
     }
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    if (!database_->findIssueByKey(normalizedKey)) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    if (!database_->findTicketByKey(normalizedKey)) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
     if (!database_->findCommentById(commentId)) {
         throw std::invalid_argument("Unknown comment id: " + commentId);
@@ -370,14 +370,14 @@ bool TicketService::addCommentReaction(const std::string& issueKey, const std::s
     return database_->addCommentReaction(commentId, actor.userId, reactionKey);
 }
 
-bool TicketService::removeCommentReaction(const std::string& issueKey, const std::string& commentId,
+bool TicketService::removeCommentReaction(const std::string& ticketKey, const std::string& commentId,
                                           const std::string& reactionKey, const Domain::Principal& actor) {
     if (!Domain::isValidCommentReactionKey(reactionKey)) {
         throw std::invalid_argument("Unknown reaction key: " + reactionKey);
     }
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    if (!database_->findIssueByKey(normalizedKey)) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    if (!database_->findTicketByKey(normalizedKey)) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
     if (!database_->findCommentById(commentId)) {
         throw std::invalid_argument("Unknown comment id: " + commentId);
@@ -386,32 +386,32 @@ bool TicketService::removeCommentReaction(const std::string& issueKey, const std
 }
 
 std::vector<Domain::CommentReaction> TicketService::listCommentReactions(
-    const std::string& issueKey, const std::string& commentId, const std::optional<Domain::Principal>& actor) {
+    const std::string& ticketKey, const std::string& commentId, const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    if (!database_->findIssueByKey(normalizedKey)) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    if (!database_->findTicketByKey(normalizedKey)) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
     return database_->listCommentReactions(commentId);
 }
 
-std::vector<Domain::Worklog> TicketService::listWorklogs(const std::string& issueKey,
+std::vector<Domain::Worklog> TicketService::listWorklogs(const std::string& ticketKey,
                                                           const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    return database_->listWorklogs(Domain::normalizeIssueKey(issueKey));
+    return database_->listWorklogs(Domain::normalizeTicketKey(ticketKey));
 }
 
-Domain::Worklog TicketService::addWorklog(const std::string& issueKey,
+Domain::Worklog TicketService::addWorklog(const std::string& ticketKey,
                                           const std::string& workDate,
                                           const std::int64_t timeSpentSeconds,
                                           std::optional<std::string> comment,
                                           const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     Domain::AddWorklogRequest request{normalizedKey, workDate, timeSpentSeconds, std::move(comment)};
     const auto errors = Domain::validateAddWorklog(request);
     if (!errors.empty()) {
@@ -420,21 +420,21 @@ Domain::Worklog TicketService::addWorklog(const std::string& issueKey,
     return database_->addWorklog(request, actor.userId);
 }
 
-std::optional<Domain::Worklog> TicketService::editWorklog(const std::string& issueKey,
+std::optional<Domain::Worklog> TicketService::editWorklog(const std::string& ticketKey,
                                                            const std::string& worklogId,
                                                            const std::string& workDate,
                                                            const std::int64_t timeSpentSeconds,
                                                            std::optional<std::string> comment,
                                                            const Domain::Principal& actor,
                                                            const std::optional<std::int64_t> expectedVersion) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     const auto worklog = database_->findWorklogById(worklogId);
-    if (!worklog || worklog->issueId != issue->id) {
+    if (!worklog || worklog->ticketId != ticket->id) {
         return std::nullopt;
     }
     Domain::EditWorklogRequest request{workDate, timeSpentSeconds, std::move(comment)};
@@ -445,24 +445,24 @@ std::optional<Domain::Worklog> TicketService::editWorklog(const std::string& iss
     return database_->editWorklog(worklogId, request, expectedVersion);
 }
 
-bool TicketService::deleteWorklog(const std::string& issueKey, const std::string& worklogId, const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+bool TicketService::deleteWorklog(const std::string& ticketKey, const std::string& worklogId, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     const auto worklog = database_->findWorklogById(worklogId);
-    if (!worklog || worklog->issueId != issue->id) {
+    if (!worklog || worklog->ticketId != ticket->id) {
         return false;
     }
     return database_->deleteWorklog(worklogId, actor.userId);
 }
 
-std::vector<Domain::Attachment> TicketService::listAttachments(const std::string& issueKey,
+std::vector<Domain::Attachment> TicketService::listAttachments(const std::string& ticketKey,
                                                                 const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    return database_->listAttachments(Domain::normalizeIssueKey(issueKey));
+    return database_->listAttachments(Domain::normalizeTicketKey(ticketKey));
 }
 
 // The attachment id doubles as its local filesystem storage key (see
@@ -473,18 +473,18 @@ std::vector<Domain::Attachment> TicketService::listAttachments(const std::string
 // the file is orphaned (unreachable, never listed or served) rather than
 // leaving a broken database reference; D105 has no periodic audit to
 // reconcile this, but it is a silent waste of disk space, not a
-// user-visible correctness issue.
-Domain::Attachment TicketService::uploadAttachment(const std::string& issueKey,
+// user-visible correctness ticket.
+Domain::Attachment TicketService::uploadAttachment(const std::string& ticketKey,
                                                     const std::string& fileName,
                                                     const std::string& contentType,
                                                     const std::string& bytes,
                                                     const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
 
     const auto existingCount = static_cast<int>(database_->listAttachments(normalizedKey).size());
     const auto errors = Domain::validateAttachmentUpload(fileName, static_cast<std::int64_t>(bytes.size()), existingCount);
@@ -509,24 +509,24 @@ std::pair<Domain::Attachment, std::string> TicketService::downloadAttachment(
     return {*attachment, attachmentStorage_.read(attachment->id)};
 }
 
-bool TicketService::deleteAttachment(const std::string& issueKey, const std::string& attachmentId,
+bool TicketService::deleteAttachment(const std::string& ticketKey, const std::string& attachmentId,
                                      const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
     const auto attachment = database_->findAttachmentById(attachmentId);
-    if (!attachment || attachment->issueId != issue->id) {
+    if (!attachment || attachment->ticketId != ticket->id) {
         return false;
     }
     // The uploader may always delete their own attachment; otherwise the
-    // actor needs project-Admin-or-above on the issue's project (or global
+    // actor needs project-Admin-or-above on the ticket's project (or global
     // admin) -- mirrors D83's comment edit/delete rule, the closest
     // existing precedent (no decision text addresses attachment deletion
     // directly).
     if (attachment->uploader.id != actor.userId) {
-        requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+        requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
     }
     return database_->softDeleteAttachment(attachmentId, actor.userId);
 }
@@ -534,7 +534,7 @@ bool TicketService::deleteAttachment(const std::string& issueKey, const std::str
 std::vector<Domain::Attachment> TicketService::listDeletedAttachments(const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
     // Fixed 90-day on-demand retention (D102), implemented here rather than
-    // inside the database adapter (unlike listDeletedIssues/
+    // inside the database adapter (unlike listDeletedTickets/
     // listDeletedProjects, which purge with a single DELETE entirely at the
     // SQL layer): purging an attachment also means deleting its file on
     // disk, which the SQL-only IDatabase layer cannot do. ISO 8601
@@ -574,175 +574,175 @@ bool TicketService::permanentlyDeleteAttachment(const std::string& attachmentId,
     return deleted;
 }
 
-Domain::Issue TicketService::cloneIssue(const std::string& issueKey, const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto source = database_->findIssueByKey(normalizedKey);
+Domain::Ticket TicketService::cloneTicket(const std::string& ticketKey, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto source = database_->findTicketByKey(normalizedKey);
     if (!source) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
     requireProjectRole(actor, source->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
 
-    Domain::CreateIssueRequest clone;
+    Domain::CreateTicketRequest clone;
     clone.projectKey = source->projectKey;
     clone.summary = source->summary;
     clone.description = source->description;
-    clone.issueTypeKey = source->type.key;
+    clone.ticketTypeKey = source->type.key;
     clone.priorityKey = source->priority.key;
     clone.labels = source->labels;
-    if (source->type.key == Domain::IssueTypeSubTask && source->parentIssueKey) {
-        clone.parentIssueKey = source->parentIssueKey;
+    if (source->type.key == Domain::TicketTypeSubTask && source->parentTicketKey) {
+        clone.parentTicketKey = source->parentTicketKey;
     }
 
-    const auto created = createIssue(clone, actor);
-    database_->createIssueLink(created.key, source->key, Domain::LinkTypeClones);
+    const auto created = createTicket(clone, actor);
+    database_->createTicketLink(created.key, source->key, Domain::LinkTypeClones);
     return created;
 }
 
-Domain::Issue TicketService::reorderIssue(const std::string& issueKey,
-                                          std::optional<std::string> beforeIssueKey,
+Domain::Ticket TicketService::reorderTicket(const std::string& ticketKey,
+                                          std::optional<std::string> beforeTicketKey,
                                           const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
-    if (beforeIssueKey.has_value() && !beforeIssueKey->empty()) {
-        beforeIssueKey = Domain::normalizeIssueKey(*beforeIssueKey);
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    if (beforeTicketKey.has_value() && !beforeTicketKey->empty()) {
+        beforeTicketKey = Domain::normalizeTicketKey(*beforeTicketKey);
     } else {
-        beforeIssueKey = std::nullopt;
+        beforeTicketKey = std::nullopt;
     }
-    return database_->reorderIssue(normalizedKey, beforeIssueKey);
+    return database_->reorderTicket(normalizedKey, beforeTicketKey);
 }
 
-Domain::Issue TicketService::moveIssue(const std::string& issueKey,
+Domain::Ticket TicketService::moveTicket(const std::string& ticketKey,
                                        const std::string& targetProjectKey,
                                        const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
     const std::string normalizedTargetProjectKey = Domain::normalizeProjectKey(targetProjectKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
+        throw std::invalid_argument("Unknown ticket key: " + normalizedKey);
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     requireProjectRole(actor, normalizedTargetProjectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
-    return database_->moveIssue(normalizedKey, normalizedTargetProjectKey, actor.userId);
+    return database_->moveTicket(normalizedKey, normalizedTargetProjectKey, actor.userId);
 }
 
-Domain::IssueLink TicketService::createIssueLink(const std::string& sourceIssueKey,
-                                                  const std::string& targetIssueKey,
+Domain::TicketLink TicketService::createTicketLink(const std::string& sourceTicketKey,
+                                                  const std::string& targetTicketKey,
                                                   const std::string& linkType,
                                                   const Domain::Principal& actor) {
     if (!Domain::isValidLinkType(linkType)) {
         throw std::invalid_argument("Unknown link type: " + linkType);
     }
-    const std::string normalizedSource = Domain::normalizeIssueKey(sourceIssueKey);
-    const std::string normalizedTarget = Domain::normalizeIssueKey(targetIssueKey);
+    const std::string normalizedSource = Domain::normalizeTicketKey(sourceTicketKey);
+    const std::string normalizedTarget = Domain::normalizeTicketKey(targetTicketKey);
     if (normalizedSource == normalizedTarget) {
-        throw std::invalid_argument("An issue cannot be linked to itself");
+        throw std::invalid_argument("A ticket cannot be linked to itself");
     }
-    const auto source = database_->findIssueByKey(normalizedSource);
+    const auto source = database_->findTicketByKey(normalizedSource);
     if (!source) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedSource);
+        throw std::invalid_argument("Unknown ticket key: " + normalizedSource);
     }
-    const auto target = database_->findIssueByKey(normalizedTarget);
+    const auto target = database_->findTicketByKey(normalizedTarget);
     if (!target) {
-        throw std::invalid_argument("Unknown issue key: " + normalizedTarget);
+        throw std::invalid_argument("Unknown ticket key: " + normalizedTarget);
     }
     requireProjectRole(actor, source->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     requireProjectRole(actor, target->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
-    return database_->createIssueLink(normalizedSource, normalizedTarget, linkType);
+    return database_->createTicketLink(normalizedSource, normalizedTarget, linkType);
 }
 
-std::vector<Domain::IssueLink> TicketService::listIssueLinks(const std::string& issueKey,
+std::vector<Domain::TicketLink> TicketService::listTicketLinks(const std::string& ticketKey,
                                                               const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    return database_->listIssueLinks(Domain::normalizeIssueKey(issueKey));
+    return database_->listTicketLinks(Domain::normalizeTicketKey(ticketKey));
 }
 
-bool TicketService::deleteIssueLink(const std::string& linkId, const Domain::Principal& actor) {
-    const auto link = database_->findIssueLinkById(linkId);
+bool TicketService::deleteTicketLink(const std::string& linkId, const Domain::Principal& actor) {
+    const auto link = database_->findTicketLinkById(linkId);
     if (!link) {
         return false;
     }
     requireProjectRole(actor, link->sourceProjectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     requireProjectRole(actor, link->targetProjectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
-    return database_->deleteIssueLink(linkId);
+    return database_->deleteTicketLink(linkId);
 }
 
-bool TicketService::watchIssue(const std::string& issueKey, const Domain::Principal& actor) {
-    return database_->watchIssue(Domain::normalizeIssueKey(issueKey), actor.userId);
+bool TicketService::watchTicket(const std::string& ticketKey, const Domain::Principal& actor) {
+    return database_->watchTicket(Domain::normalizeTicketKey(ticketKey), actor.userId);
 }
 
-bool TicketService::unwatchIssue(const std::string& issueKey, const Domain::Principal& actor) {
-    return database_->unwatchIssue(Domain::normalizeIssueKey(issueKey), actor.userId);
+bool TicketService::unwatchTicket(const std::string& ticketKey, const Domain::Principal& actor) {
+    return database_->unwatchTicket(Domain::normalizeTicketKey(ticketKey), actor.userId);
 }
 
-std::vector<Domain::UserSummary> TicketService::listWatchers(const std::string& issueKey,
+std::vector<Domain::UserSummary> TicketService::listWatchers(const std::string& ticketKey,
                                                               const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    return database_->listWatchers(Domain::normalizeIssueKey(issueKey));
+    return database_->listWatchers(Domain::normalizeTicketKey(ticketKey));
 }
 
-bool TicketService::voteIssue(const std::string& issueKey, const Domain::Principal& actor) {
-    return database_->voteIssue(Domain::normalizeIssueKey(issueKey), actor.userId);
+bool TicketService::voteTicket(const std::string& ticketKey, const Domain::Principal& actor) {
+    return database_->voteTicket(Domain::normalizeTicketKey(ticketKey), actor.userId);
 }
 
-bool TicketService::unvoteIssue(const std::string& issueKey, const Domain::Principal& actor) {
-    return database_->unvoteIssue(Domain::normalizeIssueKey(issueKey), actor.userId);
+bool TicketService::unvoteTicket(const std::string& ticketKey, const Domain::Principal& actor) {
+    return database_->unvoteTicket(Domain::normalizeTicketKey(ticketKey), actor.userId);
 }
 
-std::vector<Domain::UserSummary> TicketService::listVoters(const std::string& issueKey,
+std::vector<Domain::UserSummary> TicketService::listVoters(const std::string& ticketKey,
                                                             const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
-    return database_->listVoters(Domain::normalizeIssueKey(issueKey));
+    return database_->listVoters(Domain::normalizeTicketKey(ticketKey));
 }
 
-bool TicketService::deleteIssue(const std::string& issueKey, const Domain::Principal& actor) {
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
-    const auto issue = database_->findIssueByKey(normalizedKey);
-    if (!issue) {
+bool TicketService::deleteTicket(const std::string& ticketKey, const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
+    const auto ticket = database_->findTicketByKey(normalizedKey);
+    if (!ticket) {
         return false;
     }
-    requireProjectRole(actor, issue->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
-    return database_->softDeleteIssue(normalizedKey, actor.userId);
+    requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    return database_->softDeleteTicket(normalizedKey, actor.userId);
 }
 
-bool TicketService::restoreIssue(const std::string& issueKey, const Domain::Principal& actor) {
+bool TicketService::restoreTicket(const std::string& ticketKey, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
-    return database_->restoreIssue(Domain::normalizeIssueKey(issueKey));
+    return database_->restoreTicket(Domain::normalizeTicketKey(ticketKey));
 }
 
-std::vector<Domain::Issue> TicketService::listDeletedIssues(const Domain::Principal& actor) {
+std::vector<Domain::Ticket> TicketService::listDeletedTickets(const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
-    return database_->listDeletedIssues();
+    return database_->listDeletedTickets();
 }
 
-bool TicketService::permanentlyDeleteIssue(const std::string& issueKey, const Domain::Principal& actor) {
+bool TicketService::permanentlyDeleteTicket(const std::string& ticketKey, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
-    const std::string normalizedKey = Domain::normalizeIssueKey(issueKey);
+    const std::string normalizedKey = Domain::normalizeTicketKey(ticketKey);
     // Collected before the delete, regardless of the attachments' own
     // soft-delete state: ON DELETE CASCADE will hard-delete every
-    // attachment row under this issue, and there is no periodic orphan-file
+    // attachment row under this ticket, and there is no periodic orphan-file
     // audit (D105) to catch files left behind afterward.
-    const auto storageKeys = database_->listAttachmentStorageKeysForIssue(normalizedKey);
-    const bool deleted = database_->permanentlyDeleteIssue(normalizedKey);
+    const auto storageKeys = database_->listAttachmentStorageKeysForTicket(normalizedKey);
+    const bool deleted = database_->permanentlyDeleteTicket(normalizedKey);
     if (deleted) {
         for (const auto& storageKey : storageKeys) {
             attachmentStorage_.remove(storageKey);
         }
-        database_->recordAuditEvent("admin", "issue.permanently_deleted", actor.userId, std::string("issue"),
+        database_->recordAuditEvent("admin", "ticket.permanently_deleted", actor.userId, std::string("ticket"),
                                     normalizedKey, std::nullopt);
     }
     return deleted;
 }
 
-Domain::BulkActionResult TicketService::bulkChangeStatus(const std::vector<std::string>& issueKeys,
+Domain::BulkActionResult TicketService::bulkChangeStatus(const std::vector<std::string>& ticketKeys,
                                                           const std::string& statusKey,
                                                           const std::optional<std::string> resolution,
                                                           const Domain::Principal& actor) {
     Domain::BulkActionResult result;
-    for (const auto& key : issueKeys) {
+    for (const auto& key : ticketKeys) {
         try {
             if (changeStatus(key, statusKey, actor, resolution)) {
                 result.succeeded.push_back(key);
@@ -756,21 +756,21 @@ Domain::BulkActionResult TicketService::bulkChangeStatus(const std::vector<std::
     return result;
 }
 
-Domain::BulkActionResult TicketService::bulkAssign(const std::vector<std::string>& issueKeys,
+Domain::BulkActionResult TicketService::bulkAssign(const std::vector<std::string>& ticketKeys,
                                                     const std::optional<std::string> assigneeEmail,
                                                     const Domain::Principal& actor) {
     Domain::BulkActionResult result;
-    for (const auto& key : issueKeys) {
+    for (const auto& key : ticketKeys) {
         try {
-            const std::string normalizedKey = Domain::normalizeIssueKey(key);
-            const auto issue = database_->findIssueByKey(normalizedKey);
-            if (!issue) {
+            const std::string normalizedKey = Domain::normalizeTicketKey(key);
+            const auto ticket = database_->findTicketByKey(normalizedKey);
+            if (!ticket) {
                 result.failed.push_back(key);
                 continue;
             }
-            auto edit = editRequestFrom(*issue);
+            auto edit = editRequestFrom(*ticket);
             edit.assigneeEmail = assigneeEmail;
-            if (editIssue(normalizedKey, edit, actor).has_value()) {
+            if (editTicket(normalizedKey, edit, actor).has_value()) {
                 result.succeeded.push_back(key);
             } else {
                 result.failed.push_back(key);
@@ -782,24 +782,24 @@ Domain::BulkActionResult TicketService::bulkAssign(const std::vector<std::string
     return result;
 }
 
-Domain::BulkActionResult TicketService::bulkAddLabel(const std::vector<std::string>& issueKeys,
+Domain::BulkActionResult TicketService::bulkAddLabel(const std::vector<std::string>& ticketKeys,
                                                       const std::string& label,
                                                       const Domain::Principal& actor) {
     Domain::BulkActionResult result;
     const std::string normalizedLabel = Domain::normalizeLabel(label);
-    for (const auto& key : issueKeys) {
+    for (const auto& key : ticketKeys) {
         try {
-            const std::string normalizedKey = Domain::normalizeIssueKey(key);
-            const auto issue = database_->findIssueByKey(normalizedKey);
-            if (!issue) {
+            const std::string normalizedKey = Domain::normalizeTicketKey(key);
+            const auto ticket = database_->findTicketByKey(normalizedKey);
+            if (!ticket) {
                 result.failed.push_back(key);
                 continue;
             }
-            auto edit = editRequestFrom(*issue);
+            auto edit = editRequestFrom(*ticket);
             if (std::find(edit.labels.begin(), edit.labels.end(), normalizedLabel) == edit.labels.end()) {
                 edit.labels.push_back(normalizedLabel);
             }
-            if (editIssue(normalizedKey, edit, actor).has_value()) {
+            if (editTicket(normalizedKey, edit, actor).has_value()) {
                 result.succeeded.push_back(key);
             } else {
                 result.failed.push_back(key);
@@ -811,11 +811,11 @@ Domain::BulkActionResult TicketService::bulkAddLabel(const std::vector<std::stri
     return result;
 }
 
-Domain::BulkActionResult TicketService::bulkDelete(const std::vector<std::string>& issueKeys, const Domain::Principal& actor) {
+Domain::BulkActionResult TicketService::bulkDelete(const std::vector<std::string>& ticketKeys, const Domain::Principal& actor) {
     Domain::BulkActionResult result;
-    for (const auto& key : issueKeys) {
+    for (const auto& key : ticketKeys) {
         try {
-            if (deleteIssue(key, actor)) {
+            if (deleteTicket(key, actor)) {
                 result.succeeded.push_back(key);
             } else {
                 result.failed.push_back(key);
@@ -831,9 +831,9 @@ Domain::BulkActionResult TicketService::bulkDelete(const std::vector<std::string
 // recent activity) come straight from dashboardStats(); the personal
 // widgets (assigned to me, watched, upcoming deadlines) are only
 // meaningful for an authenticated actor and stay empty for an anonymous
-// viewer. `assignedToMe` reuses listIssues' existing assignee filter
+// viewer. `assignedToMe` reuses listTickets' existing assignee filter
 // rather than a dedicated query; `upcomingDeadlines` is derived from that
-// same result set (open issues with a due date, soonest first) instead of
+// same result set (open tickets with a due date, soonest first) instead of
 // a second database round trip.
 Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);
@@ -842,25 +842,25 @@ Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Prin
         return stats;
     }
 
-    Domain::IssueFilter assignedFilter;
+    Domain::TicketFilter assignedFilter;
     assignedFilter.assigneeEmail = actor->email;
-    const auto assigned = database_->listIssues(assignedFilter);
+    const auto assigned = database_->listTickets(assignedFilter);
 
-    std::vector<Domain::Issue> openAssigned;
-    std::vector<Domain::Issue> deadlines;
-    for (const auto& issue : assigned) {
-        if (issue.status.category == "done") {
+    std::vector<Domain::Ticket> openAssigned;
+    std::vector<Domain::Ticket> deadlines;
+    for (const auto& ticket : assigned) {
+        if (ticket.status.category == "done") {
             continue;
         }
-        openAssigned.push_back(issue);
-        if (issue.dueDate.has_value()) {
-            deadlines.push_back(issue);
+        openAssigned.push_back(ticket);
+        if (ticket.dueDate.has_value()) {
+            deadlines.push_back(ticket);
         }
     }
     if (openAssigned.size() > 8) {
         openAssigned.resize(8);
     }
-    std::sort(deadlines.begin(), deadlines.end(), [](const Domain::Issue& a, const Domain::Issue& b) {
+    std::sort(deadlines.begin(), deadlines.end(), [](const Domain::Ticket& a, const Domain::Ticket& b) {
         return *a.dueDate < *b.dueDate;
     });
     if (deadlines.size() > 8) {
@@ -869,7 +869,7 @@ Domain::DashboardStats TicketService::dashboard(const std::optional<Domain::Prin
 
     stats.assignedToMe = std::move(openAssigned);
     stats.upcomingDeadlines = std::move(deadlines);
-    stats.watchedIssues = database_->listWatchedIssues(actor->userId, 8);
+    stats.watchedTickets = database_->listWatchedTickets(actor->userId, 8);
     return stats;
 }
 
@@ -921,8 +921,8 @@ std::vector<Domain::Project> TicketService::listDeletedProjects(const Domain::Pr
 bool TicketService::permanentlyDeleteProject(const std::string& projectKey, const Domain::Principal& actor) {
     requireGlobalAdmin(actor);
     const std::string normalizedKey = Domain::normalizeProjectKey(projectKey);
-    // Same reasoning as permanentlyDeleteIssue: collected before the delete
-    // since ON DELETE CASCADE will hard-delete every issue (and therefore
+    // Same reasoning as permanentlyDeleteTicket: collected before the delete
+    // since ON DELETE CASCADE will hard-delete every ticket (and therefore
     // every attachment) under this project.
     const auto storageKeys = database_->listAttachmentStorageKeysForProject(normalizedKey);
     const bool deleted = database_->permanentlyDeleteProject(normalizedKey);
@@ -961,22 +961,22 @@ std::vector<Domain::AuditEvent> TicketService::listAuditEvents(const Domain::Pri
     return database_->listAuditEvents(limit);
 }
 
-void TicketService::dispatchAssignmentNotification(const Domain::Issue& issueAfter,
+void TicketService::dispatchAssignmentNotification(const Domain::Ticket& ticketAfter,
                                                     const std::optional<Domain::UserSummary>& assigneeBefore,
                                                     const Domain::Principal& actor) {
-    if (!issueAfter.assignee) {
+    if (!ticketAfter.assignee) {
         return;
     }
-    if (issueAfter.assignee->id == actor.userId) {
+    if (ticketAfter.assignee->id == actor.userId) {
         return; // Assigning to yourself needs no notification.
     }
-    if (assigneeBefore && assigneeBefore->id == issueAfter.assignee->id) {
+    if (assigneeBefore && assigneeBefore->id == ticketAfter.assignee->id) {
         return; // Unchanged assignee (e.g. re-saving an edit) -- not a new assignment.
     }
-    database_->createNotification(issueAfter.assignee->id, Domain::NotificationTypeAssigned, issueAfter.id);
+    database_->createNotification(ticketAfter.assignee->id, Domain::NotificationTypeAssigned, ticketAfter.id);
 }
 
-void TicketService::dispatchCommentNotifications(const Domain::Issue& issue,
+void TicketService::dispatchCommentNotifications(const Domain::Ticket& ticket,
                                                   const Domain::Comment& comment,
                                                   const Domain::Principal& actor) {
     std::set<std::string> notified;
@@ -984,13 +984,13 @@ void TicketService::dispatchCommentNotifications(const Domain::Issue& issue,
     for (const auto& handle : extractMentionedHandles(comment.body)) {
         const auto mentioned = database_->findUserByHandle(handle);
         if (mentioned && mentioned->id != actor.userId && notified.insert(mentioned->id).second) {
-            database_->createNotification(mentioned->id, Domain::NotificationTypeMentioned, issue.id);
+            database_->createNotification(mentioned->id, Domain::NotificationTypeMentioned, ticket.id);
         }
     }
 
-    for (const auto& watcher : database_->listWatchers(issue.key)) {
+    for (const auto& watcher : database_->listWatchers(ticket.key)) {
         if (watcher.id != actor.userId && notified.insert(watcher.id).second) {
-            database_->createNotification(watcher.id, Domain::NotificationTypeWatchedComment, issue.id);
+            database_->createNotification(watcher.id, Domain::NotificationTypeWatchedComment, ticket.id);
         }
     }
 }

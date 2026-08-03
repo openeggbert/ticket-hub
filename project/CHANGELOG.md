@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Full "issue" -> "ticket" terminology rename (user-requested, breaking)
+
+- Renamed "issue" to "ticket" everywhere -- database tables/columns/indexes/constraints, REST API paths
+  (`/api/v1/issues` -> `/api/v1/tickets`), JSON field names (`issueKey` -> `ticketKey`, `parentIssueKey` ->
+  `parentTicketKey`, etc.), C++ types/methods/namespaced identifiers (`Domain::Issue` -> `Domain::Ticket`,
+  `TicketService::createIssue` -> `TicketService::createTicket`, etc.), CSS classes, and all user-facing
+  UI text -- to match the product's own name, Ticket Hub. User explicitly chose the fully comprehensive
+  scope over a narrower "UI and DB tables only" option.
+- New migration `016_ticket_terminology.sql` (both backends): pure `ALTER TABLE`/`ALTER TABLE ... RENAME
+  COLUMN` renames, no data or behavior change. SQLite auto-rewrites the `CHECK`/`FOREIGN KEY` definitions
+  that reference a renamed table/column; PostgreSQL's OID-based dependency tracking needs no special
+  handling. The PostgreSQL migration additionally renames every auto-generated constraint name (primary
+  keys, unique constraints, foreign keys, checks), since a table/column `RENAME` does not rename those on
+  its own -- purely cosmetic, but done for full consistency with the "everywhere" scope.
+  `migrations/*/002_seed_demo.sql` (the mutable, non-checksummed seed script) updated to match.
+- `GET /browse/{key}` and its route path are unchanged (already used a generic `{key}` term, not "issue").
+- Historical dated entries above and in `NEXT.md`/`docs/VERIFICATION.md` are left as written -- they
+  describe what was literally true, and named, at the time -- consistent with how this project has always
+  treated its own written history.
+- Verified: full rebuild (three configurations) and `ctest` clean; fresh migrate+seed against both a
+  throwaway live PostgreSQL database and a throwaway SQLite database, with an explicit post-migration
+  check that zero table/index/constraint names still contain "issue"; a live HTTP smoke test against the
+  PostgreSQL-backed server (login, `GET /api/v1/tickets`, `/browse/{key}`); and a full browser pass
+  (Playwright/Chromium) confirming no leftover "Issue"/"Issues" text anywhere in the UI and that creating a
+  new ticket end-to-end still works.
+
 ## Unreleased — Jira-style direct issue links (`/browse/{key}`)
 
 - **`GET /browse/{key}`** now serves the app shell directly (same as `/`), and `web/app.js` keeps the URL

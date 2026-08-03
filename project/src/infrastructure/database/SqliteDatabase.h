@@ -65,22 +65,22 @@ public:
     void setSetting(const std::string& key, const std::string& value) override;
 
     std::vector<Domain::Project> listProjects() override;
-    std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter) override;
-    std::vector<Domain::Issue> listIssues(const Domain::IssueFilter& filter, int limit, int offset) override;
-    std::int64_t countIssues(const Domain::IssueFilter& filter) override;
-    std::optional<Domain::Issue> findIssueByKey(const std::string& issueKey) override;
-    Domain::Issue createIssue(const Domain::CreateIssueRequest& request,
+    std::vector<Domain::Ticket> listTickets(const Domain::TicketFilter& filter) override;
+    std::vector<Domain::Ticket> listTickets(const Domain::TicketFilter& filter, int limit, int offset) override;
+    std::int64_t countTickets(const Domain::TicketFilter& filter) override;
+    std::optional<Domain::Ticket> findTicketByKey(const std::string& ticketKey) override;
+    Domain::Ticket createTicket(const Domain::CreateTicketRequest& request,
                               const std::string& reporterUserId) override;
-    bool changeIssueStatus(const std::string& issueKey,
+    bool changeTicketStatus(const std::string& ticketKey,
                            const std::string& statusKey,
                            const std::string& actorUserId,
                            std::optional<std::string> resolution = std::nullopt,
                            std::optional<std::int64_t> expectedVersion = std::nullopt) override;
-    std::optional<Domain::Issue> editIssue(const std::string& issueKey,
-                                           const Domain::EditIssueRequest& request,
+    std::optional<Domain::Ticket> editTicket(const std::string& ticketKey,
+                                           const Domain::EditTicketRequest& request,
                                            const std::string& actorUserId,
                                            std::optional<std::int64_t> expectedVersion = std::nullopt) override;
-    std::vector<Domain::Comment> listComments(const std::string& issueKey) override;
+    std::vector<Domain::Comment> listComments(const std::string& ticketKey) override;
     Domain::Comment addComment(const Domain::AddCommentRequest& request,
                                const std::string& authorUserId) override;
     std::optional<Domain::Comment> findCommentById(const std::string& commentId) override;
@@ -97,13 +97,13 @@ public:
 
     Domain::Notification createNotification(const std::string& userId,
                                              const std::string& type,
-                                             const std::string& issueId) override;
+                                             const std::string& ticketId) override;
     std::vector<Domain::Notification> listNotifications(const std::string& userId, bool unreadOnly) override;
     int countUnreadNotifications(const std::string& userId) override;
     bool markNotificationRead(const std::string& notificationId, const std::string& userId) override;
     bool markAllNotificationsRead(const std::string& userId) override;
 
-    std::vector<Domain::Worklog> listWorklogs(const std::string& issueKey) override;
+    std::vector<Domain::Worklog> listWorklogs(const std::string& ticketKey) override;
     Domain::Worklog addWorklog(const Domain::AddWorklogRequest& request, const std::string& authorUserId) override;
     std::optional<Domain::Worklog> findWorklogById(const std::string& worklogId) override;
     std::optional<Domain::Worklog> editWorklog(const std::string& worklogId,
@@ -123,45 +123,45 @@ public:
     std::vector<Domain::BoardColumn> listBoardColumns() override;
     bool setBoardColumnWipLimit(const std::string& statusKey, std::optional<int> wipLimit) override;
 
-    Domain::Issue reorderIssue(const std::string& issueKey, std::optional<std::string> beforeIssueKey) override;
-    Domain::Issue moveIssue(const std::string& issueKey,
+    Domain::Ticket reorderTicket(const std::string& ticketKey, std::optional<std::string> beforeTicketKey) override;
+    Domain::Ticket moveTicket(const std::string& ticketKey,
                             const std::string& targetProjectKey,
                             const std::string& actorUserId) override;
 
-    Domain::IssueLink createIssueLink(const std::string& sourceIssueKey,
-                                      const std::string& targetIssueKey,
+    Domain::TicketLink createTicketLink(const std::string& sourceTicketKey,
+                                      const std::string& targetTicketKey,
                                       const std::string& linkType) override;
-    std::vector<Domain::IssueLink> listIssueLinks(const std::string& issueKey) override;
-    std::optional<Domain::IssueLinkDetail> findIssueLinkById(const std::string& linkId) override;
-    bool deleteIssueLink(const std::string& linkId) override;
+    std::vector<Domain::TicketLink> listTicketLinks(const std::string& ticketKey) override;
+    std::optional<Domain::TicketLinkDetail> findTicketLinkById(const std::string& linkId) override;
+    bool deleteTicketLink(const std::string& linkId) override;
 
-    bool watchIssue(const std::string& issueKey, const std::string& userId) override;
-    bool unwatchIssue(const std::string& issueKey, const std::string& userId) override;
-    std::vector<Domain::UserSummary> listWatchers(const std::string& issueKey) override;
-    std::vector<Domain::Issue> listWatchedIssues(const std::string& userId, int limit) override;
-    bool voteIssue(const std::string& issueKey, const std::string& userId) override;
-    bool unvoteIssue(const std::string& issueKey, const std::string& userId) override;
-    std::vector<Domain::UserSummary> listVoters(const std::string& issueKey) override;
+    bool watchTicket(const std::string& ticketKey, const std::string& userId) override;
+    bool unwatchTicket(const std::string& ticketKey, const std::string& userId) override;
+    std::vector<Domain::UserSummary> listWatchers(const std::string& ticketKey) override;
+    std::vector<Domain::Ticket> listWatchedTickets(const std::string& userId, int limit) override;
+    bool voteTicket(const std::string& ticketKey, const std::string& userId) override;
+    bool unvoteTicket(const std::string& ticketKey, const std::string& userId) override;
+    std::vector<Domain::UserSummary> listVoters(const std::string& ticketKey) override;
 
-    bool softDeleteIssue(const std::string& issueKey, const std::string& actorUserId) override;
-    bool restoreIssue(const std::string& issueKey) override;
-    std::vector<Domain::Issue> listDeletedIssues() override;
-    bool permanentlyDeleteIssue(const std::string& issueKey) override;
+    bool softDeleteTicket(const std::string& ticketKey, const std::string& actorUserId) override;
+    bool restoreTicket(const std::string& ticketKey) override;
+    std::vector<Domain::Ticket> listDeletedTickets() override;
+    bool permanentlyDeleteTicket(const std::string& ticketKey) override;
 
     Domain::Attachment createAttachment(const std::string& id,
-                                        const std::string& issueKey,
+                                        const std::string& ticketKey,
                                         const std::string& uploaderUserId,
                                         const std::string& fileName,
                                         const std::string& contentType,
                                         std::int64_t byteSize,
                                         const std::string& sha256) override;
-    std::vector<Domain::Attachment> listAttachments(const std::string& issueKey) override;
+    std::vector<Domain::Attachment> listAttachments(const std::string& ticketKey) override;
     std::optional<Domain::Attachment> findAttachmentById(const std::string& attachmentId) override;
     bool softDeleteAttachment(const std::string& attachmentId, const std::string& actorUserId) override;
     bool restoreAttachment(const std::string& attachmentId) override;
     std::vector<Domain::Attachment> listDeletedAttachments() override;
     bool permanentlyDeleteAttachment(const std::string& attachmentId) override;
-    std::vector<std::string> listAttachmentStorageKeysForIssue(const std::string& issueKey) override;
+    std::vector<std::string> listAttachmentStorageKeysForTicket(const std::string& ticketKey) override;
     std::vector<std::string> listAttachmentStorageKeysForProject(const std::string& projectKey) override;
 
 private:
