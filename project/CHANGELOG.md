@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — REST write idempotency keys (D128)
+
+- **Idempotency keys**: an optional `Idempotency-Key` request header on five POST routes that create a new,
+  independently visible resource (`/api/v1/tickets`, `/api/v1/projects`,
+  `/api/v1/tickets/{key}/comments`, `/api/v1/tickets/{key}/worklogs`, `/api/v1/tickets/{key}/clone`) — a
+  retried request with the same key and body replays the original response instead of creating a
+  duplicate; reusing the same key with a genuinely different body returns `409`. Not wired into
+  PATCH/DELETE/bulk/status-change routes, which already converge to the same end state on repeat.
+- New `idempotency_keys` table (migration `020_idempotency_keys.sql`).
+- The demo web UI's own five equivalent forms/buttons send this header on every submit and disable their
+  submit control for the duration of the request — the two are complementary: the disabled control stops a
+  literal double-click from firing twice, while the key covers a successful response that never reaches
+  the browser followed by a manual retry.
+- Found and fixed a real pre-existing bug while wiring the frontend: `web/app.js`'s shared `api()` helper
+  let a caller-supplied `options.headers` silently clobber its own merged `Content-Type`/`X-CSRF-Token`
+  headers — invisible until this batch's frontend wiring became the first caller ever to pass one.
+- Verified: full rebuild and `ctest` clean in all three build configurations (new SQLite integration test
+  coverage); live-verified against fresh PostgreSQL and SQLite databases over real HTTP (happy-path replay,
+  same-key-different-body conflict, cross-route collision defense, failed attempts never cached); full
+  Playwright/Chromium browser pass of all five wired UI actions.
+
 ## Unreleased — Outbound webhooks (D39/D41) and outbound email (D52)
 
 - **Outbound webhooks**: global-admin-managed subscriptions (target URL, optional project/event-type

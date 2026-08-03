@@ -235,6 +235,32 @@ remains only as optional, non-roadmap follow-up.
   this sandbox, so the `Dockerfile`'s `libcurl` additions were reviewed by inspection only, not
   build-tested.
   **This closes out the entire six-item list the user picked in batch 12 (1, 3, 4, 6, 11, 12).**
+- **Post-V1, batch 15.** REST write idempotency keys (D128) -- offered on a follow-up menu after batch 14
+  closed the original list; the user picked exactly this one item ("pouze 1"). An optional
+  `Idempotency-Key` header, opt-in per request, wired into exactly the five POST routes that create a new,
+  independently visible resource (`/api/v1/tickets`, `/api/v1/projects`,
+  `/api/v1/tickets/{key}/comments`, `/api/v1/tickets/{key}/worklogs`, `/api/v1/tickets/{key}/clone`) -- a
+  retried request with the same key and body replays the original response instead of creating a
+  duplicate; the same key reused with a genuinely different body (hashed together with the route path, so
+  a cross-route reuse can never be mistaken for a legitimate retry) gets `409`, never a silently wrong
+  replay. New `idempotency_keys` table (migration `020_idempotency_keys.sql`,
+  `PRIMARY KEY (user_id, idempotency_key)`); `IDatabase::findIdempotencyRecord`/`recordIdempotencyResult`
+  on both adapters (the latter best-effort via `INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`, so a narrow
+  concurrent-retry race never surfaces as a 500); thin `TicketService` pass-throughs; new `Api.cpp`
+  helpers `idempotencyReplay`/`recordIdempotentResult` wired into each route, caching only 2xx responses
+  so a corrected retry after a validation failure just runs normally. The demo web UI's five equivalent
+  forms/buttons send this header too and now disable their submit control for the duration of the
+  request -- complementary defenses, since a fresh key alone can't stop a literal double-click (one is
+  minted per handler call) the way disabling the button does, while the key covers the case the button
+  can't: a successful response that never reaches the browser, followed by a manual retry. Found and fixed
+  a real pre-existing bug while wiring the frontend: `web/app.js`'s shared `api()` helper spread
+  `...options` *after* its own merged `headers` object in the `fetch()` call, so any caller passing its
+  own `options.headers` (this batch's `idempotencyHeaders()` was the first ever to do so) silently
+  clobbered the `Content-Type`/`X-CSRF-Token` headers, causing every wired action to fail with a spurious
+  403 -- caught immediately via a live Playwright pass, fixed by reordering the spread. New SQLite
+  integration test coverage; verified end-to-end against fresh live PostgreSQL and SQLite databases over
+  real HTTP (happy-path replay, conflict, cross-route defense, failed-attempts-never-cached) and a full
+  Playwright/Chromium browser pass of all five wired UI actions.
 
 ## Implementation rules
 

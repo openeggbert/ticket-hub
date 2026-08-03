@@ -379,6 +379,19 @@ public:
                                                             const Domain::Principal& actor);
     bool deleteWebhookSubscription(const std::string& subscriptionId, const Domain::Principal& actor);
 
+    // --- REST write idempotency keys (D128, deferred-after-V1, user-requested) ---
+    // Thin pass-throughs, not a project/global-admin-gated operation like
+    // the methods above -- scoped to the caller's own userId by
+    // construction, and the underlying action these guard (ticket/project/
+    // comment/worklog creation, ticket clone) already enforces its own
+    // authorization before either of these is ever called (see
+    // src/web/Api.cpp's idempotencyReplay/recordIdempotentResult).
+    std::optional<Domain::IdempotencyRecord> findIdempotencyRecord(const std::string& userId,
+                                                                    const std::string& idempotencyKey);
+    void recordIdempotencyResult(const std::string& userId, const std::string& idempotencyKey,
+                                 const std::string& requestHash, int responseStatus,
+                                 const std::string& responseBody);
+
 private:
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;
     Infrastructure::Storage::LocalAttachmentStorage attachmentStorage_;

@@ -48,9 +48,14 @@ extended to notifications and the admin audit log; then custom fields (D9, defer
 admin-defined fields scoped to a project, shown on ticket create/edit/view; and, most recently, the last
 two items from the same user-requested menu — outbound webhooks (D39/D41) and outbound email (D52),
 deferred-after-V1 — built on a new durable outbox (`webhook_deliveries`/`email_deliveries` tables) and a
-`ticket-hub-cli process-outbox` command, the only place in the app that makes an outbound network call.
-See `NEXT.md`'s "The roadmap is now complete" section for the exact closing detail and
-`docs/VERIFICATION.md` for exactly what was tested and how.
+`ticket-hub-cli process-outbox` command, the only place in the app that makes an outbound network call;
+and, most recently, REST write idempotency keys (D128, deferred-after-V1, user-requested from a follow-up
+menu) — an optional `Idempotency-Key` header on the small set of POST routes proven to risk a duplicate
+*record* on client retry (ticket/project/comment/worklog creation, ticket clone), replaying the original
+response instead of creating a second resource; wired into the demo web UI's own forms too, alongside
+disabling each submit control for the duration of its request. See `NEXT.md`'s "The roadmap is now
+complete" section for the exact closing detail and `docs/VERIFICATION.md` for exactly what was tested and
+how.
 
 Implemented now:
 
@@ -125,6 +130,14 @@ Implemented now:
 - **outbound email** (D52, deferred-after-V1, user-requested): a pluggable SMTP backend
   (`TICKETHUB_SMTP_*` env vars) for the existing in-app notification set, delivered the same way as
   webhooks — durably enqueued by the server, sent only by `process-outbox`,
+- **REST write idempotency keys** (D128, deferred-after-V1, user-requested): an optional
+  `Idempotency-Key` request header on the small set of POST routes that create a new, independently
+  visible resource (ticket, project, comment, worklog, ticket clone) — a retried request with the same
+  key and body replays the original response instead of creating a second record; the same key reused
+  with a genuinely different body gets a 409, not a silently wrong replay. Not wired into PATCH/DELETE/
+  bulk/status-change routes, which already converge to the same end state on repeat. The demo web UI
+  sends this header on its own equivalent forms and disables each submit control for the duration of its
+  request, so a literal double-click can't fire two requests either,
 - **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
   both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
@@ -398,6 +411,17 @@ Fixed rate limits (D124/D125) are also already live and apply to every route in 
 requests-per-minute cap keyed by user id when authenticated, else by IP. Both return `429` with a JSON
 `{"error": "..."}` body and a `Retry-After` header (in seconds, matching that limiter's fixed window) on
 trip; there is no admin configuration for either limit.
+
+An optional `Idempotency-Key` request header (D128) is honored on five POST routes that create a new,
+independently visible resource: `POST /api/v1/tickets`, `POST /api/v1/projects`,
+`POST /api/v1/tickets/{key}/comments`, `POST /api/v1/tickets/{key}/worklogs`, and
+`POST /api/v1/tickets/{key}/clone` -- not marked separately in the table below since it's a header, not a
+distinct route. Every other route ignores the header entirely if sent. Send the same key (any string up
+to 200 characters, scoped per authenticated caller) and body on a retried request to get the *original*
+response replayed (`Idempotency-Replayed: true` on the replay) instead of a second resource being
+created; reusing the same key with a genuinely different request body returns `409`, not a silently wrong
+replay. Only a successful (2xx) response is ever cached -- a failed attempt leaves no side effect to
+protect against, so a retry with the same key after a validation error simply runs normally.
 
 | Method | Route | Auth required | Purpose |
 |---|---|---|---|

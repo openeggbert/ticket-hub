@@ -1,6 +1,7 @@
 #include "web/Api.h"
 
 #include "common/RandomToken.h"
+#include "common/Sha256.h"
 #include "domain/Errors.h"
 #include "web/RateLimiter.h"
 
@@ -587,6 +588,68 @@ constexpr long long SessionCookieMaxAgeSeconds = 30LL * 24 * 60 * 60;
 // 25MB/file limit (D98) and is unaffected by this constant.
 constexpr std::size_t MaxJsonRequestBodyBytes = 1024 * 1024; // 1 MiB
 
+// --- REST write idempotency keys (D128, deferred-after-V1, user-requested) ---
+// Opt-in: only a request carrying an `Idempotency-Key` header is ever looked
+// up or cached; every other request is entirely unaffected. Wired into the
+// handful of POST routes that create a new, independently visible resource
+// (ticket, project, comment, worklog, ticket clone) -- the classic
+// double-submit/network-retry duplicate-record risk D128 explicitly accepted
+// for V1 rather than solving generally. PATCH/DELETE/bulk/status-change
+// routes are deliberately not wired in: repeating those converges to the
+// same end state, so there is no duplicate *record* for a key to prevent.
+constexpr std::size_t MaxIdempotencyKeyLength = 200;
+
+// Returns a response the caller should return immediately -- either a cached
+// replay of a prior successful attempt, or a 409 if the same key was reused
+// with a genuinely different request body -- when the route should NOT
+// proceed to its normal logic. std::nullopt means "proceed normally": no key
+// was given, or the given key has not been seen before for this user.
+std::optional<crow::response> idempotencyReplay(const std::shared_ptr<Application::TicketService>& service,
+                                                 const Domain::Principal& principal,
+                                                 const crow::request& request) {
+    const std::string key = request.get_header_value("Idempotency-Key");
+    if (key.empty()) {
+        return std::nullopt;
+    }
+    if (key.size() > MaxIdempotencyKeyLength) {
+        return errorResponse(400, "Idempotency-Key exceeds the maximum length");
+    }
+    // Hash the route path together with the body, not just the body -- so
+    // the same key value accidentally reused across two different routes
+    // (e.g. a ticket create and a comment create) always produces a hash
+    // mismatch and a 409, never a nonsensical cross-route replay, even in
+    // the vanishingly unlikely case the two bodies happen to be identical.
+    const auto requestHash = Common::sha256Hex(request.url + "\n" + request.body);
+    const auto existing = service->findIdempotencyRecord(principal.userId, key);
+    if (!existing) {
+        return std::nullopt;
+    }
+    if (existing->requestHash != requestHash) {
+        return errorResponse(409, "Idempotency-Key was already used with a different request body");
+    }
+    crow::response response(existing->responseStatus, existing->responseBody);
+    response.set_header("Content-Type", "application/json; charset=utf-8");
+    response.set_header("Cache-Control", "no-store");
+    response.set_header("Idempotency-Replayed", "true");
+    applySecurityHeaders(response);
+    return response;
+}
+
+// Caches a successful (2xx) response for later replay. Deliberately skips
+// non-2xx responses: if the original attempt failed validation or
+// authorization, no side effect happened, so a retry with the same key
+// should simply run normally rather than replay a cached error forever.
+void recordIdempotentResult(const std::shared_ptr<Application::TicketService>& service,
+                            const Domain::Principal& principal, const crow::request& request,
+                            const crow::response& response) {
+    const std::string key = request.get_header_value("Idempotency-Key");
+    if (key.empty() || response.code < 200 || response.code >= 300) {
+        return;
+    }
+    service->recordIdempotencyResult(principal.userId, key, Common::sha256Hex(request.url + "\n" + request.body),
+                                     response.code, response.body);
+}
+
 std::optional<std::string> cookieValue(const crow::request& request, const std::string& name) {
     const std::string header = request.get_header_value("Cookie");
     std::size_t position = 0;
@@ -986,6 +1049,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (request.body.size() > MaxJsonRequestBodyBytes) {
                 return errorResponse(413, "Request body too large");
             }
+            if (auto replay = idempotencyReplay(service, *principal, request)) {
+                return std::move(*replay);
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -994,7 +1060,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             create.key = requiredString(body, "key");
             create.name = requiredString(body, "name");
             create.description = optionalString(body, "description").value_or("");
-            return jsonResponse(201, projectJson(service->createProject(std::move(create), *principal)));
+            auto response = jsonResponse(201, projectJson(service->createProject(std::move(create), *principal)));
+            recordIdempotentResult(service, *principal, request, response);
+            return response;
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -1675,6 +1743,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (request.body.size() > MaxJsonRequestBodyBytes) {
                 return errorResponse(413, "Request body too large");
             }
+            if (auto replay = idempotencyReplay(service, *principal, request)) {
+                return std::move(*replay);
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -1700,7 +1771,9 @@ void registerApiRoutes(crow::SimpleApp& app,
                 }
             }
             create.customFieldValues = parseCustomFieldValues(body);
-            return jsonResponse(201, ticketJson(service->createTicket(std::move(create), *principal)));
+            auto response = jsonResponse(201, ticketJson(service->createTicket(std::move(create), *principal)));
+            recordIdempotentResult(service, *principal, request, response);
+            return response;
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -1997,11 +2070,16 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (request.body.size() > MaxJsonRequestBodyBytes) {
                 return errorResponse(413, "Request body too large");
             }
+            if (auto replay = idempotencyReplay(service, *principal, request)) {
+                return std::move(*replay);
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
             }
-            return jsonResponse(201, commentJson(service->addComment(ticketKey, requiredString(body, "body"), *principal)));
+            auto response = jsonResponse(201, commentJson(service->addComment(ticketKey, requiredString(body, "body"), *principal)));
+            recordIdempotentResult(service, *principal, request, response);
+            return response;
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -2193,6 +2271,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             if (request.body.size() > MaxJsonRequestBodyBytes) {
                 return errorResponse(413, "Request body too large");
             }
+            if (auto replay = idempotencyReplay(service, *principal, request)) {
+                return std::move(*replay);
+            }
             const auto body = crow::json::load(request.body);
             if (!body) {
                 return errorResponse(400, "Request body must be valid JSON");
@@ -2202,7 +2283,9 @@ void registerApiRoutes(crow::SimpleApp& app,
             }
             const auto worklog = service->addWorklog(ticketKey, requiredString(body, "workDate"),
                 body["timeSpentSeconds"].i(), optionalString(body, "comment"), *principal);
-            return jsonResponse(201, worklogJson(worklog));
+            auto response = jsonResponse(201, worklogJson(worklog));
+            recordIdempotentResult(service, *principal, request, response);
+            return response;
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
@@ -2485,7 +2568,12 @@ void registerApiRoutes(crow::SimpleApp& app,
             return rateLimitedResponse("Too many requests. Try again later.", 60);
         }
         try {
-            return jsonResponse(201, ticketJson(service->cloneTicket(ticketKey, *principal)));
+            if (auto replay = idempotencyReplay(service, *principal, request)) {
+                return std::move(*replay);
+            }
+            auto response = jsonResponse(201, ticketJson(service->cloneTicket(ticketKey, *principal)));
+            recordIdempotentResult(service, *principal, request, response);
+            return response;
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {

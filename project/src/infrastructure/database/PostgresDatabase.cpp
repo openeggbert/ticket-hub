@@ -3191,4 +3191,41 @@ WHERE id = $1
                "Record email delivery failure");
 }
 
+std::optional<Domain::IdempotencyRecord> PostgresDatabase::findIdempotencyRecord(
+    const std::string& userId, const std::string& idempotencyKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT request_hash, response_status, response_body FROM idempotency_keys
+WHERE user_id = $1 AND idempotency_key = $2
+)SQL",
+                             {userId, idempotencyKey}, "Find idempotency record");
+    if (PQntuples(result.get()) != 1) {
+        return std::nullopt;
+    }
+    Domain::IdempotencyRecord record;
+    record.requestHash = value(result.get(), 0, 0);
+    record.responseStatus = static_cast<int>(int64Value(result.get(), 0, 1));
+    record.responseBody = value(result.get(), 0, 2);
+    return record;
+}
+
+void PostgresDatabase::recordIdempotencyResult(const std::string& userId, const std::string& idempotencyKey,
+                                               const std::string& requestHash, const int responseStatus,
+                                               const std::string& responseBody) {
+    auto connection = connect(connectionString_);
+    // Best-effort: ON CONFLICT DO NOTHING rather than a plain INSERT, so a
+    // narrow concurrent-retry race (two requests carrying the same key
+    // arriving before either has stored its result) never surfaces as a
+    // 500 -- the caller's own response has already been computed and
+    // returned either way, this write is only about caching it for a
+    // *future* retry.
+    execParams(connection.get(), R"SQL(
+INSERT INTO idempotency_keys(user_id, idempotency_key, request_hash, response_status, response_body, created_at)
+VALUES ($1, $2, $3, $4::int, $5, CURRENT_TIMESTAMP)
+ON CONFLICT (user_id, idempotency_key) DO NOTHING
+)SQL",
+               {userId, idempotencyKey, requestHash, std::to_string(responseStatus), responseBody},
+               "Record idempotency result");
+}
+
 } // namespace TicketHub::Infrastructure::Database
