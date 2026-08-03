@@ -1,5 +1,109 @@
 # Verification record
 
+## 2026-08-03 — Ticket detail layout restyled to look more like Jira (user-requested)
+
+Requested directly by the user: "prosim at je layout detailu ticketu vice podobny jire" ("please make the
+ticket detail layout more similar to Jira"). A pure UI/layout restructure of the ticket drawer's template
+in `web/app.js` and supporting CSS in `web/styles.css` -- no API or schema changes, and every existing
+element `id`/`data-*` attribute kept exactly as it was, so no existing event-handler wiring needed to
+change, only be relocated within the new markup.
+
+### What changed
+
+- **Status pill.** `#drawer-status` moved from a plain `<select class="status-select">` inside a
+  `meta-row` in the sidebar to `<select class="status-pill status-pill--{category}">` directly under the
+  title, in a new `.ticket-toolbar` row. `.status-pill` restyles the native select as a bold, rounded,
+  colored pill (custom CSS-only dropdown-arrow via a background-image trick, since `appearance: none`
+  removes the native one) using the exact same `todo`/`in_progress`/`done` category color variables
+  `.status-chip` already used elsewhere in the app. The resolution picker/confirm-cancel flow
+  (`#drawer-resolution-row`, now styled `.resolution-inline`) sits directly beside the pill instead of a
+  separate labeled row further down.
+- **Sidebar restructured into two panel cards.** The flat `.meta-list` (renamed `.drawer-sidebar`) is now
+  two bordered `.sidebar-panel` cards: "Details" (Assignee, Reporter, Priority, Labels, Component, Story
+  points, Due date, Parent, Move to project -- same conditional visibility during editing as before,
+  unchanged) and a smaller "Dates" panel (Created, Updated, using new compact `.meta-row-compact` rows
+  instead of the label-above-value `.meta-row` style, since Jira's own created/updated area is inline
+  small text rather than a full field row).
+- **Comments/Work log as Activity tabs.** New `.activity-tabs`/`.activity-panel` structure: two tab
+  buttons (`data-activity-tab="comments"`/`"worklog"`, showing live counts) toggle which panel is visible
+  via the `hidden` attribute. A new module-level `activeActivityTab` variable (declared outside
+  `openTicket`, unlike the pre-existing `attachmentSort` which is scoped inside it and so resets on every
+  full reopen) tracks the active tab so it survives a full drawer re-fetch -- logging time or posting a
+  comment triggers `openTicket()` again internally, and without this the newly-added entry would land back
+  on whichever tab was default (Comments) instead of the one the user was actually looking at. Each
+  panel's add-form (`#comment-form`/`#worklog-form`) now renders above its list instead of below it,
+  matching Jira's comment-box-at-top convention; `.comment-form`'s spacing rule changed from `margin-top`
+  to `margin-bottom` to match, and `.worklog-form` gained a `margin-bottom` for the same reason. "Links"
+  was relabeled "Linked issues" to match Jira's own terminology (no functional change).
+
+### Two bugs found and fixed during this batch's own browser verification
+
+1. **Pre-existing backend bug (not introduced by this batch).** `IDatabase::changeTicketStatus` (both
+   `SqliteDatabase` and `PostgresDatabase`) had an unconditional same-status short-circuit: `if (oldStatus
+   == statusKey) { COMMIT; return true; }`, executed *before* any resolution handling. This silently
+   dropped a supplied resolution whenever the requested status matched the ticket's current status --
+   including the one legitimate case this reachable through the UI: a ticket that is Done-category but has
+   no resolution recorded (unreachable through the normal create/status-change API, which always requires
+   a resolution for a genuine transition into Done, but possible with historical/imported/manually-seeded
+   data), where a user opens the resolution-confirm control to set one retroactively without the status
+   itself needing to change. Caught via `curl` reproduction after a Playwright test's final assertion
+   (confirming a resolution on TH-1, which turned out to already be Done with a null resolution in the
+   fresh seed data) passed a *weaker* check than intended -- the request returned `200 OK` but the response
+   body showed `"resolution":null,"version":1` unchanged. Manually replaying the exact PATCH via `curl`
+   confirmed the no-op. This flow existed identically in the pre-redesign layout (the old
+   `#drawer-resolution-row` had the exact same conditional select-or-label markup, just positioned in the
+   sidebar), so it's not a regression from this batch -- but relocating the resolution-confirm control to a
+   much more prominent position makes it more likely to be encountered, so it was fixed here. Fix: the
+   same-status guard now also checks whether the ticket is Done-category, has no resolution yet, and a
+   valid one is being supplied (`settingMissingResolution`); only then does a same-status call proceed to
+   the normal update path instead of short-circuiting. Every other same-status call (including one that
+   redundantly re-supplies a resolution that's already set) remains a pure no-op, matching D68-D70's "any
+   other transition leaves resolution alone." Applied identically to both adapters (SQLite additionally
+   selects `i.resolution` in the existing lookup query and checks `sqlite3_column_type(...) != SQLITE_NULL`;
+   PostgreSQL uses `PQgetisnull`).
+2. **CSS regression introduced by this batch.** `.resolution-inline { display: flex; ... }` has the exact
+   same selector specificity (one class) as the browser's default user-agent rule `[hidden] { display: none
+   }` (one attribute selector), and since author stylesheets are applied after the UA stylesheet in the
+   cascade, `.resolution-inline`'s `display: flex` won regardless of the `hidden` attribute being present
+   -- so the resolution picker rendered even for non-Done-category tickets (caught by screenshotting an
+   "In Progress" ticket and noticing the "Fixed" dropdown + Cancel/Confirm buttons sitting right next to
+   the blue pill, which should never appear outside a Done-category ticket). Fixed with an explicit
+   `.resolution-inline[hidden] { display: none; }` override -- the same class of fix would apply to any
+   future element that combines a `hidden`-attribute-toggled visibility with a non-`none` `display` rule on
+   the same selector; `.activity-panel` deliberately has no such CSS rule of its own, relying on the
+   default `[hidden]` behavior without this pitfall.
+
+### Verification
+
+- Full rebuild in all three build configurations (default, SQLite-only, PostgreSQL-only) with zero new
+  warnings/errors; `ctest --output-on-failure`: 8/8 green in the default and SQLite-only configurations
+  (4/4 in PostgreSQL-only, unchanged), including new coverage in `tests/sqlite_integration_tests.cpp` for
+  the resolution no-op-guard fix: a ticket is force-set to Done with no resolution via raw SQL (the only
+  way to reach that state, since the normal API can't produce it); a same-status call with a resolution
+  now persists it and increments the optimistic-lock version; a further same-status call once a resolution
+  already exists remains a true no-op (resolution unchanged, version unchanged).
+- Live-verified the resolution fix over real HTTP against a fresh throwaway PostgreSQL database and a
+  fresh SQLite database: `PATCH .../status` with the ticket's current status and a resolution now returns
+  the updated resolution and an incremented version (previously returned the stale, unchanged ticket); a
+  second same-status call with a different resolution correctly stays a no-op (resolution and version both
+  unchanged from the first confirm).
+- Full Playwright/Chromium browser pass against fresh SQLite databases -- 20/20 checks across two runs (the
+  first run's one "failure" was a Playwright timeout waiting for `#drawer-resolution`, which turned out to
+  be *correct* behavior: an earlier `curl` reproduction step against that same live database had already
+  set the resolution, so the drawer correctly showed the read-only label instead of the picker; a clean
+  database re-run confirmed 20/20): status pill present with the right category class for Done/In
+  Progress/Confirmed tickets; toolbar and both sidebar panels present with the right heading; both activity
+  tabs present with live counts, Comments active by default, Work log hidden by default and vice versa
+  after clicking; logging a Markdown worklog entry keeps the Work log tab active afterward and the new
+  entry renders `<strong>`/`<li>` HTML, not literal Markdown syntax; posting a comment keeps the Comments
+  tab active and the new comment appears; Watch/Edit still work and the toolbar (status pill) stays visible
+  while editing; the resolution-confirm flow (select a resolution, click Confirm) correctly updates the
+  status pill's category class. Screenshots captured for all three status-category pill colors (Done/
+  green, In Progress/blue, Confirmed/gray) and a dark-mode pass, the latter two confirming the
+  `[hidden]` CSS fix (In Progress and Confirmed tickets show no resolution picker) and that the new pill/
+  panel styling reads correctly in dark mode. README's `docs/screenshots/05-ticket-detail.png` regenerated
+  against the new layout, scrolled to show the Activity tabs with a rendered Markdown worklog entry.
+
 ## 2026-08-03 — Dedicated Backlog screen, Markdown worklogs, Created/Updated columns (user-requested)
 
 Requested directly by the user: "uprav board backlog muze byt obrovsky a nebude v vlastnim sloupci

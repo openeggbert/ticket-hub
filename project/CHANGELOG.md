@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — Ticket detail layout restyled to look more like Jira
+
+- **Status pill.** The status dropdown moved out of the sidebar into a colored pill-button near the title,
+  with the resolution picker/confirm flow shown inline next to it.
+- **Sidebar as two panel cards.** "Details" (Assignee, Reporter, Priority, Labels, Component, Story
+  points, Due date, Parent, Move to project) and "Dates" (Created, Updated) are now separate bordered
+  panels instead of one flat list.
+- **Activity tabs.** Comments and Work log are now tabs in one Activity section instead of two
+  always-visible stacked sections; each panel's add-form now sits above its list. "Links" relabeled
+  "Linked issues".
+- No API or schema changes -- every existing element id/event handler kept working unchanged; only markup
+  and CSS moved.
+- Fixed a real pre-existing backend bug found during this batch's verification: confirming a resolution
+  on a ticket that's already Done-category but has no resolution recorded (e.g. historical/imported data)
+  while the status itself doesn't change used to silently no-op instead of persisting the resolution.
+- Fixed a CSS regression this batch introduced: `.resolution-inline`'s `display: flex` was overriding the
+  native `[hidden]` attribute, showing the resolution picker even for non-Done tickets.
+- Verified: full rebuild and `ctest` clean in all three build configurations (new SQLite integration test
+  coverage for the resolution fix); live-verified against fresh PostgreSQL and SQLite databases over real
+  HTTP; full Playwright/Chromium browser pass (20/20 checks).
+
 ## Unreleased — Dedicated Backlog screen, Markdown worklogs, Created/Updated columns
 
 - **Backlog is off the board and has its own screen (amends D32).** The board is now 4 columns (Confirmed,

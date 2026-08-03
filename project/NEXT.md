@@ -64,6 +64,15 @@ forced single-line; and every ticket list table now shows Created/Updated column
 ticket detail drawer already showed. See `docs/SCOPE.md`'s "Batch 9" entry and "The roadmap is now
 complete" below for full detail.
 
+**Post-V1, batch 10 (done, 2026-08-03):** "prosim at je layout detailu ticketu vice podobny jire"
+("please make the ticket detail layout more similar to Jira"). Restyled the ticket drawer: a colored
+status pill near the title (instead of a plain select in the sidebar), two bordered "Details"/"Dates"
+sidebar panel cards, and Comments/Work log as Activity tabs instead of two always-visible sections. Found
+and fixed a real pre-existing backend bug along the way (a same-status call could silently drop a
+resolution being confirmed on a Done ticket that somehow had none) plus a CSS regression the redesign
+itself introduced (`[hidden]` being overridden by a same-specificity `display: flex` rule). See
+`docs/SCOPE.md`'s "Batch 10" entry and "The roadmap is now complete" below for full detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -1028,6 +1037,63 @@ reorder arrows changing row order across a page, Created/Updated columns present
 absent on the Dashboard's compact widgets, the worklog field being a Markdown-toolbar textarea, and a
 submitted worklog rendering **bold** text and a bullet list as real HTML). Full detail in
 `docs/VERIFICATION.md`.
+
+**Post-V1 batch 10 (done, 2026-08-03):** "prosim at je layout detailu ticketu vice podobny jire" ("please
+make the ticket detail layout more similar to Jira"). A pure UI/layout change (no API or schema changes),
+restructuring the ticket drawer's markup and CSS while leaving every element `id`/`data-*` attribute and
+event handler untouched -- only the surrounding structure moved, so no JavaScript logic needed to change
+except for the one genuinely new thing, the Activity tabs.
+
+- **Status pill.** The status `<select>` moved out of the sidebar and into a prominent, colored
+  pill-button (`.status-pill`, with `.status-pill--todo`/`--in_progress`/`--done` modifier classes reusing
+  the exact same category colors `.status-chip` already used elsewhere) sitting directly under the title,
+  with the resolution picker/confirm-cancel flow inline right next to it (`.resolution-inline`) instead of
+  a separate labeled row buried in the sidebar.
+- **Sidebar as two panel cards.** The flat `meta-list` became two bordered "Details" (Assignee, Reporter,
+  Priority, Labels, Component, Story points, Due date, Parent, Move to project) and "Dates" (Created,
+  Updated) panel cards (`.sidebar-panel`), mirroring Jira's own Details/Dates panel split instead of one
+  undifferentiated list.
+- **Activity tabs.** Comments and Work log became tabs in one "Activity" section (`.activity-tabs`, one
+  `.activity-panel` each) instead of two always-visible stacked sections, matching Jira's own tabbed
+  activity area. A new module-level `activeActivityTab` variable (not scoped inside `openTicket`, so it
+  survives a full drawer re-fetch) tracks which tab is showing; logging time or posting a comment keeps
+  the relevant tab active afterward, so the new entry is visible immediately without an extra click. Each
+  panel's add-form now sits above its list (matching Jira's comment-box-at-top convention) instead of
+  below it. "Links" was relabeled "Linked issues" to match Jira's own terminology.
+
+Two real bugs were found and fixed during this batch's own browser verification:
+
+1. **Pre-existing backend bug, not introduced by this batch:** `changeTicketStatus` (both adapters) had a
+   same-status short-circuit (`if (oldStatus == statusKey) { COMMIT; return true; }`) that unconditionally
+   no-opped a same-status call, silently discarding any resolution supplied with it -- including the one
+   legitimate case where a ticket is already Done-category but has no resolution recorded yet (reachable
+   with historical/imported data, not through the normal API) and the resolution-confirm UI is used to set
+   one retroactively without changing the status. This flow existed identically in the old sidebar-buried
+   layout, so it's not a bug this batch introduced -- but the redesign makes the resolution-confirm control
+   more prominent, so it was fixed here rather than left broken behind a newly-showcased UI element. Fixed
+   by narrowing the no-op guard: a same-status call is now applied (not skipped) specifically when the
+   ticket is Done-category, has no resolution yet, and a valid one is being supplied; every other
+   same-status call remains a pure no-op, matching D68-D70's "any other transition leaves resolution
+   alone."
+2. **CSS regression introduced by this batch:** `.resolution-inline { display: flex; ... }` has the same
+   selector specificity as the browser's default `[hidden] { display: none }` rule and comes later in the
+   cascade, so it silently overrode `hidden`, meaning the resolution picker showed even for non-Done
+   statuses (caught by comparing an "In Progress" ticket's screenshot against expectations). Fixed with an
+   explicit `.resolution-inline[hidden] { display: none; }` override.
+
+New test coverage: `tests/sqlite_integration_tests.cpp` covers the resolution no-op-guard fix directly --
+forces a ticket into Done with no resolution via raw SQL (the only way to reach that state, since the
+normal API can't produce it), confirms a same-status call with a resolution now persists it and bumps the
+optimistic-lock version, and confirms a further same-status call once a resolution already exists remains
+a true no-op (neither overwriting the resolution nor bumping the version). Verified: full rebuild and
+`ctest` clean in all three build configurations; the resolution-confirm fix live-verified over real HTTP
+against both a fresh PostgreSQL database and a fresh SQLite database (same-status confirm now persists,
+a second same-status call stays a no-op); a full Playwright/Chromium browser pass (20/20 checks) covering
+the pill/toolbar/sidebar-panel structure, both activity tabs (including that logging time keeps the Work
+log tab active and the new entry's Markdown renders correctly), every pre-existing action still working
+through the restyled markup (watch/edit/clone/status-change/resolution-confirm), and screenshots of all
+three status-category pill colors plus dark mode confirming the `[hidden]` CSS fix. README's ticket-detail
+screenshot regenerated to show the new layout. Full detail in `docs/VERIFICATION.md`.
 
 ## Verification status
 

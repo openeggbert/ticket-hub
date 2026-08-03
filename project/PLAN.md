@@ -146,6 +146,24 @@ remains only as optional, non-roadmap follow-up.
   terser layout. New SQLite integration test coverage for `sortByRank`; verified end-to-end against a fresh
   live PostgreSQL database over real HTTP and a full Playwright/Chromium browser pass (19/19 checks) against
   a fresh SQLite database seeded with 62 backlog tickets to exercise real pagination.
+- **Post-V1, batch 10.** The user asked for the ticket detail layout to look more like Jira. Restyled the
+  ticket drawer (pure UI/CSS, no API/schema changes, every existing element id and event handler kept
+  working unchanged): the status select is now a colored pill button near the title instead of a plain
+  dropdown buried in the sidebar, with the resolution picker/confirm flow inline beside it; the sidebar is
+  now two bordered "Details"/"Dates" panel cards instead of one flat list; Comments and Work log are now
+  tabs in one Activity section (tracked by a new module-level `activeActivityTab` so the active tab
+  survives a full drawer re-fetch, e.g. after logging time) instead of two always-visible stacked
+  sections, with each panel's add-form moved above its list to match Jira's convention. Found and fixed
+  two real bugs during this batch's own browser verification: a pre-existing backend bug where confirming
+  a resolution on an already-Done ticket with none recorded silently no-opped instead of persisting
+  (`changeTicketStatus`'s same-status guard in both adapters, now narrowed to still apply when a missing
+  resolution is being newly supplied), and a CSS regression this batch itself introduced
+  (`.resolution-inline`'s `display: flex` silently overrode the native `[hidden]` attribute, showing the
+  resolution picker on non-Done tickets, fixed with an explicit `[hidden]` override). New SQLite
+  integration test coverage for the resolution fix; verified end-to-end against fresh live PostgreSQL and
+  SQLite databases over real HTTP and a full Playwright/Chromium browser pass (20/20 checks, plus
+  screenshots of all three status-pill colors and dark mode). README's ticket-detail screenshot
+  regenerated.
   **There is currently no further queued work.**
 
 ## Implementation rules

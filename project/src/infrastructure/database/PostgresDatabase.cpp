@@ -1450,7 +1450,7 @@ bool PostgresDatabase::changeTicketStatus(const std::string& ticketKey,
     exec(connection.get(), "BEGIN", "Begin status transaction");
     try {
         auto current = execParams(connection.get(), R"SQL(
-SELECT i.id, s.status_key, s.category, i.version
+SELECT i.id, s.status_key, s.category, i.version, i.resolution
 FROM tickets i JOIN ticket_statuses s ON s.id = i.status_id
 WHERE i.deleted_at IS NULL
   AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
@@ -1466,10 +1466,20 @@ FOR UPDATE OF i
         const std::string oldStatus = value(current.get(), 0, 1);
         const std::string oldCategory = value(current.get(), 0, 2);
         const std::int64_t currentVersion = int64Value(current.get(), 0, 3);
+        const bool hadResolution = PQgetisnull(current.get(), 0, 4) == 0;
         if (expectedVersion && *expectedVersion != currentVersion) {
             throw Domain::ConcurrencyConflict("Ticket was modified by another user");
         }
-        if (oldStatus == statusKey) {
+        // A same-status call is normally a pure no-op (e.g. an idempotent
+        // resubmit) -- except when the ticket is Done-category but somehow
+        // has no recorded resolution yet (imported/historical data) and a
+        // valid one is now being supplied. That's the one legitimate
+        // "confirm a resolution retroactively" case, reachable through the
+        // same resolution UI used for a real transition into Done; every
+        // other same-status call remains a pure no-op, matching D68-D70's
+        // "any other transition leaves resolution alone."
+        const bool settingMissingResolution = oldCategory == "done" && !hadResolution && resolution && !resolution->empty();
+        if (oldStatus == statusKey && !settingMissingResolution) {
             exec(connection.get(), "COMMIT", "Commit unchanged status transaction");
             return true;
         }

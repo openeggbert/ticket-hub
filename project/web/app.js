@@ -2279,6 +2279,13 @@ async function openTicketFromUrlIfAny() {
   }
 }
 
+// Jira-style Activity tabs (Comments / Work log) in the ticket drawer.
+// Module-level (not scoped inside openTicket) so it survives a full
+// drawer re-open -- e.g. logging time switches this to 'worklog' right
+// before the drawer re-fetches, so the newly-logged entry is immediately
+// visible instead of being hidden behind the default Comments tab.
+let activeActivityTab = 'comments';
+
 async function openTicket(ticketKey, editing = false) {
   if (ticketKeyFromLocation() !== ticketKey) {
     history.pushState({ ticketKey }, '', ticketUrlFor(ticketKey));
@@ -2310,27 +2317,39 @@ async function openTicket(ticketKey, editing = false) {
     const isVoting = voters.items.some(user => user.id === state.principal?.userId);
 
     function render(editing) {
+      const statusCategory = STATUSES.find(status => status.key === ticket.status.key)?.category || 'todo';
       ticketDrawer.innerHTML = `
         <div class="drawer-header"><span class="ticket-key">${escapeHtml(ticket.key)}</span><button class="icon-button" id="close-drawer" aria-label="Close">×</button></div>
         <div class="drawer-content">
           <span class="ticket-type"><span style="color:${escapeHtml(ticket.type.color)}">${escapeHtml(ticket.type.icon)}</span>${escapeHtml(ticket.type.name)} · ${escapeHtml(ticket.projectName)}</span>
-          <div class="drawer-actions">
-            <button type="button" class="secondary-button" id="watch-toggle">${isWatching ? '★ Watching' : '☆ Watch'} (${watchers.items.length})</button>
-            <button type="button" class="secondary-button" id="vote-toggle">${isVoting ? '▲ Voted' : '△ Vote'} (${voters.items.length})</button>
-            <button type="button" class="secondary-button" id="clone-ticket">⧉ Clone</button>
-            ${editing ? '' : '<button type="button" class="secondary-button" id="edit-ticket">✎ Edit</button>'}
-            ${editing ? '' : '<button type="button" class="secondary-button" id="delete-ticket">🗑 Delete</button>'}
-          </div>
           ${editing
             ? `<div class="form-grid" id="edit-form">${editFieldsMarkup(ticket)}</div>
                <div id="edit-error" class="form-error hidden"></div>
                <div class="modal-footer" style="padding:0 0 20px"><button type="button" class="secondary-button" id="edit-cancel">Cancel</button><button type="button" class="primary-button" id="edit-save">Save changes</button></div>`
             : `<h1>${escapeHtml(ticket.summary)}</h1>`}
+          <div class="ticket-toolbar">
+            <div class="ticket-toolbar-status">
+              <select id="drawer-status" class="status-pill status-pill--${escapeHtml(statusCategory)}">${STATUSES.map(status => `<option value="${status.key}" ${status.key === ticket.status.key ? 'selected' : ''}>${status.name}</option>`).join('')}</select>
+              <div class="resolution-inline" id="drawer-resolution-row" ${statusCategory === 'done' ? '' : 'hidden'}>
+                ${ticket.resolution ? `<span class="resolution-label">Resolution: <strong>${escapeHtml(resolutionLabel(ticket.resolution))}</strong></span>` : `
+                <select id="drawer-resolution">${RESOLUTIONS.map(resolution => `<option value="${resolution.key}">${resolution.name}</option>`).join('')}</select>
+                <button type="button" class="secondary-button" id="resolution-cancel">Cancel</button>
+                <button type="button" class="primary-button" id="resolution-confirm">Confirm</button>`}
+              </div>
+            </div>
+            <div class="drawer-actions">
+              <button type="button" class="secondary-button" id="watch-toggle">${isWatching ? '★ Watching' : '☆ Watch'} (${watchers.items.length})</button>
+              <button type="button" class="secondary-button" id="vote-toggle">${isVoting ? '▲ Voted' : '△ Vote'} (${voters.items.length})</button>
+              <button type="button" class="secondary-button" id="clone-ticket">⧉ Clone</button>
+              ${editing ? '' : '<button type="button" class="secondary-button" id="edit-ticket">✎ Edit</button>'}
+              ${editing ? '' : '<button type="button" class="secondary-button" id="delete-ticket">🗑 Delete</button>'}
+            </div>
+          </div>
           <div class="drawer-layout">
-            <div>
+            <div class="drawer-main">
               ${editing ? '' : `<section class="drawer-section"><h3>Description</h3><div class="description markdown-body">${ticket.description ? renderMarkdown(ticket.description) : '<p class="markdown-empty">No description provided.</p>'}</div></section>`}
               <section class="drawer-section">
-                <h3>Links</h3>
+                <h3>Linked issues</h3>
                 <div class="link-list">${links.items.length ? links.items.map(link => `
                   <div class="link-row">
                     <span class="link-label">${escapeHtml(link.label)}</span>
@@ -2346,24 +2365,6 @@ async function openTicket(ticketKey, editing = false) {
                   </select>
                   <input name="targetTicketKey" placeholder="Ticket key, e.g. TH-3" required>
                   <button class="secondary-button" type="submit">Add link</button>
-                </form>
-              </section>
-              <section class="drawer-section">
-                <h3>Time tracking</h3>
-                <div class="worklog-list">${worklogs.items.length ? worklogs.items.map(worklog => `
-                  <div class="worklog-row" data-worklog-id="${escapeHtml(worklog.id)}">
-                    <span class="small-avatar">${escapeHtml(initials(worklog.author.displayName))}</span>
-                    <div class="worklog-details">
-                      <span><strong>${escapeHtml(formatDuration(worklog.timeSpentSeconds))}</strong> by ${escapeHtml(worklog.author.displayName)} on ${escapeHtml(formatDate(worklog.workDate))}</span>
-                      ${worklog.comment ? `<div class="worklog-comment markdown-body">${renderMarkdown(worklog.comment)}</div>` : ''}
-                    </div>
-                    <button type="button" class="icon-button" data-delete-worklog="${escapeHtml(worklog.id)}" aria-label="Delete worklog">×</button>
-                  </div>`).join('') : '<div class="empty-state">No time logged yet.</div>'}</div>
-                <form class="worklog-form" id="worklog-form">
-                  <input name="workDate" type="date" required value="${new Date().toISOString().slice(0, 10)}">
-                  <input name="duration" placeholder="e.g. 1h 30m" required pattern="^(\\d+h)?\\s*(\\d+m)?$">
-                  <textarea name="comment" rows="2" placeholder="What did you work on? (optional, Markdown supported)"></textarea>
-                  <button class="secondary-button" type="submit">Log time</button>
                 </form>
               </section>
               <section class="drawer-section">
@@ -2397,80 +2398,100 @@ async function openTicket(ticketKey, editing = false) {
                 <button type="button" class="secondary-button" id="attachment-upload-button">📎 Attach files</button>
                 <div class="attachment-dropzone" id="attachment-dropzone">Drag and drop files here, or use "Attach files" above (max 25MB each, 20 per ticket)</div>
               </section>
-              <section class="drawer-section">
-                <h3>Comments</h3>
-                <div class="comment-list">${comments.items.length ? comments.items.map(comment => {
-                  // Simplified permissions (D83): the author can always
-                  // edit/delete their own comment. A project admin (not
-                  // global admin) could too per the server, but the client
-                  // never loads per-project role, so the buttons are shown
-                  // only for the author or a global admin -- a conservative
-                  // UI simplification, not a security boundary (the server
-                  // enforces the real rule regardless).
-                  const canModerate = comment.author.id === state.principal?.userId || state.principal?.isAdmin;
-                  const reactions = reactionsByComment.get(comment.id) || [];
-                  return `
-                  <article class="comment" data-comment-id="${escapeHtml(comment.id)}">
-                    <span class="small-avatar">${escapeHtml(initials(comment.author.displayName))}</span>
-                    <div class="comment-body">
-                      <header>
-                        <strong>${escapeHtml(comment.author.displayName)}</strong>
-                        <span>${escapeHtml(relativeDate(comment.createdAt))}${comment.editedAt ? ' (edited)' : ''}</span>
-                      </header>
-                      <div class="comment-body-text markdown-body">${renderMarkdown(comment.body)}</div>
-                      <div class="comment-reactions">${COMMENT_REACTIONS.map(reaction => {
-                        const reactedUsers = reactions.filter(entry => entry.reactionKey === reaction.key);
-                        const mine = reactedUsers.some(entry => entry.user.id === state.principal?.userId);
-                        return `<button type="button" class="reaction-button${mine ? ' reaction-button--active' : ''}"
-                          data-toggle-reaction="${escapeHtml(comment.id)}" data-reaction-key="${reaction.key}"
-                          title="${reaction.key}">${reaction.emoji}${reactedUsers.length ? ` ${reactedUsers.length}` : ''}</button>`;
-                      }).join('')}</div>
-                      ${canModerate ? `<div class="comment-actions">
-                        <button type="button" class="ghost-button" data-edit-comment="${escapeHtml(comment.id)}">Edit</button>
-                        <button type="button" class="ghost-button" data-delete-comment="${escapeHtml(comment.id)}">Delete</button>
-                      </div>` : ''}
-                    </div>
-                  </article>`;
-                }).join('') : '<div class="empty-state">No comments yet.</div>'}</div>
-                <form class="comment-form" id="comment-form"><textarea name="body" rows="3" required placeholder="Add a comment…"></textarea><button class="primary-button" type="submit">Comment</button></form>
+              <section class="drawer-section drawer-activity">
+                <div class="activity-tabs">
+                  <button type="button" class="activity-tab ${activeActivityTab === 'comments' ? 'active' : ''}" data-activity-tab="comments">Comments (${comments.items.length})</button>
+                  <button type="button" class="activity-tab ${activeActivityTab === 'worklog' ? 'active' : ''}" data-activity-tab="worklog">Work log (${worklogs.items.length})</button>
+                </div>
+                <div class="activity-panel" data-activity-panel="comments" ${activeActivityTab === 'comments' ? '' : 'hidden'}>
+                  <form class="comment-form" id="comment-form"><textarea name="body" rows="3" required placeholder="Add a comment…"></textarea><button class="primary-button" type="submit">Comment</button></form>
+                  <div class="comment-list">${comments.items.length ? comments.items.map(comment => {
+                    // Simplified permissions (D83): the author can always
+                    // edit/delete their own comment. A project admin (not
+                    // global admin) could too per the server, but the client
+                    // never loads per-project role, so the buttons are shown
+                    // only for the author or a global admin -- a conservative
+                    // UI simplification, not a security boundary (the server
+                    // enforces the real rule regardless).
+                    const canModerate = comment.author.id === state.principal?.userId || state.principal?.isAdmin;
+                    const reactions = reactionsByComment.get(comment.id) || [];
+                    return `
+                    <article class="comment" data-comment-id="${escapeHtml(comment.id)}">
+                      <span class="small-avatar">${escapeHtml(initials(comment.author.displayName))}</span>
+                      <div class="comment-body">
+                        <header>
+                          <strong>${escapeHtml(comment.author.displayName)}</strong>
+                          <span>${escapeHtml(relativeDate(comment.createdAt))}${comment.editedAt ? ' (edited)' : ''}</span>
+                        </header>
+                        <div class="comment-body-text markdown-body">${renderMarkdown(comment.body)}</div>
+                        <div class="comment-reactions">${COMMENT_REACTIONS.map(reaction => {
+                          const reactedUsers = reactions.filter(entry => entry.reactionKey === reaction.key);
+                          const mine = reactedUsers.some(entry => entry.user.id === state.principal?.userId);
+                          return `<button type="button" class="reaction-button${mine ? ' reaction-button--active' : ''}"
+                            data-toggle-reaction="${escapeHtml(comment.id)}" data-reaction-key="${reaction.key}"
+                            title="${reaction.key}">${reaction.emoji}${reactedUsers.length ? ` ${reactedUsers.length}` : ''}</button>`;
+                        }).join('')}</div>
+                        ${canModerate ? `<div class="comment-actions">
+                          <button type="button" class="ghost-button" data-edit-comment="${escapeHtml(comment.id)}">Edit</button>
+                          <button type="button" class="ghost-button" data-delete-comment="${escapeHtml(comment.id)}">Delete</button>
+                        </div>` : ''}
+                      </div>
+                    </article>`;
+                  }).join('') : '<div class="empty-state">No comments yet.</div>'}</div>
+                </div>
+                <div class="activity-panel" data-activity-panel="worklog" ${activeActivityTab === 'worklog' ? '' : 'hidden'}>
+                  <form class="worklog-form" id="worklog-form">
+                    <input name="workDate" type="date" required value="${new Date().toISOString().slice(0, 10)}">
+                    <input name="duration" placeholder="e.g. 1h 30m" required pattern="^(\\d+h)?\\s*(\\d+m)?$">
+                    <textarea name="comment" rows="2" placeholder="What did you work on? (optional, Markdown supported)"></textarea>
+                    <button class="secondary-button" type="submit">Log time</button>
+                  </form>
+                  <div class="worklog-list">${worklogs.items.length ? worklogs.items.map(worklog => `
+                    <div class="worklog-row" data-worklog-id="${escapeHtml(worklog.id)}">
+                      <span class="small-avatar">${escapeHtml(initials(worklog.author.displayName))}</span>
+                      <div class="worklog-details">
+                        <span><strong>${escapeHtml(formatDuration(worklog.timeSpentSeconds))}</strong> by ${escapeHtml(worklog.author.displayName)} on ${escapeHtml(formatDate(worklog.workDate))}</span>
+                        ${worklog.comment ? `<div class="worklog-comment markdown-body">${renderMarkdown(worklog.comment)}</div>` : ''}
+                      </div>
+                      <button type="button" class="icon-button" data-delete-worklog="${escapeHtml(worklog.id)}" aria-label="Delete worklog">×</button>
+                    </div>`).join('') : '<div class="empty-state">No time logged yet.</div>'}</div>
+                </div>
               </section>
             </div>
-            <aside class="meta-list">
-              <div class="meta-row"><span>Status</span><select id="drawer-status" class="status-select">${STATUSES.map(status => `<option value="${status.key}" ${status.key === ticket.status.key ? 'selected' : ''}>${status.name}</option>`).join('')}</select></div>
-              <div class="meta-row" id="drawer-resolution-row" ${STATUSES.find(status => status.key === ticket.status.key)?.category === 'done' ? '' : 'hidden'}>
-                <span>Resolution</span>
-                ${ticket.resolution ? `<strong>${escapeHtml(resolutionLabel(ticket.resolution))}</strong>` : `
-                <select id="drawer-resolution">${RESOLUTIONS.map(resolution => `<option value="${resolution.key}">${resolution.name}</option>`).join('')}</select>
-                <div class="resolution-actions">
-                  <button type="button" class="secondary-button" id="resolution-cancel">Cancel</button>
-                  <button type="button" class="primary-button" id="resolution-confirm">Confirm</button>
+            <aside class="drawer-sidebar">
+              <div class="sidebar-panel">
+                <h4>Details</h4>
+                ${editing ? '' : `<div class="meta-row"><span>Assignee</span>${assigneeMarkup(ticket)}</div>`}
+                <div class="meta-row"><span>Reporter</span>${escapeHtml(ticket.reporter.displayName)}</div>
+                ${editing ? '' : `<div class="meta-row"><span>Priority</span>${priorityChip(ticket)}</div>`}
+                ${ticket.parentTicketKey ? `<div class="meta-row"><span>Parent</span><strong class="ticket-key" id="drawer-parent-link" style="cursor:pointer">${escapeHtml(ticket.parentTicketKey)}</strong></div>` : ''}
+                ${editing ? '' : `
+                <div class="meta-row"><span>Labels</span><div>${labelsMarkup(ticket.labels) || '—'}</div></div>
+                <div class="meta-row"><span>Component</span><strong>${ticket.component ? escapeHtml(ticket.component.name) : '—'}</strong></div>
+                <div class="meta-row"><span>Story points</span><strong>${ticket.storyPoints ?? '—'}</strong></div>
+                <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(ticket.dueDate))}</strong></div>`}
+                ${editing || state.projects.filter(project => project.key !== ticket.projectKey).length === 0 ? '' : `
+                <div class="meta-row">
+                  <span>Move to project</span>
+                  <div style="display:flex;gap:6px">
+                    <select id="move-target-project" class="status-select">${state.projects.filter(project => project.key !== ticket.projectKey).map(project => `<option value="${escapeHtml(project.key)}">${escapeHtml(project.key)}</option>`).join('')}</select>
+                    <button type="button" class="secondary-button" id="move-ticket-button">Move</button>
+                  </div>
                 </div>`}
               </div>
-              ${editing ? '' : `
-              <div class="meta-row"><span>Priority</span>${priorityChip(ticket)}</div>
-              <div class="meta-row"><span>Assignee</span>${assigneeMarkup(ticket)}</div>`}
-              <div class="meta-row"><span>Reporter</span>${escapeHtml(ticket.reporter.displayName)}</div>
-              ${ticket.parentTicketKey ? `<div class="meta-row"><span>Parent</span><strong class="ticket-key" id="drawer-parent-link" style="cursor:pointer">${escapeHtml(ticket.parentTicketKey)}</strong></div>` : ''}
-              ${editing || state.projects.filter(project => project.key !== ticket.projectKey).length === 0 ? '' : `
-              <div class="meta-row">
-                <span>Move to project</span>
-                <div style="display:flex;gap:6px">
-                  <select id="move-target-project" class="status-select">${state.projects.filter(project => project.key !== ticket.projectKey).map(project => `<option value="${escapeHtml(project.key)}">${escapeHtml(project.key)}</option>`).join('')}</select>
-                  <button type="button" class="secondary-button" id="move-ticket-button">Move</button>
-                </div>
-              </div>`}
-              ${editing ? '' : `
-              <div class="meta-row"><span>Story points</span><strong>${ticket.storyPoints ?? '—'}</strong></div>
-              <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(ticket.dueDate))}</strong></div>
-              <div class="meta-row"><span>Component</span><strong>${ticket.component ? escapeHtml(ticket.component.name) : '—'}</strong></div>
-              <div class="meta-row"><span>Labels</span><div>${labelsMarkup(ticket.labels) || '—'}</div></div>`}
-              <div class="meta-row"><span>Created</span><strong>${escapeHtml(formatDate(ticket.createdAt))}</strong></div>
-              <div class="meta-row"><span>Updated</span><strong>${escapeHtml(relativeDate(ticket.updatedAt))}</strong></div>
+              <div class="sidebar-panel sidebar-panel--dates">
+                <div class="meta-row-compact"><span>Created</span><strong>${escapeHtml(formatDate(ticket.createdAt))}</strong></div>
+                <div class="meta-row-compact"><span>Updated</span><strong>${escapeHtml(relativeDate(ticket.updatedAt))}</strong></div>
+              </div>
             </aside>
           </div>
         </div>`;
 
       document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
+      document.querySelectorAll('[data-activity-tab]').forEach(button => button.addEventListener('click', () => {
+        activeActivityTab = button.dataset.activityTab;
+        render(editing);
+      }));
       if (ticket.parentTicketKey) {
         document.querySelector('#drawer-parent-link').addEventListener('click', () => openTicket(ticket.parentTicketKey));
       }

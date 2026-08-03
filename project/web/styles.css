@@ -285,10 +285,12 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .ticket-drawer { position: fixed; top: 0; right: 0; z-index: 90; width: min(720px, 94vw); height: 100vh; overflow-y: auto; background: var(--surface); box-shadow: -12px 0 40px rgba(9,30,66,.22); }
 .drawer-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid var(--border); background: var(--topbar-bg); backdrop-filter: blur(8px); }
 .drawer-content { padding: 24px; }
-.drawer-content h1 { margin: 8px 0 20px; font-size: 25px; line-height: 1.3; }
-.drawer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.drawer-content h1 { margin: 8px 0 16px; font-size: 25px; line-height: 1.3; }
+.ticket-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.ticket-toolbar-status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.drawer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .drawer-actions .secondary-button { padding: 7px 12px; font-size: 12px; }
-.drawer-layout { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 28px; }
+.drawer-layout { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 28px; }
 .drawer-layout > div { min-width: 0; }
 .drawer-section { margin-bottom: 26px; }
 .drawer-section h3 { margin: 0 0 10px; font-size: 14px; }
@@ -302,13 +304,36 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .link-form select { padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
 .link-form input { flex: 1; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
 .description { color: var(--text-secondary); line-height: 1.65; }
-.meta-list { display: grid; gap: 14px; }
+
+/* Jira-style status pill: a native <select> so it keeps working exactly
+   like the plain dropdown it replaced (same change/keyboard behavior),
+   just re-skinned as a bold, rounded, colored button using the same
+   todo/in_progress/done category colors as .status-chip elsewhere. */
+.status-pill { appearance: none; -webkit-appearance: none; border: none; border-radius: 999px; padding: 7px 30px 7px 14px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: right 14px center, right 9px center; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.status-pill.status-pill--todo { background-color: var(--border); color: var(--text-secondary); }
+.status-pill.status-pill--in_progress { background-color: var(--info-bg); color: var(--info-text); }
+.status-pill.status-pill--done { background-color: var(--success-bg); color: var(--success-text); }
+.resolution-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.resolution-inline[hidden] { display: none; }
+.resolution-inline .resolution-label { font-size: 13px; color: var(--text-secondary); }
+.resolution-inline select { padding: 7px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.resolution-inline .primary-button, .resolution-inline .secondary-button { padding: 7px 12px; font-size: 12px; }
+
+.status-select { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+
+.drawer-sidebar { display: grid; gap: 16px; align-content: start; }
+.sidebar-panel { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-soft); }
+.sidebar-panel h4 { margin: 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .meta-row span, .meta-row strong { display: block; }
 .meta-row span { margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
-.status-select { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
-#drawer-resolution { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); margin-top: 6px; }
-.resolution-actions { display: flex; gap: 8px; margin-top: 8px; }
-.resolution-actions .primary-button, .resolution-actions .secondary-button { padding: 7px 12px; font-size: 12px; }
+.sidebar-panel--dates { gap: 8px; padding: 12px 16px; background: transparent; }
+.meta-row-compact { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); }
+.meta-row-compact strong { font-weight: 600; color: var(--text-secondary); }
+
+.activity-tabs { display: flex; gap: 22px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+.activity-tab { background: none; border: none; padding: 8px 2px 10px; font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.activity-tab:hover { color: var(--text-secondary); }
+.activity-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 .comment-list { display: grid; gap: 14px; }
 .comment { display: grid; grid-template-columns: 32px 1fr; gap: 10px; }
 .comment-body { padding: 10px 12px; border-radius: 8px; background: var(--surface-soft); }
@@ -325,14 +350,14 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .comment-edit-textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); resize: vertical; }
 .comment-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .comment-edit-actions .primary-button, .comment-edit-actions .secondary-button { padding: 6px 12px; font-size: 12px; }
-.comment-form { display: grid; gap: 9px; margin-top: 14px; }
+.comment-form { display: grid; gap: 9px; margin-bottom: 18px; }
 .comment-form .primary-button { justify-self: end; }
 
 .worklog-list { display: grid; gap: 8px; margin-bottom: 10px; }
 .worklog-row { display: grid; grid-template-columns: 28px 1fr auto; align-items: start; gap: 10px; padding: 8px 10px; border-radius: 8px; background: var(--surface-soft); }
 .worklog-details { display: grid; gap: 2px; font-size: 13px; }
 .worklog-comment { color: var(--muted); }
-.worklog-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.worklog-form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .worklog-form input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
 .worklog-form input[name="comment"] { flex: 1; min-width: 140px; }
 
