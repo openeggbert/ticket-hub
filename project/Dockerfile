@@ -8,7 +8,7 @@ FROM debian:bookworm-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git ca-certificates \
-        libpq-dev libsqlite3-dev libargon2-dev libasio-dev \
+        libpq-dev libsqlite3-dev libargon2-dev libasio-dev libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -17,6 +17,10 @@ COPY . .
 # Server target only -- the CLI is also built by this same configuration
 # (TICKETHUB_BUILD_CLI defaults ON) and installed alongside it, so both
 # `ticket-hub` and `ticket-hub-cli` end up in the runtime image below.
+# `ticket-hub-cli` (only) links libcurl for `process-outbox` (D39/D41
+# webhooks, D52 email) -- run it via `docker run/exec ... ticket-hub-cli
+# process-outbox` on an external schedule; the server itself makes no
+# outbound network calls.
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTICKETHUB_BUILD_SERVER=ON \
     && cmake --build build -j"$(nproc)" \
     && cmake --install build --prefix /opt/ticket-hub
@@ -24,7 +28,7 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTICKETHUB_BUILD_SERVER=ON \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libpq5 libsqlite3-0 libargon2-1 curl \
+        libpq5 libsqlite3-0 libargon2-1 libcurl4 curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --home-dir /home/ticket-hub --shell /usr/sbin/nologin ticket-hub
 

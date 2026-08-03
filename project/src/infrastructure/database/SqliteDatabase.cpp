@@ -1,6 +1,7 @@
 #include "infrastructure/database/SqliteDatabase.h"
 
 #include "common/FileUtil.h"
+#include "common/RandomToken.h"
 #include "common/Uuid.h"
 #include "infrastructure/database/Migration.h"
 #include "domain/Errors.h"
@@ -3148,6 +3149,226 @@ WHERE p.project_key = ?
         keys.push_back(text(statement.get(), 0));
     }
     return keys;
+}
+
+namespace {
+std::string joinComma(const std::vector<std::string>& values) {
+    std::string joined;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            joined += ",";
+        }
+        joined += values[i];
+    }
+    return joined;
+}
+
+constexpr const char* WebhookSubscriptionSelect = R"SQL(
+SELECT w.id, w.target_url, w.secret, w.event_types, w.project_key, w.enabled,
+       u.id, u.display_name, u.email, w.created_at
+FROM webhook_subscriptions w
+LEFT JOIN users u ON u.id = w.created_by_user_id
+)SQL";
+
+Domain::WebhookSubscription readWebhookSubscription(sqlite3_stmt* statement) {
+    Domain::WebhookSubscription subscription;
+    subscription.id = text(statement, 0);
+    subscription.targetUrl = text(statement, 1);
+    subscription.secret = text(statement, 2);
+    subscription.eventTypes = splitLabels(text(statement, 3));
+    subscription.projectKey = optionalText(statement, 4);
+    subscription.enabled = boolColumn(statement, 5);
+    if (sqlite3_column_type(statement, 6) != SQLITE_NULL) {
+        subscription.createdBy = readUserSummary(statement, 6);
+    }
+    subscription.createdAt = text(statement, 9);
+    return subscription;
+}
+} // namespace
+
+std::vector<Domain::WebhookSubscription> SqliteDatabase::listWebhookSubscriptions() {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(WebhookSubscriptionSelect) + "ORDER BY w.created_at DESC");
+    std::vector<Domain::WebhookSubscription> subscriptions;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        subscriptions.push_back(readWebhookSubscription(statement.get()));
+    }
+    return subscriptions;
+}
+
+Domain::WebhookSubscription SqliteDatabase::createWebhookSubscription(
+    const Domain::CreateWebhookSubscriptionRequest& request, const std::string& createdByUserId) {
+    std::scoped_lock lock(mutex_);
+    const std::string subscriptionId = Common::uuidV4();
+    // The signing secret is generated here (not supplied by the caller) and
+    // stored in cleartext -- unlike a session/PAT token (a bearer
+    // credential verified by hash comparison), this is an HMAC signing key
+    // the CLI must re-read at delivery time to sign each payload, so it
+    // cannot be stored as a one-way hash.
+    const std::string secret = Common::randomTokenHex(32);
+    Statement insert(database_, R"SQL(
+INSERT INTO webhook_subscriptions(id, target_url, secret, event_types, project_key, created_by_user_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+)SQL");
+    insert.bind(1, subscriptionId);
+    insert.bind(2, request.targetUrl);
+    insert.bind(3, secret);
+    insert.bind(4, joinComma(request.eventTypes));
+    request.projectKey ? insert.bind(5, *request.projectKey) : insert.bindNull(5);
+    insert.bind(6, createdByUserId);
+    expectDone(database_, insert, "Webhook subscription insert");
+
+    Statement read(database_, std::string(WebhookSubscriptionSelect) + "WHERE w.id = ?");
+    read.bind(1, subscriptionId);
+    if (read.step() != SQLITE_ROW) {
+        throw std::runtime_error("Created webhook subscription could not be read back");
+    }
+    return readWebhookSubscription(read.get());
+}
+
+bool SqliteDatabase::deleteWebhookSubscription(const std::string& subscriptionId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "DELETE FROM webhook_subscriptions WHERE id = ?");
+    statement.bind(1, subscriptionId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+void SqliteDatabase::createWebhookDelivery(const std::string& subscriptionId, const std::string& eventType,
+                                            const std::string& payload) {
+    std::scoped_lock lock(mutex_);
+    Statement insert(database_, R"SQL(
+INSERT INTO webhook_deliveries(id, subscription_id, event_type, payload, created_at, next_attempt_at)
+VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL");
+    insert.bind(1, Common::uuidV4());
+    insert.bind(2, subscriptionId);
+    insert.bind(3, eventType);
+    insert.bind(4, payload);
+    expectDone(database_, insert, "Webhook delivery insert");
+}
+
+std::vector<Domain::WebhookDelivery> SqliteDatabase::listPendingWebhookDeliveries(const int limit) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT d.id, d.subscription_id, w.target_url, w.secret, d.event_type, d.payload, d.attempt_count
+FROM webhook_deliveries d
+JOIN webhook_subscriptions w ON w.id = d.subscription_id
+WHERE d.status = 'pending' AND d.next_attempt_at <= CURRENT_TIMESTAMP
+ORDER BY d.created_at
+LIMIT ?
+)SQL");
+    statement.bind(1, static_cast<std::int64_t>(limit));
+    std::vector<Domain::WebhookDelivery> deliveries;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        Domain::WebhookDelivery delivery;
+        delivery.id = text(statement.get(), 0);
+        delivery.subscriptionId = text(statement.get(), 1);
+        delivery.targetUrl = text(statement.get(), 2);
+        delivery.secret = text(statement.get(), 3);
+        delivery.eventType = text(statement.get(), 4);
+        delivery.payload = text(statement.get(), 5);
+        delivery.attemptCount = sqlite3_column_int(statement.get(), 6);
+        deliveries.push_back(std::move(delivery));
+    }
+    return deliveries;
+}
+
+void SqliteDatabase::recordWebhookDeliveryResult(const std::string& deliveryId, const bool success,
+                                                  const std::optional<std::string>& error) {
+    std::scoped_lock lock(mutex_);
+    if (success) {
+        Statement update(database_, R"SQL(
+UPDATE webhook_deliveries SET status = 'delivered', delivered_at = CURRENT_TIMESTAMP, last_error = NULL
+WHERE id = ?
+)SQL");
+        update.bind(1, deliveryId);
+        expectDone(database_, update, "Record webhook delivery success");
+        return;
+    }
+    // A failed attempt either gets rescheduled or, past
+    // Domain::MaxDeliveryAttempts, permanently marked "failed" -- computed
+    // in SQL against the row's own just-incremented attempt_count so this
+    // stays a single statement (no read-modify-write race with a
+    // concurrent process-outbox run, though in practice this CLI command is
+    // not expected to run concurrently with itself).
+    Statement update(database_, R"SQL(
+UPDATE webhook_deliveries
+SET attempt_count = attempt_count + 1,
+    last_error = ?2,
+    status = CASE WHEN attempt_count + 1 >= ?3 THEN 'failed' ELSE status END,
+    next_attempt_at = datetime(CURRENT_TIMESTAMP, '+' || ?4 || ' minutes')
+WHERE id = ?1
+)SQL");
+    update.bind(1, deliveryId);
+    error ? update.bind(2, *error) : update.bindNull(2);
+    update.bind(3, static_cast<std::int64_t>(Domain::MaxDeliveryAttempts));
+    update.bind(4, static_cast<std::int64_t>(Domain::DeliveryRetryDelayMinutes));
+    expectDone(database_, update, "Record webhook delivery failure");
+}
+
+void SqliteDatabase::createEmailDelivery(const std::string& recipientUserId, const std::string& subject,
+                                          const std::string& body) {
+    std::scoped_lock lock(mutex_);
+    Statement insert(database_, R"SQL(
+INSERT INTO email_deliveries(id, recipient_user_id, subject, body, created_at, next_attempt_at)
+VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL");
+    insert.bind(1, Common::uuidV4());
+    insert.bind(2, recipientUserId);
+    insert.bind(3, subject);
+    insert.bind(4, body);
+    expectDone(database_, insert, "Email delivery insert");
+}
+
+std::vector<Domain::EmailDelivery> SqliteDatabase::listPendingEmailDeliveries(const int limit) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT d.id, u.email, d.subject, d.body, d.attempt_count
+FROM email_deliveries d
+JOIN users u ON u.id = d.recipient_user_id
+WHERE d.status = 'pending' AND d.next_attempt_at <= CURRENT_TIMESTAMP
+ORDER BY d.created_at
+LIMIT ?
+)SQL");
+    statement.bind(1, static_cast<std::int64_t>(limit));
+    std::vector<Domain::EmailDelivery> deliveries;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        Domain::EmailDelivery delivery;
+        delivery.id = text(statement.get(), 0);
+        delivery.recipientEmail = text(statement.get(), 1);
+        delivery.subject = text(statement.get(), 2);
+        delivery.body = text(statement.get(), 3);
+        delivery.attemptCount = sqlite3_column_int(statement.get(), 4);
+        deliveries.push_back(std::move(delivery));
+    }
+    return deliveries;
+}
+
+void SqliteDatabase::recordEmailDeliveryResult(const std::string& deliveryId, const bool success,
+                                                const std::optional<std::string>& error) {
+    std::scoped_lock lock(mutex_);
+    if (success) {
+        Statement update(database_, R"SQL(
+UPDATE email_deliveries SET status = 'delivered', sent_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?
+)SQL");
+        update.bind(1, deliveryId);
+        expectDone(database_, update, "Record email delivery success");
+        return;
+    }
+    Statement update(database_, R"SQL(
+UPDATE email_deliveries
+SET attempt_count = attempt_count + 1,
+    last_error = ?2,
+    status = CASE WHEN attempt_count + 1 >= ?3 THEN 'failed' ELSE status END,
+    next_attempt_at = datetime(CURRENT_TIMESTAMP, '+' || ?4 || ' minutes')
+WHERE id = ?1
+)SQL");
+    update.bind(1, deliveryId);
+    error ? update.bind(2, *error) : update.bindNull(2);
+    update.bind(3, static_cast<std::int64_t>(Domain::MaxDeliveryAttempts));
+    update.bind(4, static_cast<std::int64_t>(Domain::DeliveryRetryDelayMinutes));
+    expectDone(database_, update, "Record email delivery failure");
 }
 
 } // namespace TicketHub::Infrastructure::Database

@@ -1,5 +1,147 @@
 # Verification record
 
+## 2026-08-03 — Outbound webhooks (D39/D41) and outbound email (D52), user-requested, deferred-after-V1
+
+Requested directly by the user as items 11 and 12 off the same menu of possible new functionality as the
+custom-fields batch below ("implementuj prosim 1 3 4 6 11 12"). Both need a durable delivery mechanism
+first per `CLAUDE.md`: "Durable side effects must eventually use jobs/outbox/events. Do not use detached
+in-memory tasks for email, webhooks..." -- see `docs/SCOPE.md`'s "Batch 14" entry for the exact rationale
+and scope cuts.
+
+### What changed
+
+- **Schema.** New `webhook_subscriptions` (`id`, `target_url`, `secret`, `event_types` comma-joined,
+  `project_key` nullable, `enabled`, `created_by_user_id` nullable `ON DELETE SET NULL`, `created_at`),
+  `webhook_deliveries` (`id`, `subscription_id` `ON DELETE CASCADE`, `event_type`, `payload`, `status`
+  `CHECK`-constrained to `pending`/`delivered`/`failed`, `attempt_count`, `next_attempt_at`, `last_error`
+  nullable, `created_at`, `delivered_at` nullable; indexed on `(status, next_attempt_at)`), and
+  `email_deliveries` (the same shape, `recipient_user_id` `ON DELETE CASCADE`, `subject`, `body`, `sent_at`
+  instead of `delivered_at`) tables, migration `019_outbox_delivery.sql` in both `migrations/sqlite/` and
+  `migrations/postgresql/`.
+- **Backend.** `Domain::WebhookSubscription`/`CreateWebhookSubscriptionRequest`/`WebhookDelivery`/
+  `EmailDelivery`; `Domain::MaxDeliveryAttempts = 10`/`DeliveryRetryDelayMinutes = 5`; fixed event catalog
+  `WebhookEventTicketCreated`/`TicketStatusChanged`/`TicketUpdated`/`CommentAdded`;
+  `Domain::validateCreateWebhookSubscription`. New `IDatabase::listWebhookSubscriptions`/
+  `createWebhookSubscription`/`deleteWebhookSubscription`/`createWebhookDelivery`/
+  `listPendingWebhookDeliveries`/`recordWebhookDeliveryResult`/`createEmailDelivery`/
+  `listPendingEmailDeliveries`/`recordEmailDeliveryResult` on both `SqliteDatabase` and `PostgresDatabase`.
+  `TicketService` gained public `listWebhookSubscriptions`/`createWebhookSubscription`/
+  `deleteWebhookSubscription` plus private `enqueueWebhookEvent`/`maybeEnqueueEmail` (with local
+  `jsonEscape`/`buildWebhookPayload` helpers, since `application/` must not depend on `web/`'s
+  `crow::json`), wired into `createTicket`, `changeStatus`, `editTicket`, `addComment`,
+  `dispatchAssignmentNotification`, and `dispatchCommentNotifications`. Constructor gained an
+  `emailDeliveryEnabled` parameter, derived once in `main.cpp` from `!config.smtpHost.empty()`.
+- **New CLI command.** `ticket-hub-cli process-outbox`: attempts delivery of every pending webhook/email row
+  whose `next_attempt_at` has arrived, then exits (not a daemon -- intended to be admin-cron-scheduled every
+  1-5 minutes). This is the *only* place in the entire codebase that makes an outbound network call --
+  request handlers only ever write a durable delivery row. New `src/infrastructure/delivery/
+  WebhookDeliveryClient.h/.cpp` (`sendWebhookDelivery`, sets `CURLOPT_FOLLOWLOCATION = 0` -- SSRF defense --
+  and computes the `X-TicketHub-Signature: sha256=<hex-hmac>` header) and `SmtpEmailSender.h/.cpp`
+  (`sendEmail`, sanitizes subject/recipient via `stripCrLf()` first -- header-injection defense), both
+  linked only into `ticket-hub-cli` via a new `find_package(CURL REQUIRED)`/`CURL::libcurl` in
+  `CMakeLists.txt` (not `ticket-hub-core` or the `ticket-hub` server binary).
+- **New crypto.** `Common::sha256Bytes()` (raw-digest variant alongside the existing `sha256Hex`) and a new
+  `Common::hmacSha256Hex(key, message)` (`src/common/Hmac.h/.cpp`) -- hand-rolled HMAC-SHA256 on top of the
+  project's own hand-rolled SHA-256, avoiding a new OpenSSL/libcrypto dependency for one construction.
+- **API.** `GET`/`POST /api/v1/webhooks`, `DELETE /api/v1/webhooks/{id}` (global-admin-only, like the audit
+  log); the list route never includes `secret` -- only the create response does, once, matching how personal
+  access tokens already work (D40's "reveal secret material only once" convention).
+- **Config.** New `TICKETHUB_SMTP_HOST`/`_PORT`/`_USERNAME`/`_PASSWORD`/`_FROM`/`_USE_TLS` env vars
+  (`src/config/Config.h/.cpp`); email delivery is skipped entirely (logged, not an error) when
+  `TICKETHUB_SMTP_HOST` is unset.
+- **Frontend.** New "Webhooks" admin nav item (hidden for non-admins, same visibility pattern as the audit
+  log/attachment recycle bin) and `renderWebhooks(revealSecret)`: a subscription list table, an "Add
+  webhook" form (target URL, project filter, event-type checkboxes), and a dismissible secret-once banner
+  shown only immediately after creation.
+- **Dockerfile.** Added `libcurl4-openssl-dev` to the build stage and `libcurl4` to the runtime stage.
+
+### Errors and fixes
+
+A real bug was found and fixed during this batch's own live-delivery verification, outside webhook/email
+logic itself. `SqliteDatabase::recordWebhookDeliveryResult`/`recordEmailDeliveryResult`'s failure-path
+`UPDATE` statements mixed an anonymous `?` placeholder for `last_error` with explicit numbered placeholders
+(`?1` for the id, `?3`/`?4` for the retry-policy constants):
+
+```sql
+UPDATE webhook_deliveries
+SET attempt_count = attempt_count + 1,
+    last_error = ?,                                          -- anonymous
+    status = CASE WHEN attempt_count + 1 >= ?3 THEN 'failed' ELSE status END,
+    next_attempt_at = datetime(CURRENT_TIMESTAMP, '+' || ?4 || ' minutes')
+WHERE id = ?1
+```
+
+SQLite assigns an anonymous `?` the next index after the largest *explicit* index appearing to its left in
+the SQL text, scanning left to right. Since `last_error = ?` appears before any numbered placeholder in the
+text, it was silently assigned index **1** -- the same index as `WHERE id = ?1` -- rather than index 2 as
+the C++ code assumed. The practical effect: `bind(1, deliveryId)` populated *both* `WHERE id = ?1` and the
+anonymous `last_error = ?`, so every failed delivery's `last_error` column stored the delivery's own id;
+`bind(2, error)` bound to parameter index 2, which nothing in the query text referenced, so the real error
+message was silently discarded. Caught during live verification: an ad hoc query on a deliberately-failing
+delivery showed `last_error` holding a UUID-shaped string instead of "Couldn't connect to server" (the
+message `process-outbox` had actually logged to stderr for that same delivery). The PostgreSQL adapter's
+equivalent methods were unaffected -- `$1`/`$2`/`$3`/`$4`-style placeholders in libpq are always explicit,
+there is no anonymous-placeholder auto-numbering to collide.
+
+Fixed by making the SQLite placeholder explicit (`last_error = ?2`) in both `recordWebhookDeliveryResult`
+and `recordEmailDeliveryResult`. Re-verified against the live SQLite database used for this batch's
+end-to-end testing: after the fix, a deliberately-unreachable webhook subscription's delivery correctly
+showed `last_error = "Couldn't connect to server"`, with `attempt_count` incrementing on each subsequent
+`process-outbox` run and `status` correctly transitioning to `failed` (terminal) exactly at
+`attempt_count = MaxDeliveryAttempts (10)`. A new regression assertion was added directly for this: a
+`scalarText` test helper (mirroring the existing `scalarInt`) in `tests/sqlite_integration_tests.cpp`
+checks `last_error`'s actual text content -- not just that a value is present -- for both the webhook
+exhausted-retry path and the email failure path, since the original test block's assertions (added before
+this bug was found) checked `attempt_count`/`status` but never the content of `last_error` itself.
+
+An audit of the rest of `SqliteDatabase.cpp` for the same anonymous/numbered-placeholder mixing pattern
+found two other call sites (`softDeleteTicket`, `softDeleteAttachment`, plus `softDeleteProject`/
+`deleteComment`/`deleteWorklog` in the equivalent unmixed form) -- all pre-existing and all confirmed
+correct: each anonymous `?` in those statements is the *first* placeholder in the SQL text (so it always
+resolves to index 1, matching the `bind(1, ...)` call), and any later explicit `?2` correctly reuses the
+same value for a repeated `WHERE` clause. No other instance of this bug class was found.
+
+### How it was verified
+
+- Full rebuild and `ctest --output-on-failure` clean (8/8) in all three build configurations (default,
+  SQLite-only, PostgreSQL-only) after the fix, including the new regression assertions.
+- `tests/crypto_tests.cpp` gained 4 RFC 4231 HMAC-SHA256 test vectors (1, 2, and 6, plus a redundant check),
+  cross-verified independently via both Python's `hmac` module and `openssl dgst -sha256 -mac HMAC` before
+  being committed as test constants (an initial transcription of vector 1 was one character short and was
+  caught this way before it could mask a real bug or cause a false failure).
+- `tests/sqlite_integration_tests.cpp` gained full webhook-subscription CRUD (secret generation, event-type/
+  project-filter round-tripping), delivery enqueue/list/record-result for both the success and
+  exhausted-retry paths (including the `last_error` content regression check above), cascade-delete of a
+  subscription's deliveries (`ON DELETE CASCADE`), and the equivalent email-delivery lifecycle.
+- **Live end-to-end delivery, SQLite.** Started a real Ticket Hub server against a fresh SQLite database, a
+  real local HTTP receiver (Python `http.server`) as the webhook target, and a real local SMTP receiver
+  (`aiosmtpd`) as the mail sink. Created a webhook subscription and a ticket via `curl`, confirmed pending
+  delivery rows existed, ran the compiled `ticket-hub-cli process-outbox` binary, and independently
+  confirmed: the webhook receiver captured a POST with a `X-TicketHub-Signature` header whose HMAC-SHA256
+  was independently recomputed in Python from the subscription's own secret and the exact captured body,
+  and matched byte-for-byte; the SMTP receiver captured the correct recipient/subject/body; both delivery
+  rows transitioned to `delivered`/`sent`. A second subscription pointed at `http://127.0.0.1:1/unreachable`
+  (a guaranteed-refused connection) with `TICKETHUB_SMTP_HOST` deliberately unset confirmed the failure
+  path -- correct `last_error` text (post-fix), incrementing `attempt_count`, and terminal `status = failed`
+  after exactly `MaxDeliveryAttempts` runs -- and confirmed the "SMTP not configured -- skipping" log path.
+- **Live end-to-end delivery, PostgreSQL.** Started PostgreSQL 16 locally, created a fresh database, and
+  repeated the same webhook-creation/ticket-creation/`process-outbox` sequence against it over real HTTP and
+  the compiled CLI, confirming the same correct `last_error` text on a deliberately-unreachable subscription
+  (the PostgreSQL adapter's placeholders were never buggy, but this confirms the delivery pipeline works
+  identically end-to-end on both databases, not just at the adapter-unit level).
+- **Browser verification (Playwright/Chromium)**, against a fresh SQLite database: navigated to the new
+  admin "Webhooks" screen, submitted the add-webhook form (target URL plus one event-type checkbox),
+  confirmed the response rendered a secret-once banner and the new subscription appeared in the list with
+  the correct target/event-type/project columns, then clicked Delete and confirmed (via both the DOM and a
+  follow-up `GET /api/v1/webhooks`) that exactly the deleted subscription was removed and the others were
+  unaffected. No console errors during the pass (the one `401` observed was the expected pre-login
+  `/api/v1/auth/me` check).
+- **Not verified in this environment:** an actual `docker build` of the updated `Dockerfile` -- the Docker
+  daemon is unavailable in this sandbox (`ulimit` restrictions block starting it). The
+  `libcurl4-openssl-dev`/`libcurl4` additions were reviewed by inspection (matching the existing
+  `libpq-dev`/`libpq5` pattern for the other adapter-only runtime library) but not build-tested. Should be
+  confirmed with a real `docker build .` once daemon access is available.
+
 ## 2026-08-03 — Custom fields, D9 (user-requested, deferred-after-V1)
 
 Requested directly by the user as item 6 off a menu of possible new functionality

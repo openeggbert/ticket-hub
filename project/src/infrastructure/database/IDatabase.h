@@ -441,6 +441,43 @@ public:
     // to disappear via ON DELETE CASCADE).
     virtual std::vector<std::string> listAttachmentStorageKeysForTicket(const std::string& ticketKey) = 0;
     virtual std::vector<std::string> listAttachmentStorageKeysForProject(const std::string& projectKey) = 0;
+
+    // --- Outbound webhooks (D39/D41, deferred-after-V1) ---
+    // Global-admin-managed (TicketService), like PATs/audit log. No
+    // recycle bin/soft-delete/edit -- deleteWebhookSubscription is a plain
+    // hard delete (cascading away any still-pending deliveries for it via
+    // ON DELETE CASCADE); there is no editWebhookSubscription, matching
+    // this batch's "create + delete only" scope decision (see
+    // docs/SCOPE.md).
+    virtual std::vector<Domain::WebhookSubscription> listWebhookSubscriptions() = 0;
+    virtual Domain::WebhookSubscription createWebhookSubscription(
+        const Domain::CreateWebhookSubscriptionRequest& request, const std::string& createdByUserId) = 0;
+    virtual bool deleteWebhookSubscription(const std::string& subscriptionId) = 0;
+    // Enqueues one durable delivery row; does not itself attempt delivery
+    // (see migrations/*/019_outbox_delivery.sql -- only `ticket-hub-cli
+    // process-outbox` ever makes the outbound HTTP call).
+    virtual void createWebhookDelivery(const std::string& subscriptionId, const std::string& eventType,
+                                       const std::string& payload) = 0;
+    // Rows whose next_attempt_at has passed, oldest first, capped by
+    // `limit` -- read by the CLI's process-outbox command.
+    virtual std::vector<Domain::WebhookDelivery> listPendingWebhookDeliveries(int limit) = 0;
+    // Records the outcome of one delivery attempt: on success, marks the
+    // row "delivered"; on failure, increments attempt_count and either
+    // reschedules next_attempt_at (attempt_count < Domain::
+    // MaxDeliveryAttempts) or marks the row permanently "failed".
+    virtual void recordWebhookDeliveryResult(const std::string& deliveryId, bool success,
+                                             const std::optional<std::string>& error) = 0;
+
+    // --- Outbound email (D52, deferred-after-V1) ---
+    // Enqueued only from TicketService, at the same three points that
+    // already create an in-app notification (D14) -- see
+    // TicketService::maybeEnqueueEmail. Same durable-row-now,
+    // deliver-later-via-CLI split as webhooks above.
+    virtual void createEmailDelivery(const std::string& recipientUserId, const std::string& subject,
+                                     const std::string& body) = 0;
+    virtual std::vector<Domain::EmailDelivery> listPendingEmailDeliveries(int limit) = 0;
+    virtual void recordEmailDeliveryResult(const std::string& deliveryId, bool success,
+                                           const std::optional<std::string>& error) = 0;
 };
 
 } // namespace TicketHub::Infrastructure::Database

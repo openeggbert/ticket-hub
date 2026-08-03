@@ -181,6 +181,27 @@ std::vector<Domain::CustomFieldValueInput> parseCustomFieldValues(const crow::js
     return values;
 }
 
+// D40's "reveal secret token material only once" convention, reused for
+// webhook signing secrets: the list route never includes `secret`; only
+// the create route's response does (added separately, see the POST
+// /api/v1/webhooks handler), matching how PAT creation's tokenJson()
+// likewise omits the raw token and the create route adds it on top.
+crow::json::wvalue webhookSubscriptionJson(const Domain::WebhookSubscription& subscription) {
+    crow::json::wvalue json;
+    json["id"] = subscription.id;
+    json["targetUrl"] = subscription.targetUrl;
+    crow::json::wvalue::list eventTypes;
+    for (const auto& eventType : subscription.eventTypes) {
+        eventTypes.emplace_back(eventType);
+    }
+    json["eventTypes"] = std::move(eventTypes);
+    json["projectKey"] = subscription.projectKey ? crow::json::wvalue(*subscription.projectKey) : crow::json::wvalue(nullptr);
+    json["enabled"] = subscription.enabled;
+    json["createdBy"] = subscription.createdBy ? userJson(*subscription.createdBy) : crow::json::wvalue(nullptr);
+    json["createdAt"] = subscription.createdAt;
+    return json;
+}
+
 crow::json::wvalue ticketJson(const Domain::Ticket& ticket) {
     crow::json::wvalue json;
     json["id"] = ticket.id;
@@ -2960,6 +2981,101 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["totalItems"] = result.totalItems;
             body["totalPages"] = result.totalPages();
             return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // --- Outbound webhooks (D39/D41, deferred-after-V1, user-requested) ---
+    // Global-admin-only, like PATs/audit log -- see TicketService's doc
+    // comment for why this is installation-level, not per-project.
+    CROW_ROUTE(app, "/api/v1/webhooks")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& subscription : service->listWebhookSubscriptions(*principal)) {
+                items.emplace_back(webhookSubscriptionJson(subscription));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/webhooks")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::CreateWebhookSubscriptionRequest create;
+            create.targetUrl = requiredString(body, "targetUrl");
+            create.projectKey = optionalString(body, "projectKey");
+            if (body.has("eventTypes") && body["eventTypes"].t() == crow::json::type::List) {
+                for (const auto& eventType : body["eventTypes"]) {
+                    if (eventType.t() == crow::json::type::String) {
+                        create.eventTypes.emplace_back(eventType.s());
+                    }
+                }
+            }
+            const auto created = service->createWebhookSubscription(std::move(create), *principal);
+            // Only this response ever includes the raw signing secret
+            // (D40's "reveal secret material only once" convention).
+            crow::json::wvalue responseBody = webhookSubscriptionJson(created);
+            responseBody["secret"] = created.secret;
+            return jsonResponse(201, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/webhooks/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& subscriptionId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (!service->deleteWebhookSubscription(subscriptionId, *principal)) {
+                return errorResponse(404, "Webhook subscription not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {

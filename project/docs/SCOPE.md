@@ -511,16 +511,77 @@ remain as the long-term aspirational baseline only — do not build against them
   had kept accumulating state across "fresh" database directories since a later `nohup` start silently
   failed to bind the already-in-use port). See `docs/VERIFICATION.md`.
 
-## Deferred after V1, in progress
+- **Batch 14 (done): outbound webhooks (D39/D41) and outbound email (D52)** -- the remaining two items
+  from the same user-picked list as Batch 12/13, both needing a durable delivery mechanism first
+  (`CLAUDE.md`: "Durable side effects must eventually use jobs/outbox/events. Do not use detached in-memory
+  tasks for email, webhooks..."). Delivery is split the same way `migrate`/`backup`/`restore`/`seed-demo`
+  already are: the server (and every request handler) only ever writes fast, local, durable outbox rows --
+  zero outbound network I/O in the request path -- and a new `ticket-hub-cli process-outbox` command,
+  intended to be admin-cron-scheduled every 1-5 minutes, is the *only* place in the entire codebase that
+  makes an outbound network call. Two concrete tables (`webhook_deliveries`, `email_deliveries`), not one
+  generic "outbox_events" table, matching this codebase's existing preference for purpose-specific tables
+  over a generic wrapper. New migration `019_outbox_delivery.sql` (`webhook_subscriptions`,
+  `webhook_deliveries`, `email_deliveries`).
+  - **Outbound webhooks.** Admin-configured subscriptions (`POST/GET /api/v1/webhooks`,
+    `DELETE /api/v1/webhooks/{id}`, global-administrator-only like the audit log), each with its own
+    generated signing secret shown exactly once at creation (matching how personal access tokens already
+    work), an optional single-project filter, and an optional event-type filter (empty = every event) drawn
+    from a fixed catalog: `ticket.created`, `ticket.status_changed`, `ticket.updated`, `comment.added` --
+    deliberately scoped down from D41's full type/status/priority/assignee/custom-field visual filter
+    matrix. Payloads are hand-built JSON (no new dependency on `crow::json` inside `application/`, which
+    must not depend on `web/`) and signed with `X-TicketHub-Signature: sha256=<hex-hmac>`
+    (GitHub/Stripe-style) using a new hand-rolled `Common::hmacSha256Hex`, built on an extended version of
+    the project's own existing hand-rolled SHA-256 rather than adding an OpenSSL/libcrypto dependency for
+    one construction -- verified against RFC 4231 test vectors 1, 2, and 6. `CURLOPT_FOLLOWLOCATION = 0` on
+    every delivery attempt so a compromised/malicious webhook target can't redirect the signed payload to
+    an unintended host (SSRF defense).
+  - **Outbound email.** A pluggable SMTP backend (`TICKETHUB_SMTP_HOST`/`_PORT`/`_USERNAME`/`_PASSWORD`/
+    `_FROM`/`_USE_TLS`) for the existing fixed in-app notification set (D14) -- email enqueueing mirrors the
+    in-app notification set one-for-one, gated only on installation-wide SMTP configuration (no per-user
+    notification-preference toggle; D86 already ruled those out elsewhere). Subject line and recipient
+    address are `stripCrLf()`-sanitized before building the raw SMTP message, since the subject is built
+    from user-controlled `ticket.summary` and an unsanitized value would allow email header injection (e.g.
+    a forged `Bcc`).
+  - **New dependency: libcurl**, linked only into the `ticket-hub-cli` target (not `ticket-hub-core` or the
+    `ticket-hub` server binary) -- supports both HTTP (webhooks) and SMTP (email) through one library,
+    keeping the server's own dependency and attack surface unchanged. Retry policy is fixed, not
+    exponential: `Domain::MaxDeliveryAttempts = 10`, `Domain::DeliveryRetryDelayMinutes = 5`; a delivery
+    that exhausts its attempts is marked permanently `failed` (terminal, no manual-retry API in this batch).
+    Webhook signing secrets and SMTP credentials are a deliberate, documented exception to "store
+    token/session verifiers as hashes": HMAC signing needs the raw key at send time (unlike a bearer-token
+    comparison), so the secret is stored in cleartext in the database the same way the database connection
+    string itself already is.
 
-The remaining two items from the same user-picked list as Batch 12/13 are real, decision-register-deferred
-features (`docs/REMOVED_AND_DEFERRED_FEATURES.md`) that both need a durable delivery mechanism first
-(`CLAUDE.md`: "Durable side effects must eventually use jobs/outbox/events. Do not use detached in-memory
-tasks for email, webhooks...") -- an outbox table plus a CLI-driven retry command, since this app has no
-background worker process today. Tracked here rather than as a "Batch N" entry until each is complete:
+  A real bug was found and fixed during this batch's own live-delivery verification, outside webhook/email
+  logic itself: `SqliteDatabase::recordWebhookDeliveryResult`/`recordEmailDeliveryResult`'s `UPDATE`
+  statements mixed an anonymous `?` placeholder for `last_error` with explicit numbered placeholders
+  (`?1`/`?3`/`?4`) for the other columns. SQLite assigns an anonymous `?` the next index after the largest
+  *explicit* index appearing to its left in the SQL text -- since `last_error = ?` appeared before any
+  numbered placeholder, it was silently assigned index 1, colliding with `WHERE id = ?1`, while the C++
+  code's `bind(2, error)` bound to an index nothing in the query referenced. The practical effect: every
+  failed delivery's `last_error` column stored the delivery's own id instead of the actual error message.
+  Caught by an ad hoc verification query showing a UUID-shaped `last_error` value instead of "Couldn't
+  connect to server"; the PostgreSQL adapter was unaffected (its `$1`/`$2`/... placeholders are always
+  explicit). Fixed by making the SQLite placeholder explicit (`?2`) in both methods; a new regression
+  assertion in `tests/sqlite_integration_tests.cpp` checks `last_error`'s actual text content (via a new
+  `scalarText` test helper) for both the webhook and email failure paths, which the original test block did
+  not do.
 
-- **Outbound webhooks** (D39/D41): admin-configured subscriptions, signed payloads, durable delivery.
-- **Outbound email** (D52): a pluggable SMTP backend for the existing fixed notification set.
+  New test coverage: `tests/sqlite_integration_tests.cpp` covers webhook subscription CRUD (secret
+  generation, event-type/project-filter round-tripping), delivery enqueue/list/record-result for both the
+  success and exhausted-retry paths (including the `last_error` content regression check above),
+  cascade-delete of a subscription's deliveries (`ON DELETE CASCADE`), and the equivalent email-delivery
+  lifecycle; `tests/crypto_tests.cpp` gained 4 RFC 4231 HMAC-SHA256 vector tests. Verified: full rebuild and
+  `ctest` clean in all three build configurations. Live-verified end-to-end over real HTTP/SMTP against both
+  a fresh SQLite database and a fresh PostgreSQL database: a real local HTTP receiver and a real local SMTP
+  receiver (`aiosmtpd`) confirmed the compiled `ticket-hub-cli process-outbox` binary actually delivers --
+  correct HMAC-SHA256 signature (independently recomputed in Python), correct email content -- and marks
+  both rows `delivered`/`sent`; a second subscription pointed at an unreachable target, and an
+  intentionally-unset SMTP host, confirmed the failure/retry path (`last_error` populated correctly,
+  `attempt_count` incrementing, terminal `failed` status at `MaxDeliveryAttempts`) on both databases. A
+  Playwright/Chromium browser pass against a fresh SQLite database covered the new admin "Webhooks" screen:
+  creating a subscription (secret-once banner), the subscription list, and delete. See
+  `docs/VERIFICATION.md`.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 

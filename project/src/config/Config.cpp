@@ -57,6 +57,19 @@ AppConfig AppConfig::fromEnvironment() {
         throw std::invalid_argument("TICKETHUB_PORT must be between 1 and 65535");
     }
     config.port = static_cast<std::uint16_t>(parsedPort);
+
+    config.smtpHost = envOr("TICKETHUB_SMTP_HOST", config.smtpHost);
+    config.smtpUsername = envOr("TICKETHUB_SMTP_USERNAME", config.smtpUsername);
+    config.smtpPassword = envOr("TICKETHUB_SMTP_PASSWORD", config.smtpPassword);
+    config.smtpFromAddress = envOr("TICKETHUB_SMTP_FROM", config.smtpFromAddress);
+    config.smtpUseTls = envBool("TICKETHUB_SMTP_USE_TLS", config.smtpUseTls);
+    const auto smtpPortText = envOr("TICKETHUB_SMTP_PORT", std::to_string(config.smtpPort));
+    const int parsedSmtpPort = std::stoi(smtpPortText);
+    if (parsedSmtpPort < 1 || parsedSmtpPort > 65535) {
+        throw std::invalid_argument("TICKETHUB_SMTP_PORT must be between 1 and 65535");
+    }
+    config.smtpPort = static_cast<std::uint16_t>(parsedSmtpPort);
+
     return config;
 }
 

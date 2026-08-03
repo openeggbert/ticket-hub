@@ -57,6 +57,25 @@ int scalarInt(const std::filesystem::path& databasePath, const std::string& sql)
     return value;
 }
 
+std::string scalarText(const std::filesystem::path& databasePath, const std::string& sql) {
+    sqlite3* database = nullptr;
+    if (sqlite3_open(databasePath.string().c_str(), &database) != SQLITE_OK) {
+        throw std::runtime_error("cannot open SQLite test database");
+    }
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK) {
+        sqlite3_close(database);
+        throw std::runtime_error("cannot prepare SQLite test query");
+    }
+    std::string value;
+    if (sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_text(statement, 0) != nullptr) {
+        value = reinterpret_cast<const char*>(sqlite3_column_text(statement, 0));
+    }
+    sqlite3_finalize(statement);
+    sqlite3_close(database);
+    return value;
+}
+
 } // namespace
 
 int main() {
@@ -815,6 +834,111 @@ int main() {
             require(secondPage.size() == 1 && secondPage[0].action == "project.permanently_deleted",
                    "the paginated overload's second page is the next-newest event");
             require(database.listAuditEvents(10, 2).empty(), "an offset past the end returns no rows, not an error");
+        }
+
+        // --- Durable outbox/delivery infrastructure (D39/D41 webhooks,
+        // D52 email, deferred-after-V1, user-requested) ---
+        {
+            TicketHub::Domain::CreateWebhookSubscriptionRequest subscriptionRequest;
+            subscriptionRequest.targetUrl = "https://example.test/hook";
+            subscriptionRequest.eventTypes = {TicketHub::Domain::WebhookEventTicketCreated,
+                                              TicketHub::Domain::WebhookEventCommentAdded};
+            subscriptionRequest.projectKey = "TH";
+            const auto subscription = database.createWebhookSubscription(subscriptionRequest, demoUserId);
+            require(!subscription.id.empty(), "webhook subscription is created with an id");
+            require(!subscription.secret.empty(), "a signing secret is generated");
+            require(subscription.eventTypes.size() == 2, "event type filter round-trips through storage");
+            require(subscription.projectKey.has_value() && *subscription.projectKey == "TH",
+                   "project filter round-trips through storage");
+            require(subscription.enabled, "a new subscription starts enabled");
+
+            const auto subscriptions = database.listWebhookSubscriptions();
+            require(subscriptions.size() == 1, "listWebhookSubscriptions returns the newly created one");
+
+            database.createWebhookDelivery(subscription.id, TicketHub::Domain::WebhookEventTicketCreated,
+                                           "{\"event\":\"ticket.created\"}");
+            const auto pending = database.listPendingWebhookDeliveries(10);
+            require(pending.size() == 1, "the enqueued delivery is pending");
+            require(pending[0].targetUrl == "https://example.test/hook",
+                   "listPendingWebhookDeliveries joins the subscription's own target URL");
+            require(pending[0].secret == subscription.secret,
+                   "listPendingWebhookDeliveries joins the subscription's own signing secret");
+            require(pending[0].payload == "{\"event\":\"ticket.created\"}", "the frozen payload round-trips");
+            require(pending[0].attemptCount == 0, "a fresh delivery has made no attempts yet");
+
+            database.recordWebhookDeliveryResult(pending[0].id, true, std::nullopt);
+            require(database.listPendingWebhookDeliveries(10).empty(),
+                   "a delivered webhook delivery no longer appears as pending");
+
+            // A second delivery that keeps failing: attempt_count increments
+            // each time, and it stops being retried (falls out of the
+            // pending list) once Domain::MaxDeliveryAttempts is reached.
+            database.createWebhookDelivery(subscription.id, TicketHub::Domain::WebhookEventCommentAdded,
+                                           "{\"event\":\"comment.added\"}");
+            std::string failingDeliveryId;
+            for (int attempt = 0; attempt < TicketHub::Domain::MaxDeliveryAttempts; ++attempt) {
+                const auto stillPending = database.listPendingWebhookDeliveries(10);
+                require(stillPending.size() == 1, "the failing delivery remains pending until the attempt cap");
+                require(stillPending[0].attemptCount == attempt,
+                       "attempt_count reflects exactly the number of prior failures");
+                failingDeliveryId = stillPending[0].id;
+                database.recordWebhookDeliveryResult(failingDeliveryId, false, std::string("connection refused"));
+                require(scalarText(databasePath, "SELECT last_error FROM webhook_deliveries WHERE id = '"
+                            + failingDeliveryId + "'") == "connection refused",
+                       "last_error stores the actual failure message, not the delivery's own id "
+                       "(regression check: a mixed anonymous/numbered SQLite bind-index bug once put "
+                       "the delivery id in this column instead)");
+                // next_attempt_at is pushed minutes into the future on
+                // failure -- reset it to "now" immediately so the *next*
+                // iteration's listPendingWebhookDeliveries fetch sees the
+                // row as due again, matching what a real retry cadence
+                // would eventually reach on its own. This is the one place
+                // the test reaches past IDatabase, to keep the loop fast
+                // rather than sleeping for real minutes between attempts.
+                executeSql(databasePath, "UPDATE webhook_deliveries SET next_attempt_at = CURRENT_TIMESTAMP");
+            }
+            require(database.listPendingWebhookDeliveries(10).empty(),
+                   "a delivery that has exhausted MaxDeliveryAttempts is no longer retried");
+            require(scalarInt(databasePath,
+                        "SELECT COUNT(*) FROM webhook_deliveries WHERE id = '" + failingDeliveryId
+                        + "' AND status = 'failed'") == 1,
+                   "the exhausted delivery is marked permanently failed, not silently dropped");
+
+            require(database.deleteWebhookSubscription(subscription.id), "deleteWebhookSubscription removes it");
+            require(!database.deleteWebhookSubscription(subscription.id),
+                   "deleting an already-deleted subscription returns false");
+            require(scalarInt(databasePath,
+                        "SELECT COUNT(*) FROM webhook_deliveries WHERE subscription_id = '" + subscription.id + "'") == 0,
+                   "deleting a subscription cascades away its deliveries (ON DELETE CASCADE)");
+
+            // Email deliveries share the same shape.
+            database.createEmailDelivery(demoUserId, "Test subject", "Test body");
+            const auto pendingEmail = database.listPendingEmailDeliveries(10);
+            require(pendingEmail.size() == 1, "the enqueued email delivery is pending");
+            require(pendingEmail[0].recipientEmail == "demo@ticket-hub.local",
+                   "listPendingEmailDeliveries joins the recipient's own email address");
+            require(pendingEmail[0].subject == "Test subject" && pendingEmail[0].body == "Test body",
+                   "subject/body round-trip");
+            database.recordEmailDeliveryResult(pendingEmail[0].id, true, std::nullopt);
+            require(database.listPendingEmailDeliveries(10).empty(),
+                   "a sent email delivery no longer appears as pending");
+
+            database.createEmailDelivery(demoUserId, "Retry me", "body");
+            const auto emailToFail = database.listPendingEmailDeliveries(10);
+            database.recordEmailDeliveryResult(emailToFail[0].id, false, std::string("mailbox full"));
+            // recordEmailDeliveryResult reschedules next_attempt_at minutes
+            // into the future on failure, so listPendingEmailDeliveries
+            // (which only returns rows already due) would find none right
+            // now -- check the row's actual state directly instead, the
+            // same raw-SQL approach used above for the exhausted webhook
+            // delivery.
+            require(scalarInt(databasePath,
+                        "SELECT COUNT(*) FROM email_deliveries WHERE id = '" + emailToFail[0].id
+                        + "' AND status = 'pending' AND attempt_count = 1") == 1,
+                   "a failed email delivery is rescheduled (still pending, attempt_count incremented), not dropped");
+            require(scalarText(databasePath, "SELECT last_error FROM email_deliveries WHERE id = '"
+                        + emailToFail[0].id + "'") == "mailbox full",
+                   "last_error stores the actual failure message, not the delivery's own id");
         }
 
         const auto dashboard = database.dashboardStats();

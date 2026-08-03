@@ -20,7 +20,8 @@ public:
     // attachments can ignore it; ones that do construct with their own
     // throwaway directory.
     explicit TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database,
-                           std::string attachmentsRoot = "./data/attachments");
+                           std::string attachmentsRoot = "./data/attachments",
+                           bool emailDeliveryEnabled = false);
 
     std::string backendName() const;
 
@@ -366,9 +367,24 @@ public:
     // upper bound either.
     Domain::Page<Domain::AuditEvent> listAuditEventsPaged(const Domain::Principal& actor, int page, int pageSize);
 
+    // --- Outbound webhooks (D39/D41, deferred-after-V1, user-requested) ---
+    // Global-administrator-only, like PATs/audit log -- D39 groups webhooks
+    // with the other installation-level integration concepts, not
+    // per-project management. createWebhookSubscription's returned
+    // Domain::WebhookSubscription::secret is the one and only time it is
+    // ever revealed (matches D40's PAT convention) -- listWebhookSubscriptions
+    // never includes it (see webhookSubscriptionJson in src/web/Api.cpp).
+    std::vector<Domain::WebhookSubscription> listWebhookSubscriptions(const Domain::Principal& actor);
+    Domain::WebhookSubscription createWebhookSubscription(Domain::CreateWebhookSubscriptionRequest request,
+                                                            const Domain::Principal& actor);
+    bool deleteWebhookSubscription(const std::string& subscriptionId, const Domain::Principal& actor);
+
 private:
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;
     Infrastructure::Storage::LocalAttachmentStorage attachmentStorage_;
+    // Set once at construction from whether TICKETHUB_SMTP_HOST is
+    // configured (D52) -- see maybeEnqueueEmail's doc comment below.
+    bool emailDeliveryEnabled_ = false;
 
     void requireProjectRole(const Domain::Principal& actor, const std::string& projectKey, int minimumRank) const;
     void requireGlobalAdmin(const Domain::Principal& actor) const;
@@ -409,6 +425,27 @@ private:
     // re-scan for new mentions, to avoid re-notifying on every save of an
     // already-mentioning comment.
     void dispatchCommentNotifications(const Domain::Ticket& ticket, const Domain::Comment& comment, const Domain::Principal& actor);
+
+    // Outbound webhooks (D39/D41): matches `ticket` against every enabled
+    // subscription (event type + optional project filter) and enqueues one
+    // durable delivery row per match. Never makes a network call itself --
+    // see migrations/*/019_outbox_delivery.sql. Called from createTicket,
+    // changeStatus, editTicket, and addComment (the fixed event catalog:
+    // Domain::WebhookEventTicketCreated/TicketStatusChanged/TicketUpdated/
+    // CommentAdded).
+    void enqueueWebhookEvent(const std::string& eventType, const Domain::Ticket& ticket);
+
+    // Outbound email (D52): enqueues a durable email delivery row for
+    // `userId`, mirroring the given in-app notification (D14) one-for-one,
+    // only when `emailDeliveryEnabled_` is true (set once at construction
+    // from whether TICKETHUB_SMTP_HOST is configured -- see src/main.cpp/
+    // src/cli/main.cpp -- never admin-editable at runtime, since actual SMTP
+    // credentials live in environment variables like the database
+    // connection string does, not in the database). No personal
+    // notification preferences (D86) -- this fires unconditionally
+    // alongside every createNotification call, the same set for every user.
+    void maybeEnqueueEmail(const std::string& userId, const std::string& notificationType,
+                           const Domain::Ticket& ticket);
 };
 
 } // namespace TicketHub::Application

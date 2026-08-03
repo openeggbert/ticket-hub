@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased — Outbound webhooks (D39/D41) and outbound email (D52)
+
+- **Outbound webhooks**: global-admin-managed subscriptions (target URL, optional project/event-type
+  filter) signed with `X-TicketHub-Signature: sha256=<hmac>` using a per-subscription secret shown once at
+  creation. Fixed event catalog: `ticket.created`, `ticket.status_changed`, `ticket.updated`,
+  `comment.added`. New `GET`/`POST /api/v1/webhooks`, `DELETE /api/v1/webhooks/{id}` routes and a
+  "Webhooks" admin screen.
+- **Outbound email**: a pluggable SMTP backend (`TICKETHUB_SMTP_HOST`/`_PORT`/`_USERNAME`/`_PASSWORD`/
+  `_FROM`/`_USE_TLS`) for the existing fixed in-app notification set — no email is sent unless
+  `TICKETHUB_SMTP_HOST` is configured.
+- **New durable outbox**: `webhook_deliveries`/`webhook_subscriptions`/`email_deliveries` tables
+  (migration `019_outbox_delivery.sql`). Request handlers only ever write a durable delivery row; a new
+  `ticket-hub-cli process-outbox` command (intended to be admin-cron-scheduled) is the only place in the
+  codebase that makes an outbound network call, per `CLAUDE.md`'s "no detached in-memory tasks for email,
+  webhooks" rule. Fixed retry policy: 10 attempts, 5 minutes apart, then permanently `failed`.
+- New dependency: `libcurl`, linked only into `ticket-hub-cli`. New hand-rolled `Common::hmacSha256Hex`
+  (RFC 4231-verified), built on the project's existing hand-rolled SHA-256 rather than adding an
+  OpenSSL/libcrypto dependency. `Dockerfile` updated to install `libcurl4-openssl-dev`/`libcurl4`.
+- Found and fixed a real bug during this batch's own live-delivery verification: a mixed
+  anonymous/numbered SQLite placeholder bug in `recordWebhookDeliveryResult`/`recordEmailDeliveryResult`
+  was writing a failed delivery's own id into its `last_error` column instead of the actual error message
+  (PostgreSQL was unaffected). New regression test coverage added directly for this.
+- Verified: full rebuild and `ctest` clean in all three build configurations; live-delivered end-to-end
+  over real HTTP/SMTP (a real local receiver for each) against both a fresh SQLite and a fresh PostgreSQL
+  database, including the failure/retry path; a full Playwright/Chromium browser pass of the new Webhooks
+  admin screen.
+
 ## Unreleased — Custom fields (D9)
 
 - **Custom fields**: admin-defined fields (text/number/date/checkbox/single-select/multi-select) scoped to

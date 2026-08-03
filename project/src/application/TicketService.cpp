@@ -74,8 +74,10 @@ Domain::EditTicketRequest editRequestFrom(const Domain::Ticket& ticket) {
 }
 } // namespace
 
-TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database, std::string attachmentsRoot)
-    : database_(std::move(database)), attachmentStorage_(std::move(attachmentsRoot)) {
+TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database, std::string attachmentsRoot,
+                             const bool emailDeliveryEnabled)
+    : database_(std::move(database)), attachmentStorage_(std::move(attachmentsRoot)),
+      emailDeliveryEnabled_(emailDeliveryEnabled) {
     if (!database_) {
         throw std::invalid_argument("database must not be null");
     }
@@ -246,6 +248,7 @@ Domain::Ticket TicketService::createTicket(Domain::CreateTicketRequest request, 
     requireCustomFieldsSatisfied(request.projectKey, request.customFieldValues);
     const auto created = database_->createTicket(request, actor.userId);
     dispatchAssignmentNotification(created, std::nullopt, actor);
+    enqueueWebhookEvent(Domain::WebhookEventTicketCreated, created);
     return created;
 }
 
@@ -263,7 +266,17 @@ bool TicketService::changeStatus(const std::string& ticketKey,
         return false;
     }
     requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
-    return database_->changeTicketStatus(normalizedKey, statusKey, actor.userId, resolution, expectedVersion);
+    const bool changed = database_->changeTicketStatus(normalizedKey, statusKey, actor.userId, resolution, expectedVersion);
+    if (changed) {
+        // Re-fetched (rather than mutating `ticket` locally) so the webhook
+        // payload reflects the actual persisted row -- e.g. the real
+        // resolution/version changeTicketStatus applied, not a best-guess
+        // reconstruction of what the request probably did.
+        if (const auto updated = database_->findTicketByKey(normalizedKey)) {
+            enqueueWebhookEvent(Domain::WebhookEventTicketStatusChanged, *updated);
+        }
+    }
+    return changed;
 }
 
 std::optional<Domain::Ticket> TicketService::editTicket(const std::string& ticketKey,
@@ -298,6 +311,7 @@ std::optional<Domain::Ticket> TicketService::editTicket(const std::string& ticke
     const auto edited = database_->editTicket(normalizedKey, request, actor.userId, expectedVersion);
     if (edited) {
         dispatchAssignmentNotification(*edited, assigneeBefore, actor);
+        enqueueWebhookEvent(Domain::WebhookEventTicketUpdated, *edited);
     }
     return edited;
 }
@@ -324,6 +338,7 @@ Domain::Comment TicketService::addComment(const std::string& ticketKey, const st
     requireProjectRole(actor, ticket->projectKey, Domain::projectRoleRank(Domain::ProjectRoleMember));
     const auto comment = database_->addComment(Domain::AddCommentRequest{normalizedKey, body}, actor.userId);
     dispatchCommentNotifications(*ticket, comment, actor);
+    enqueueWebhookEvent(Domain::WebhookEventCommentAdded, *ticket);
     return comment;
 }
 
@@ -1178,6 +1193,7 @@ void TicketService::dispatchAssignmentNotification(const Domain::Ticket& ticketA
         return; // Unchanged assignee (e.g. re-saving an edit) -- not a new assignment.
     }
     database_->createNotification(ticketAfter.assignee->id, Domain::NotificationTypeAssigned, ticketAfter.id);
+    maybeEnqueueEmail(ticketAfter.assignee->id, Domain::NotificationTypeAssigned, ticketAfter);
 }
 
 void TicketService::dispatchCommentNotifications(const Domain::Ticket& ticket,
@@ -1189,14 +1205,129 @@ void TicketService::dispatchCommentNotifications(const Domain::Ticket& ticket,
         const auto mentioned = database_->findUserByHandle(handle);
         if (mentioned && mentioned->id != actor.userId && notified.insert(mentioned->id).second) {
             database_->createNotification(mentioned->id, Domain::NotificationTypeMentioned, ticket.id);
+            maybeEnqueueEmail(mentioned->id, Domain::NotificationTypeMentioned, ticket);
         }
     }
 
     for (const auto& watcher : database_->listWatchers(ticket.key)) {
         if (watcher.id != actor.userId && notified.insert(watcher.id).second) {
             database_->createNotification(watcher.id, Domain::NotificationTypeWatchedComment, ticket.id);
+            maybeEnqueueEmail(watcher.id, Domain::NotificationTypeWatchedComment, ticket);
         }
     }
+}
+
+std::vector<Domain::WebhookSubscription> TicketService::listWebhookSubscriptions(const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->listWebhookSubscriptions();
+}
+
+Domain::WebhookSubscription TicketService::createWebhookSubscription(Domain::CreateWebhookSubscriptionRequest request,
+                                                                       const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    if (request.projectKey) {
+        request.projectKey = Domain::normalizeProjectKey(*request.projectKey);
+    }
+    const auto errors = Domain::validateCreateWebhookSubscription(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->createWebhookSubscription(request, actor.userId);
+}
+
+bool TicketService::deleteWebhookSubscription(const std::string& subscriptionId, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->deleteWebhookSubscription(subscriptionId);
+}
+
+namespace {
+// A minimal, self-contained JSON string builder -- TicketService has no
+// crow::json dependency (that's the web layer's, src/web/Api.cpp), and the
+// webhook payload only ever needs a handful of flat string fields, so a
+// small private escaper is simpler than adding a JSON library dependency
+// to the application layer just for this.
+std::string jsonEscape(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const char c : value) {
+        switch (c) {
+            case '"': escaped += "\\\""; break;
+            case '\\': escaped += "\\\\"; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    escaped += ' ';
+                } else {
+                    escaped += c;
+                }
+        }
+    }
+    return escaped;
+}
+
+std::string buildWebhookPayload(const std::string& eventType, const Domain::Ticket& ticket) {
+    // Deliberately minimal -- just enough for a receiver to know what
+    // happened and look the ticket up via the public API for anything
+    // else, not a full ticket serialization (that lives only in
+    // src/web/Api.cpp's ticketJson, which the application layer must not
+    // depend on).
+    std::ostringstream json;
+    json << "{"
+         << "\"event\":\"" << jsonEscape(eventType) << "\","
+         << "\"ticketKey\":\"" << jsonEscape(ticket.key) << "\","
+         << "\"projectKey\":\"" << jsonEscape(ticket.projectKey) << "\","
+         << "\"summary\":\"" << jsonEscape(ticket.summary) << "\","
+         << "\"statusKey\":\"" << jsonEscape(ticket.status.key) << "\""
+         << "}";
+    return json.str();
+}
+} // namespace
+
+void TicketService::enqueueWebhookEvent(const std::string& eventType, const Domain::Ticket& ticket) {
+    const std::string payload = buildWebhookPayload(eventType, ticket);
+    for (const auto& subscription : database_->listWebhookSubscriptions()) {
+        if (!subscription.enabled) {
+            continue;
+        }
+        if (subscription.projectKey && *subscription.projectKey != ticket.projectKey) {
+            continue;
+        }
+        if (!subscription.eventTypes.empty() &&
+            std::find(subscription.eventTypes.begin(), subscription.eventTypes.end(), eventType) ==
+                subscription.eventTypes.end()) {
+            continue;
+        }
+        database_->createWebhookDelivery(subscription.id, eventType, payload);
+    }
+}
+
+void TicketService::maybeEnqueueEmail(const std::string& userId, const std::string& notificationType,
+                                       const Domain::Ticket& ticket) {
+    if (!emailDeliveryEnabled_) {
+        return;
+    }
+    // Deliberately plain-text and short -- D52 is "get outbound delivery
+    // working at all," not a Markdown/HTML email template system. Mirrors
+    // the fixed three-type in-app notification set (D14) one-for-one, so
+    // no new "what happened" text is invented here beyond what the
+    // notification bell already shows.
+    std::string subject;
+    std::string body;
+    if (notificationType == Domain::NotificationTypeAssigned) {
+        subject = "[" + ticket.key + "] Assigned to you";
+        body = "You were assigned to " + ticket.key + ": " + ticket.summary;
+    } else if (notificationType == Domain::NotificationTypeMentioned) {
+        subject = "[" + ticket.key + "] You were mentioned";
+        body = "You were mentioned in a comment on " + ticket.key + ": " + ticket.summary;
+    } else if (notificationType == Domain::NotificationTypeWatchedComment) {
+        subject = "[" + ticket.key + "] New comment";
+        body = "A new comment was posted on " + ticket.key + " (" + ticket.summary + "), which you're watching.";
+    } else {
+        return;
+    }
+    database_->createEmailDelivery(userId, subject, body);
 }
 
 } // namespace TicketHub::Application

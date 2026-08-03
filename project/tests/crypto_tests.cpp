@@ -1,3 +1,4 @@
+#include "common/Hmac.h"
 #include "common/PasswordHash.h"
 #include "common/RandomToken.h"
 #include "common/Sha256.h"
@@ -30,6 +31,23 @@ int main() {
     require(sha256Hex(std::string(64, 'a')) == "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb",
            "sha256 of exactly one block (64 bytes)");
     require(sha256Hex("a") != sha256Hex("b"), "sha256 detects a single-character difference");
+
+    // HMAC-SHA256 (D39/D41 webhook signing): RFC 4231 test case 1 --
+    // key = 0x0b repeated 20 times, data = "Hi There".
+    require(hmacSha256Hex(std::string(20, static_cast<char>(0x0b)), "Hi There") ==
+                "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+           "hmacSha256Hex matches RFC 4231 test case 1");
+    // RFC 4231 test case 2 -- key = "Jefe", data = "what do ya want for nothing?".
+    require(hmacSha256Hex("Jefe", "what do ya want for nothing?") ==
+                "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+           "hmacSha256Hex matches RFC 4231 test case 2");
+    // A key longer than SHA-256's 64-byte block size must itself be hashed
+    // down first (RFC 2104) -- RFC 4231 test case 6, a 131-byte key.
+    require(hmacSha256Hex(std::string(131, static_cast<char>(0xaa)), "Test Using Larger Than Block-Size Key - Hash Key First") ==
+                "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54",
+           "hmacSha256Hex hashes an over-block-size key down first (RFC 4231 test case 6)");
+    require(hmacSha256Hex("key1", "message") != hmacSha256Hex("key2", "message"),
+           "hmacSha256Hex is sensitive to the key, not just the message");
 
     const auto token1 = randomTokenHex(32);
     const auto token2 = randomTokenHex(32);

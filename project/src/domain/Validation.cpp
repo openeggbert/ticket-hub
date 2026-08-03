@@ -299,6 +299,33 @@ std::vector<std::string> validateCreateCustomField(const CreateCustomFieldReques
     return errors;
 }
 
+namespace {
+bool isValidWebhookEventType(const std::string& eventType) {
+    return eventType == WebhookEventTicketCreated || eventType == WebhookEventTicketStatusChanged ||
+           eventType == WebhookEventTicketUpdated || eventType == WebhookEventCommentAdded;
+}
+} // namespace
+
+std::vector<std::string> validateCreateWebhookSubscription(const CreateWebhookSubscriptionRequest& request) {
+    std::vector<std::string> errors;
+    const bool looksLikeHttpUrl = (request.targetUrl.rfind("http://", 0) == 0 && request.targetUrl.size() > 7) ||
+                                   (request.targetUrl.rfind("https://", 0) == 0 && request.targetUrl.size() > 8);
+    if (!looksLikeHttpUrl) {
+        errors.emplace_back("targetUrl must be an http:// or https:// URL");
+    } else if (request.targetUrl.size() > 2000) {
+        errors.emplace_back("targetUrl must not exceed 2000 characters");
+    }
+    for (const auto& eventType : request.eventTypes) {
+        if (!isValidWebhookEventType(eventType)) {
+            errors.emplace_back("unknown event type: " + eventType);
+        }
+    }
+    if (request.projectKey && !isValidProjectKey(normalizeProjectKey(*request.projectKey))) {
+        errors.emplace_back("projectKey must contain 2-12 uppercase letters or digits and start with a letter");
+    }
+    return errors;
+}
+
 std::vector<std::string> validateEditCustomField(const EditCustomFieldRequest& request) {
     std::vector<std::string> errors;
     // fieldType is not editable (changing it would strand every existing

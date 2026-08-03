@@ -577,6 +577,7 @@ function showLoginScreen() {
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === 'dashboard'));
   document.querySelector('#nav-audit').classList.add('hidden');
   document.querySelector('#nav-attachment-bin').classList.add('hidden');
+  document.querySelector('#nav-webhooks').classList.add('hidden');
   appShell.classList.add('hidden');
   loginScreen.classList.remove('hidden');
   loginForm.querySelector('input[name="email"]').focus();
@@ -597,6 +598,9 @@ function renderCurrentUser() {
   // global-administrator-only, like the ticket/project recycle bins.
   document.querySelector('#nav-audit').classList.toggle('hidden', !principal.isAdmin);
   document.querySelector('#nav-attachment-bin').classList.toggle('hidden', !principal.isAdmin);
+  // Webhooks (D39/D41): global-admin-only, same installation-level
+  // administration tier as the audit log/attachment recycle bin.
+  document.querySelector('#nav-webhooks').classList.toggle('hidden', !principal.isAdmin);
 }
 
 // D45's "browser auto-detect" is a per-browser concern, not a per-account
@@ -993,6 +997,94 @@ async function renderAuditLog() {
   document.querySelector('#audit-next').addEventListener('click', () => {
     state.auditPage = state.auditPage + 1;
     renderAuditLog().catch(showError);
+  });
+}
+
+const WEBHOOK_EVENT_TYPES = [
+  { key: 'ticket.created', name: 'Ticket created' },
+  { key: 'ticket.status_changed', name: 'Ticket status changed' },
+  { key: 'ticket.updated', name: 'Ticket updated' },
+  { key: 'comment.added', name: 'Comment added' },
+];
+
+// Outbound webhooks (D39/D41, deferred-after-V1, user-requested):
+// global-administrator-only, like the audit log. The signing secret is
+// shown exactly once, right after creation (matching how personal access
+// tokens already work on the Account screen) -- never fetchable again
+// afterward, so it is shown as a dismissible banner rather than a modal
+// the admin might close before copying it.
+async function renderWebhooks(revealSecret = null) {
+  content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  const { items: subscriptions } = await api('/api/v1/webhooks');
+  content.innerHTML = `
+    ${pageHeader('Webhooks', 'Outbound event notifications to external systems. Signed with HMAC-SHA256; delivery is retried by a cron-scheduled ticket-hub-cli process-outbox, not the server itself.', 'Administration')}
+    <div id="webhook-secret-banner">${revealSecret ? `
+      <div class="panel" style="padding:16px;margin-bottom:16px;border-color:var(--primary)">
+        <strong>Signing secret (shown once — copy it now):</strong>
+        <div style="font-family:monospace;word-break:break-all;margin-top:6px;user-select:all">${escapeHtml(revealSecret)}</div>
+      </div>` : ''}</div>
+    <div class="panel">
+      <div class="panel-header"><h2>Subscriptions</h2><span class="eyebrow">${subscriptions.length} configured</span></div>
+      <div style="overflow-x:auto">
+        <table class="ticket-table">
+          <thead><tr><th>Target URL</th><th>Events</th><th>Project</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody>${subscriptions.length ? subscriptions.map(subscription => `
+            <tr>
+              <td style="max-width:320px;overflow-wrap:break-word">${escapeHtml(subscription.targetUrl)}</td>
+              <td>${subscription.eventTypes.length ? subscription.eventTypes.map(eventType => `<span class="label-chip">${escapeHtml(eventType)}</span>`).join(' ') : '<span class="assignee-cell">All events</span>'}</td>
+              <td>${subscription.projectKey ? escapeHtml(subscription.projectKey) : '<span class="assignee-cell">All projects</span>'}</td>
+              <td class="ticket-timestamp">${escapeHtml(relativeDate(subscription.createdAt))}</td>
+              <td><button type="button" class="secondary-button" data-delete-webhook="${escapeHtml(subscription.id)}">Delete</button></td>
+            </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state">No webhook subscriptions yet.</div></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <form class="form-grid" id="webhook-add-form" style="margin-top:16px">
+        <label class="wide">Target URL<input name="targetUrl" type="url" required placeholder="https://example.com/hooks/ticket-hub"></label>
+        <label>Project filter
+          <select name="projectKey">
+            <option value="">All projects</option>
+            ${state.projects.map(project => `<option value="${escapeHtml(project.key)}">${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('')}
+          </select>
+        </label>
+        <div class="wide">
+          <span style="display:block;margin-bottom:6px;font-size:12px;color:var(--muted)">Events (none checked = every event)</span>
+          ${WEBHOOK_EVENT_TYPES.map(eventType => `<label style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-weight:400"><input type="checkbox" name="eventTypes" value="${eventType.key}" style="width:auto">${escapeHtml(eventType.name)}</label>`).join('')}
+        </div>
+      </form>
+      <div id="webhook-error" class="form-error hidden"></div>
+      <div class="modal-footer" style="padding:16px 0 0">
+        <button type="submit" form="webhook-add-form" class="primary-button">Add webhook</button>
+      </div>
+    </div>`;
+
+  document.querySelectorAll('[data-delete-webhook]').forEach(button => button.addEventListener('click', async () => {
+    try {
+      await api(`/api/v1/webhooks/${encodeURIComponent(button.dataset.deleteWebhook)}`, { method: 'DELETE' });
+      showToast('Webhook deleted');
+      await renderWebhooks();
+    } catch (error) { showToast(error.message); }
+  }));
+  document.querySelector('#webhook-add-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const errorElement = document.querySelector('#webhook-error');
+    try {
+      const created = await api('/api/v1/webhooks', {
+        method: 'POST',
+        body: JSON.stringify({
+          targetUrl: formData.get('targetUrl').trim(),
+          projectKey: formData.get('projectKey') || null,
+          eventTypes: formData.getAll('eventTypes'),
+        }),
+      });
+      showToast('Webhook added');
+      await renderWebhooks(created.secret);
+    } catch (error) {
+      errorElement.textContent = error.message;
+      errorElement.classList.remove('hidden');
+    }
   });
 }
 
@@ -2427,6 +2519,7 @@ async function renderCurrentView() {
     else if (state.view === 'account') await renderAccountView();
     else if (state.view === 'audit') await renderAuditLog();
     else if (state.view === 'attachment-bin') await renderAttachmentRecycleBin();
+    else if (state.view === 'webhooks') await renderWebhooks();
     else await renderProjects();
   } catch (error) {
     showError(error);

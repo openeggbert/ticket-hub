@@ -19,7 +19,8 @@ int main() {
             database->seedDemoData();
         }
         database->deleteExpiredSessions();
-        auto service = std::make_shared<TicketHub::Application::TicketService>(database, config.attachmentsRoot);
+        auto service = std::make_shared<TicketHub::Application::TicketService>(database, config.attachmentsRoot,
+                                                                               !config.smtpHost.empty());
         auto authService = std::make_shared<TicketHub::Application::AuthService>(database);
         TicketHub::Web::runHttpServer(config, service, authService);
         return 0;

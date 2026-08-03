@@ -536,6 +536,51 @@ denylist) -- no admin configuration, no MIME allow-list, no quotas. `TicketServi
 *before* the database's `ON DELETE CASCADE` removes the rows, since there is no periodic orphan-file
 audit at all to catch files left behind afterward.
 
+### `webhook_subscriptions`, `webhook_deliveries`, and `email_deliveries`
+
+Durable outbox/delivery infrastructure for outbound webhooks (D39/D41) and outbound email (D52) --
+migration `019_outbox_delivery.sql` (deferred-after-V1, user-requested). `CLAUDE.md` requires durable
+side effects to eventually use jobs/outbox/events rather than detached in-memory tasks, and this app has
+no background worker process, so request handlers only ever write a fast, local, durable delivery row;
+a new `ticket-hub-cli process-outbox` command (intended to be admin-cron-scheduled every 1-5 minutes) is
+the *only* place in the entire codebase that makes an outbound network call. Two separate concrete
+tables, not one generic "outbox_events" table, matching this codebase's existing preference for
+purpose-specific tables (comments/worklogs/notifications are separate tables too) over a generic
+all-purpose wrapper.
+
+`webhook_subscriptions`: `id`, `target_url`, `secret` (the HMAC-SHA256 signing key, generated at creation
+and shown exactly once, like a personal access token), `event_types` (comma-joined from a fixed set --
+`ticket.created`, `ticket.status_changed`, `ticket.updated`, `comment.added` -- empty means every type),
+`project_key` (nullable single-project filter -- a deliberate reduction from D41's full visual filter
+matrix), `enabled`, `created_by_user_id` (nullable, `ON DELETE SET NULL`), `created_at`.
+Global-administrator-only to manage, like the audit log.
+
+`webhook_deliveries`: one row per (subscription, event) pair queued for delivery. `id`, `subscription_id`
+(`ON DELETE CASCADE`), `event_type`, `payload` (the exact JSON body, built and frozen at enqueue time --
+never recomputed at delivery time, so a later ticket change can't alter what an already-queued delivery
+reports), `status` (`pending` -> `delivered` or terminal `failed`, `CHECK` constrained), `attempt_count`,
+`next_attempt_at`, `last_error` (nullable), `created_at`, `delivered_at` (nullable). Indexed on
+`(status, next_attempt_at)` for the CLI's pending-delivery scan. Retry policy is fixed, not exponential:
+`Domain::MaxDeliveryAttempts = 10`, `Domain::DeliveryRetryDelayMinutes = 5`; a delivery that exhausts its
+attempts is marked permanently `failed` -- there is no manual-retry API in this batch. Every delivery
+attempt sets `CURLOPT_FOLLOWLOCATION = 0` (SSRF defense: a compromised/malicious target can never redirect
+the signed payload elsewhere).
+
+`email_deliveries`: the same shape (`id`, `recipient_user_id` `ON DELETE CASCADE`, `subject`, `body`,
+`status`, `attempt_count`, `next_attempt_at`, `last_error`, `created_at`, `sent_at`), enqueued at exactly
+the same three trigger points that already create an in-app notification (D14: assigned/mentioned/watched
+comment), gated only on installation-wide SMTP configuration (`TICKETHUB_SMTP_HOST` set) -- no per-user
+notification-preference toggle (D86 already ruled those out). Subject and recipient address are
+`stripCrLf()`-sanitized before building the raw SMTP message, since the subject is built from
+user-controlled `ticket.summary` and an unsanitized value would allow email header injection.
+
+`libcurl` is a new dependency, linked only into `ticket-hub-cli` (not `ticket-hub-core` or the
+`ticket-hub` server binary) -- it supports both HTTP (webhooks) and SMTP (email) through one library,
+keeping the server's own dependency and attack surface unchanged. Webhook signing secrets and SMTP
+credentials are a deliberate, documented exception to "store token/session verifiers as hashes": HMAC
+signing needs the raw key at send time (unlike a bearer-token comparison), so the secret is stored in
+cleartext the same way the database connection string itself already is.
+
 ## Current indexes
 
 Indexes cover project/status/assignee/update ticket access, live ticket listing, comment timelines, aliases, label joins, and session lookup/expiry. Full-text indexes are not planned at all for V1 -- search uses a plain `LIKE`/`ILIKE` query (`docs/REDUCED_SCOPE_SPECIFICATION.md` section 10).

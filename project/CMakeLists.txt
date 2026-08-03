@@ -24,6 +24,7 @@ set(TICKETHUB_CORE_SOURCES
     src/application/AuthService.cpp
     src/application/TicketService.cpp
     src/common/FileUtil.cpp
+    src/common/Hmac.cpp
     src/common/PasswordHash.cpp
     src/common/RandomToken.cpp
     src/common/Sha256.cpp
@@ -71,8 +72,19 @@ endif()
 
 
 if(TICKETHUB_BUILD_CLI)
-    add_executable(ticket-hub-cli src/cli/main.cpp)
-    target_link_libraries(ticket-hub-cli PRIVATE ticket-hub-core)
+    # libcurl powers `process-outbox` (D39/D41 webhooks over HTTP, D52 email
+    # over SMTP -- see migrations/*/019_outbox_delivery.sql and
+    # src/infrastructure/delivery/). Only the CLI needs it: the server
+    # itself never makes an outbound network call, so ticket-hub-core and
+    # the `ticket-hub` server target stay free of this dependency.
+    find_package(CURL REQUIRED)
+
+    add_executable(ticket-hub-cli
+        src/cli/main.cpp
+        src/infrastructure/delivery/SmtpEmailSender.cpp
+        src/infrastructure/delivery/WebhookDeliveryClient.cpp
+    )
+    target_link_libraries(ticket-hub-cli PRIVATE ticket-hub-core CURL::libcurl)
     target_compile_definitions(ticket-hub-cli PRIVATE TICKETHUB_VERSION="${PROJECT_VERSION}")
     if(MSVC)
         target_compile_options(ticket-hub-cli PRIVATE /W4 /permissive-)
