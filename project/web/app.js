@@ -20,6 +20,55 @@ function resolutionLabel(resolutionKey) {
   return RESOLUTIONS.find(r => r.key === resolutionKey)?.name || resolutionKey;
 }
 
+// History tab: small display-name lookups for the two fixed catalogs that
+// don't already have one centralized elsewhere in this file (every filter
+// dropdown that lists priorities/types spells its options out inline
+// instead) -- kept local to history formatting rather than refactoring
+// those dropdowns, which is out of scope here.
+const PRIORITY_LABELS = { highest: 'Highest', high: 'High', medium: 'Medium', low: 'Low', lowest: 'Lowest' };
+const TICKET_TYPE_LABELS = { epic: 'Epic', story: 'Story', task: 'Task', bug: 'Bug', 'sub-task': 'Sub-task' };
+
+// Maps a raw ticket_history.field_name into the label shown in the History
+// tab (D129/D37's own field-change log, read-only).
+const HISTORY_FIELD_LABELS = {
+  status: 'status', summary: 'summary', description: 'description', priority: 'priority',
+  assignee: 'assignee', story_points: 'story points', due_date: 'due date', labels: 'labels',
+  ticket_type: 'type', parent: 'parent', component: 'component', project: 'project'
+};
+
+function historyFieldLabel(fieldName) {
+  return HISTORY_FIELD_LABELS[fieldName] || fieldName;
+}
+
+// Renders a raw stored old_value/new_value into something readable: status/
+// priority/ticket_type are stored as their fixed catalog *key* (e.g.
+// "highest", not "Highest"), due_date is a bare "YYYY-MM-DD" (rendered via
+// the same date-only path formatDate already uses everywhere else), and a
+// long summary/description change is truncated so one history row stays
+// one line. Returns null for an empty/absent value so the caller can tell
+// "cleared" apart from "changed to an empty string".
+function historyValueLabel(fieldName, value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (fieldName === 'status') return STATUSES.find(status => status.key === value)?.name || value;
+  if (fieldName === 'priority') return PRIORITY_LABELS[value] || value;
+  if (fieldName === 'ticket_type') return TICKET_TYPE_LABELS[value] || value;
+  if (fieldName === 'due_date') return formatDate(value);
+  if ((fieldName === 'summary' || fieldName === 'description') && value.length > 80) {
+    return value.slice(0, 80) + '…';
+  }
+  return value;
+}
+
+function historyChangeText(entry) {
+  const field = historyFieldLabel(entry.fieldName);
+  const oldLabel = historyValueLabel(entry.fieldName, entry.oldValue);
+  const newLabel = historyValueLabel(entry.fieldName, entry.newValue);
+  if (!oldLabel && newLabel) return `set ${field} to “${newLabel}”`;
+  if (oldLabel && !newLabel) return `cleared ${field} (was “${oldLabel}”)`;
+  if (!oldLabel && !newLabel) return `changed ${field}`;
+  return `changed ${field} from “${oldLabel}” to “${newLabel}”`;
+}
+
 // Fixed emoji reaction catalog (D84), matching Domain::isValidCommentReactionKey.
 const COMMENT_REACTIONS = [
   { key: 'thumbs_up', emoji: '👍' },
@@ -2294,14 +2343,15 @@ async function openTicket(ticketKey, editing = false) {
   drawerBackdrop.classList.remove('hidden');
   ticketDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   try {
-    const [ticket, comments, links, watchers, voters, worklogs, attachments] = await Promise.all([
+    const [ticket, comments, links, watchers, voters, worklogs, attachments, history] = await Promise.all([
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/comments`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/links`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/watchers`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/voters`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/worklogs`),
-      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/attachments`)
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/attachments`),
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/history`)
     ]);
     state.currentTicket = ticket;
     let attachmentSort = 'date';
@@ -2402,6 +2452,7 @@ async function openTicket(ticketKey, editing = false) {
                 <div class="activity-tabs">
                   <button type="button" class="activity-tab ${activeActivityTab === 'comments' ? 'active' : ''}" data-activity-tab="comments">Comments (${comments.items.length})</button>
                   <button type="button" class="activity-tab ${activeActivityTab === 'worklog' ? 'active' : ''}" data-activity-tab="worklog">Work log (${worklogs.items.length})</button>
+                  <button type="button" class="activity-tab ${activeActivityTab === 'history' ? 'active' : ''}" data-activity-tab="history">History (${history.items.length})</button>
                 </div>
                 <div class="activity-panel" data-activity-panel="comments" ${activeActivityTab === 'comments' ? '' : 'hidden'}>
                   <form class="comment-form" id="comment-form"><textarea name="body" rows="3" required placeholder="Add a comment…"></textarea><button class="primary-button" type="submit">Comment</button></form>
@@ -2455,6 +2506,16 @@ async function openTicket(ticketKey, editing = false) {
                       </div>
                       <button type="button" class="icon-button" data-delete-worklog="${escapeHtml(worklog.id)}" aria-label="Delete worklog">×</button>
                     </div>`).join('') : '<div class="empty-state">No time logged yet.</div>'}</div>
+                </div>
+                <div class="activity-panel" data-activity-panel="history" ${activeActivityTab === 'history' ? '' : 'hidden'}>
+                  <div class="history-list">${history.items.length ? history.items.map(entry => `
+                    <div class="history-row">
+                      <span class="small-avatar">${entry.actor ? escapeHtml(initials(entry.actor.displayName)) : '—'}</span>
+                      <div class="history-details">
+                        <span><strong>${entry.actor ? escapeHtml(entry.actor.displayName) : 'System'}</strong> ${escapeHtml(historyChangeText(entry))}</span>
+                        <span class="history-date">${escapeHtml(relativeDate(entry.createdAt))}</span>
+                      </div>
+                    </div>`).join('') : '<div class="empty-state">No history recorded yet.</div>'}</div>
                 </div>
               </section>
             </div>

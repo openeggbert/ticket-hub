@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — History activity tab on the ticket detail drawer
+
+- **New "History" Activity tab** next to Comments and Work log, exposing `ticket_history` (status changes
+  and per-field edits) for the first time — previously write-only internal bookkeeping with no read-side
+  API. New `GET /api/v1/tickets/{key}/history` route, `IDatabase::listTicketHistory` on both adapters
+  (newest first, `LEFT JOIN users` for the nullable actor), `TicketService::listTicketHistory`.
+- Each entry renders as a Jira-style sentence ("changed priority from "Highest" to "Medium"") via new
+  frontend-only formatting helpers and label lookup maps — no API/schema change, purely new read exposure
+  of an existing table.
+- Fixed a test-authoring bug caught by `ctest`: an `is_sorted` ordering check used a non-strict `>=`
+  comparator, which is not a valid strict weak ordering and spuriously failed on history rows sharing an
+  identical `created_at` (common — several rows can be written in one `editTicket` transaction). Fixed to
+  strict `>`; confirmed via live `curl` that the underlying query order was correct all along.
+- Verified: full rebuild and `ctest` clean in all three build configurations (new SQLite integration test
+  coverage); live-verified against fresh PostgreSQL and SQLite databases over real HTTP; full
+  Playwright/Chromium browser pass (8/8 checks). README's ticket-detail screenshot regenerated to show the
+  History tab active.
+
 ## Unreleased — Ticket detail layout restyled to look more like Jira
 
 - **Status pill.** The status dropdown moved out of the sidebar into a colored pill-button near the title,

@@ -351,12 +351,22 @@ is no cross-user notification management.
 
 ### `ticket_history`
 
-`id`, `ticket_id`, `actor_user_id`, `field_name`, `old_value`, `new_value`, `created_at`.
+`id`, `ticket_id`, `actor_user_id` (nullable, `ON DELETE SET NULL`), `field_name`, `old_value`,
+`new_value`, `created_at`.
 
-Records status changes (`field_name = 'status'`) and, since Phase 3's `editTicket`, one row per
-standard field that actually changed value on a full-field edit (`field_name` one of `summary`,
-`description`, `priority`, `assignee`, `story_points`, `due_date`) -- a field left unchanged writes no
-row. The target replaces these display-oriented strings with fully typed structured history.
+Records status changes (`field_name = 'status'`, written by `changeTicketStatus`), one row per standard
+field that actually changed value on a full-field edit (`editTicket`; `field_name` one of `summary`,
+`description`, `priority`, `assignee`, `story_points`, `due_date`, `labels`, `ticket_type`, `parent`,
+`component` -- a field left unchanged writes no row), and a project move (`field_name = 'project'`,
+written by `moveTicket`, D37/D38). Read-only from the application's own perspective -- nothing ever
+updates or deletes a row here once written.
+
+Exposed to the client for the first time via `GET /api/v1/tickets/{key}/history`
+(`IDatabase::listTicketHistory`, newest first, no pagination -- matches every other per-ticket list;
+D101-adjacent user-requested addition, the ticket detail drawer's "History" activity tab) after
+previously existing purely as write-only internal bookkeeping. `old_value`/`new_value` are the raw stored
+strings (a status/priority/type *key*, not its display name) -- the web client maps them to readable
+labels at render time, not stored pre-formatted here.
 
 ### `ticket_links`
 

@@ -303,6 +303,30 @@ SELECT c.id, c.ticket_id, u.id, u.display_name, u.email,
 FROM comments c JOIN users u ON u.id = c.author_user_id
 )SQL";
 
+Domain::TicketHistoryEntry readTicketHistoryEntry(PGresult* result, int row) {
+    Domain::TicketHistoryEntry entry;
+    entry.id = value(result, row, 0);
+    entry.ticketId = value(result, row, 1);
+    if (PQgetisnull(result, row, 2) == 0) {
+        entry.actor = readUserSummary(result, row, 2);
+    }
+    entry.fieldName = value(result, row, 5);
+    entry.oldValue = optionalValue(result, row, 6);
+    entry.newValue = optionalValue(result, row, 7);
+    entry.createdAt = value(result, row, 8);
+    return entry;
+}
+
+// LEFT JOIN (not JOIN, unlike CommentSelect/WorklogSelect above) --
+// actor_user_id is nullable (ON DELETE SET NULL), so a since-deleted
+// user's past history rows must still resolve instead of vanishing from
+// the JOIN entirely.
+constexpr const char* TicketHistorySelect = R"SQL(
+SELECT h.id, h.ticket_id, u.id, u.display_name, u.email,
+       h.field_name, h.old_value, h.new_value, h.created_at::text
+FROM ticket_history h LEFT JOIN users u ON u.id = h.actor_user_id
+)SQL";
+
 Domain::Worklog readWorklog(PGresult* result, int row) {
     Domain::Worklog worklog;
     worklog.id = value(result, row, 0);
@@ -1880,6 +1904,23 @@ VALUES ($1, $2, $3, 'project', $4, $5)
         }
         throw;
     }
+}
+
+std::vector<Domain::TicketHistoryEntry> PostgresDatabase::listTicketHistory(const std::string& ticketKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(TicketHistorySelect) + R"SQL(
+JOIN tickets i ON i.id = h.ticket_id
+WHERE i.deleted_at IS NULL
+  AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
+ORDER BY h.created_at DESC, h.id DESC
+)SQL",
+                             {ticketKey},
+                             "List ticket history");
+    std::vector<Domain::TicketHistoryEntry> entries;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        entries.push_back(readTicketHistoryEntry(result.get(), row));
+    }
+    return entries;
 }
 
 std::vector<Domain::Comment> PostgresDatabase::listComments(const std::string& ticketKey) {
