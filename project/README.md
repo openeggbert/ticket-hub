@@ -15,7 +15,7 @@ visible.
 |---|---|
 | **Login** ![Login screen](docs/screenshots/01-login.png) | **Dashboard** ![Dashboard](docs/screenshots/02-dashboard.png) |
 | **Board** ![Kanban board](docs/screenshots/03-board.png) | **Backlog** ![Backlog screen](docs/screenshots/12-backlog.png) |
-| **Tickets** ![Tickets list with filters](docs/screenshots/04-tickets.png) | **Ticket detail** ![Ticket detail drawer, with a Markdown worklog entry](docs/screenshots/05-ticket-detail.png) |
+| **Tickets** ![Tickets list with filters](docs/screenshots/04-tickets.png) | **Ticket detail** ![Ticket detail drawer, Jira-style layout with the History tab showing a field-change log](docs/screenshots/05-ticket-detail.png) |
 | **New ticket** ![Create ticket modal](docs/screenshots/06-new-ticket-modal.png) | **Projects** ![Projects](docs/screenshots/07-projects.png) |
 | **Account** ![Account preferences, tokens, and sessions](docs/screenshots/08-account.png) | **Audit log** ![Audit log](docs/screenshots/09-audit-log.png) |
 | **Attachment recycle bin** ![Attachment recycle bin](docs/screenshots/10-attachment-recycle-bin.png) | **Dashboard (dark mode)** ![Dashboard in dark mode](docs/screenshots/11-dashboard-dark.png) |
@@ -39,8 +39,11 @@ optimistic-lock save (D129), self-service timezone/clock-format preferences (D45
 project's key (D91); and, most recently, a dedicated paginated Backlog screen amending D32 (a project's
 backlog can grow past what a Kanban column usefully holds, so it's off the board and on its own screen),
 Markdown-supported worklogs (no longer forced single-line), and Created/Updated columns on every ticket
-list. See `NEXT.md`'s "The roadmap is now complete" section for the exact closing detail and
-`docs/VERIFICATION.md` for exactly what was tested and how.
+list; and, most recently, a Jira-style ticket detail redesign (status pill, sidebar detail/dates cards,
+tabbed Comments/Work log/History activity section) plus a History tab exposing the previously write-only
+`ticket_history` audit log for the first time via `GET /api/v1/tickets/{key}/history`. See `NEXT.md`'s
+"The roadmap is now complete" section for the exact closing detail and `docs/VERIFICATION.md` for exactly
+what was tested and how.
 
 Implemented now:
 
@@ -91,6 +94,12 @@ Implemented now:
   @mention autocomplete, live preview) rendered as real HTML, not a plain single-line input,
 - **Created/Updated columns** on every ticket list table (Tickets, Backlog), matching what the ticket
   detail drawer already showed,
+- **a Jira-style ticket detail layout**: a colored status pill in place of the old plain status dropdown, a
+  two-card sidebar (Details, Dates), and a tabbed Comments/Work log/History activity section with the
+  comment/worklog forms moved above their lists,
+- **a History activity tab** exposing `ticket_history` (previously write-only internal bookkeeping) via
+  `GET /api/v1/tickets/{key}/history`: every status change and per-field edit, newest first, rendered as
+  readable "changed X from Y to Z" entries,
 - **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
   both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
@@ -404,6 +413,7 @@ trip; there is no admin configuration for either limit.
 | `POST` | `/api/v1/tickets/{key}/worklogs` | session + CSRF, project member | `{workDate, timeSpentSeconds, comment?}` (D12/D13) |
 | `PATCH` | `/api/v1/tickets/{key}/worklogs/{id}` | session + CSRF, project member | full-replacement edit, no own-vs-others split |
 | `DELETE` | `/api/v1/tickets/{key}/worklogs/{id}` | session + CSRF, project member | tombstone delete, no own-vs-others split |
+| `GET` | `/api/v1/tickets/{key}/history` | session, or anon if enabled | `ticket_history` rows (status changes, per-field edits), newest first, no pagination |
 | `GET` | `/api/v1/tickets/{key}/attachments` | session, or anon if enabled | active attachments (D15/D98-D105) |
 | `POST` | `/api/v1/tickets/{key}/attachments` | session + CSRF, project member | `multipart/form-data`, one `file` part; fixed 25MB/20-per-ticket limits, D98 |
 | `DELETE` | `/api/v1/tickets/{key}/attachments/{id}` | session + CSRF, uploader or project admin | tombstone delete (D101) |

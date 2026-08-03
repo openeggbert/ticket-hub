@@ -164,6 +164,19 @@ remains only as optional, non-roadmap follow-up.
   SQLite databases over real HTTP and a full Playwright/Chromium browser pass (20/20 checks, plus
   screenshots of all three status-pill colors and dark mode). README's ticket-detail screenshot
   regenerated.
+- **Post-V1, batch 11.** The user asked whether History/Activity/Transitions tabs could also be added to
+  the ticket detail drawer, right after batch 10's Activity tabs landed. `ticket_history` already existed
+  and was already written to by `changeTicketStatus`/`editTicket`/`moveTicket`, but had no read-side API --
+  purely write-only internal bookkeeping until now. Added `IDatabase::listTicketHistory` on both adapters
+  (mirroring `listComments`/`listWorklogs`, with a `LEFT JOIN` since `actor_user_id` is nullable unlike
+  those tables' `author_user_id`), `TicketService::listTicketHistory`, and a new
+  `GET /api/v1/tickets/{key}/history` route. The drawer gained a third Activity tab, "History (N)",
+  rendering each row as a Jira-style "changed X from Y to Z" sentence via new frontend-only formatting
+  helpers and label lookup maps -- no API/schema change, purely new read exposure of an existing table.
+  New SQLite integration test coverage (including a self-caught-and-fixed `std::is_sorted` comparator bug
+  in the test itself -- `>=` is not a valid strict weak ordering, fixed to strict `>`); verified end-to-end
+  against fresh live PostgreSQL and SQLite databases over real HTTP and a full Playwright/Chromium browser
+  pass (8/8 checks). README's ticket-detail screenshot regenerated to show the History tab active.
   **There is currently no further queued work.**
 
 ## Implementation rules

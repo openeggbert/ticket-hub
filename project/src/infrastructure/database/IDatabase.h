@@ -194,6 +194,12 @@ public:
                                                    const Domain::EditTicketRequest& request,
                                                    const std::string& actorUserId,
                                                    std::optional<std::int64_t> expectedVersion = std::nullopt) = 0;
+    // Read-only field-change log already written by changeTicketStatus/
+    // editTicket/moveTicket (D129/D37) -- newest first, no artificial cap
+    // (matches every other per-ticket list here: comments/worklogs/links
+    // have none either, and this V1 product has no bot/automation traffic
+    // that could make a single ticket's history unusually large).
+    virtual std::vector<Domain::TicketHistoryEntry> listTicketHistory(const std::string& ticketKey) = 0;
     virtual std::vector<Domain::Comment> listComments(const std::string& ticketKey) = 0;
     virtual Domain::Comment addComment(const Domain::AddCommentRequest& request,
                                        const std::string& authorUserId) = 0;

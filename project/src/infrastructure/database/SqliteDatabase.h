@@ -89,6 +89,7 @@ public:
                                            const Domain::EditTicketRequest& request,
                                            const std::string& actorUserId,
                                            std::optional<std::int64_t> expectedVersion = std::nullopt) override;
+    std::vector<Domain::TicketHistoryEntry> listTicketHistory(const std::string& ticketKey) override;
     std::vector<Domain::Comment> listComments(const std::string& ticketKey) override;
     Domain::Comment addComment(const Domain::AddCommentRequest& request,
                                const std::string& authorUserId) override;

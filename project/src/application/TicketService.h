@@ -38,6 +38,7 @@ public:
     Domain::Page<Domain::Ticket> listTicketsPaged(const Domain::TicketFilter& filter, int page, int pageSize,
                                                 const std::optional<Domain::Principal>& actor);
     std::optional<Domain::Ticket> findTicket(const std::string& ticketKey, const std::optional<Domain::Principal>& actor);
+    std::vector<Domain::TicketHistoryEntry> listTicketHistory(const std::string& ticketKey, const std::optional<Domain::Principal>& actor);
     std::vector<Domain::Comment> listComments(const std::string& ticketKey, const std::optional<Domain::Principal>& actor);
     Domain::DashboardStats dashboard(const std::optional<Domain::Principal>& actor);
 

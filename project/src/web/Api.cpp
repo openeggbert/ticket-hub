@@ -268,6 +268,18 @@ crow::json::wvalue worklogJson(const Domain::Worklog& worklog) {
     return json;
 }
 
+crow::json::wvalue ticketHistoryEntryJson(const Domain::TicketHistoryEntry& entry) {
+    crow::json::wvalue json;
+    json["id"] = entry.id;
+    json["ticketId"] = entry.ticketId;
+    json["actor"] = entry.actor ? userJson(*entry.actor) : crow::json::wvalue(nullptr);
+    json["fieldName"] = entry.fieldName;
+    json["oldValue"] = entry.oldValue ? crow::json::wvalue(*entry.oldValue) : crow::json::wvalue(nullptr);
+    json["newValue"] = entry.newValue ? crow::json::wvalue(*entry.newValue) : crow::json::wvalue(nullptr);
+    json["createdAt"] = entry.createdAt;
+    return json;
+}
+
 crow::json::wvalue attachmentJson(const Domain::Attachment& attachment) {
     crow::json::wvalue json;
     json["id"] = attachment.id;
@@ -1695,6 +1707,27 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(403, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Read-only History tab (D129/D37's own field-change log, exposed to
+    // the client for the first time here): newest first, no pagination --
+    // matches every other per-ticket list (comments/worklogs/links) below,
+    // none of which are paginated either.
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/history")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& entry : service->listTicketHistory(ticketKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(ticketHistoryEntryJson(entry));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

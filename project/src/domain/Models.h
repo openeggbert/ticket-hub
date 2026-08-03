@@ -561,6 +561,29 @@ struct Worklog {
     std::int64_t version{1};
 };
 
+// A single field-change row already written to `ticket_history` by
+// changeTicketStatus/editTicket/moveTicket (D129/D37) -- read-only, never
+// written to directly. `actor` is nullable (`actor_user_id ON DELETE SET
+// NULL`) so a since-deleted user's past edits still show up, attributed to
+// nobody rather than disappearing. `fieldName` is one of "status",
+// "summary", "description", "priority", "assignee", "story_points",
+// "due_date", "labels", "ticket_type", "parent", "component", or
+// "project" -- whichever field-tracking call site wrote the row; not a
+// closed enum in code since new call sites can add new field names without
+// a domain-layer change. `oldValue`/`newValue` are the raw stored strings
+// (e.g. a status/priority *key*, not its display name) -- the History tab
+// (D23-adjacent, exposes the same ticket_history table the audit log's
+// sibling admin/security log doesn't cover) renders them as-is.
+struct TicketHistoryEntry {
+    std::string id;
+    std::string ticketId;
+    std::optional<UserSummary> actor;
+    std::string fieldName;
+    std::optional<std::string> oldValue;
+    std::optional<std::string> newValue;
+    std::string createdAt;
+};
+
 struct AddWorklogRequest {
     std::string ticketKey;
     std::string workDate;

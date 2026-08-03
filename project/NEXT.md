@@ -73,6 +73,15 @@ resolution being confirmed on a Done ticket that somehow had none) plus a CSS re
 itself introduced (`[hidden]` being overridden by a same-specificity `display: flex` rule). See
 `docs/SCOPE.md`'s "Batch 10" entry and "The roadmap is now complete" below for full detail.
 
+**Post-V1, batch 11 (done, 2026-08-03):** "a co pridat i zalozky history activity transitions ???" ("and
+what about also adding History/Activity/Transitions tabs?"). `ticket_history` already existed and was
+already written to on every status change and full edit, but had no read-side API -- exposed for the
+first time via a new `IDatabase::listTicketHistory`/`GET /api/v1/tickets/{key}/history`, and surfaced in
+the drawer as a third "History" Activity tab next to Comments and Work log, rendering each row as a
+Jira-style "changed X from Y to Z" sentence with humanized labels. No schema change -- purely new read
+exposure of an existing table. See `docs/SCOPE.md`'s "Batch 11" entry and "The roadmap is now complete"
+below for full detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -1094,6 +1103,48 @@ log tab active and the new entry's Markdown renders correctly), every pre-existi
 through the restyled markup (watch/edit/clone/status-change/resolution-confirm), and screenshots of all
 three status-category pill colors plus dark mode confirming the `[hidden]` CSS fix. README's ticket-detail
 screenshot regenerated to show the new layout. Full detail in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 11 (done, 2026-08-03):** "a co pridat i zalozky history activity transitions ???" ("and
+what about also adding History/Activity/Transitions tabs?") -- asked right after batch 10's Activity tabs
+landed. `ticket_history` (`id`, `ticket_id`, `actor_user_id` nullable, `field_name`, `old_value`,
+`new_value`, `created_at`) already existed and was already written to by `changeTicketStatus`, `editTicket`,
+and `moveTicket`, but had no read-side API of its own -- purely write-only internal bookkeeping until now.
+
+- **Backend.** New `IDatabase::listTicketHistory(ticketKey)` on both adapters, mirroring the existing
+  `listComments`/`listWorklogs` per-ticket-list pattern exactly (same signature shape, same
+  `TicketSelect`-style SQL constant, newest-first ordering), the one structural difference being a
+  `LEFT JOIN users` (not `JOIN`) for the nullable `actor_user_id`, since a comment/worklog's
+  `author_user_id` is `NOT NULL` but a history row's actor is not (and never null-checking it would have
+  crashed on the very first row with no resolvable actor). `TicketService::listTicketHistory` is a plain
+  read-access-gated passthrough, and a new `GET /api/v1/tickets/{key}/history` route in `src/web/Api.cpp`
+  serializes it (`ticketHistoryEntryJson`).
+- **Frontend.** The drawer's Activity section gained a third tab, "History (N)", next to Comments and Work
+  log. Each row renders as a Jira-style sentence -- "Demo Admin changed priority from "Highest" to
+  "Medium" / 2 minutes ago" -- via new formatting helpers (`historyChangeText`, `historyValueLabel`,
+  `historyFieldLabel`) and small client-side-only lookup maps (`PRIORITY_LABELS`, `TICKET_TYPE_LABELS`,
+  `HISTORY_FIELD_LABELS`) that turn the raw stored keys (a status/priority/type key, a snake_case field
+  name like `story_points`) into the same display labels used everywhere else in the UI -- a deliberately
+  minimal, frontend-only addition rather than expanding the API response or refactoring the many
+  pre-existing inline dropdown option lists elsewhere in `web/app.js`. No schema or migration change --
+  this batch is additive read-exposure of an existing table only.
+
+New test coverage: `tests/sqlite_integration_tests.cpp` asserts `listTicketHistory` returns the
+status-change row plus one row per field actually changed by a full edit, newest-first ordering, correct
+old/new values on the status entry, actor resolution through the nullable FK, and an empty result for an
+unknown ticket key. One test-authoring bug was caught and fixed along the way: the ordering assertion
+initially used `std::is_sorted` with a `>=` comparator, which is not a valid strict weak ordering (fails
+irreflexivity) and spuriously failed whenever two history rows from the same `editTicket` transaction
+shared an identical `created_at` -- confirmed via live `curl` against a running server that the actual
+query order was correct all along, then fixed the comparator to strict `>`. Verified: full rebuild and
+`ctest` clean in all three build configurations; live-verified over real HTTP against both a fresh
+PostgreSQL database and a fresh SQLite database (a status transition and a full edit each produce the
+expected rows with correctly resolved actor and old/new values; a genuine same-status no-op correctly
+produces no new row); a full Playwright/Chromium browser pass (`verify_history_tab.js`, 8/8 checks)
+covering the three-tab layout, the History panel hidden by default and visible after its tab is clicked, a
+real edit producing readable "changed summary"/"changed priority" entries with humanized labels rather
+than raw snake_case field names or raw keys, and a status transition producing a readable status-name
+entry. README's ticket-detail screenshot regenerated to show the History tab active. Full detail in
+`docs/VERIFICATION.md`.
 
 ## Verification status
 

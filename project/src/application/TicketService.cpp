@@ -300,6 +300,12 @@ std::optional<Domain::Ticket> TicketService::editTicket(const std::string& ticke
     return edited;
 }
 
+std::vector<Domain::TicketHistoryEntry> TicketService::listTicketHistory(const std::string& ticketKey,
+                                                                         const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listTicketHistory(Domain::normalizeTicketKey(ticketKey));
+}
+
 std::vector<Domain::Comment> TicketService::listComments(const std::string& ticketKey,
                                                           const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);

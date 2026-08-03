@@ -261,6 +261,42 @@ int main() {
             + "' AND field_name IN ('summary','description','priority','assignee','story_points','due_date')");
         require(editHistoryCount >= 6, "each changed field writes a ticket_history row");
 
+        // --- History tab (D129/D37's own field-change log, exposed for the
+        // first time via listTicketHistory/GET .../history) ---
+        {
+            const auto history = database.listTicketHistory(created.key);
+            require(history.size() >= 7,
+                   "listTicketHistory returns the status-change row plus every changed-field row from editTicket");
+            // Strict `>` (not `>=`): several of these rows share the exact
+            // same created_at (multiple fields changed in one editTicket
+            // transaction), and is_sorted's comparator must be a strict
+            // weak ordering -- `>=` is reflexive (x >= x is true), which
+            // makes is_sorted treat every tied adjacent pair as "out of
+            // order" and fail even though the query's own `ORDER BY
+            // created_at DESC` is honored correctly.
+            require(std::is_sorted(history.begin(), history.end(),
+                                   [](const auto& a, const auto& b) { return a.createdAt > b.createdAt; }),
+                   "history is ordered newest first (non-increasing created_at)");
+
+            const auto statusEntry = std::find_if(history.begin(), history.end(),
+                                                  [](const auto& entry) { return entry.fieldName == "status"; });
+            require(statusEntry != history.end(), "the status transition is recorded");
+            require(statusEntry->oldValue.has_value() && *statusEntry->oldValue == "backlog",
+                   "the status entry records the old value (a new ticket starts in backlog)");
+            require(statusEntry->newValue.has_value() && *statusEntry->newValue == "done",
+                   "the status entry records the new value");
+            require(statusEntry->actor.has_value() && statusEntry->actor->email == "demo@ticket-hub.local",
+                   "the actor who made the change is resolved from the nullable actor_user_id FK");
+
+            const auto assigneeEntry = std::find_if(history.begin(), history.end(),
+                                                    [](const auto& entry) { return entry.fieldName == "assignee"; });
+            require(assigneeEntry != history.end() && assigneeEntry->newValue.has_value(),
+                   "the assignee field change from editTicket is recorded");
+
+            const auto unknownTicketHistory = database.listTicketHistory("TH-9999");
+            require(unknownTicketHistory.empty(), "an unknown ticket key returns an empty history, not an error");
+        }
+
         // --- Project components (D19, KEEP_FOR_V1) --- uses a freshly created
         // ticket rather than `created`/`edited`, so it does not disturb the
         // optimistic-lock version chain the stale-edit tests above depend on.

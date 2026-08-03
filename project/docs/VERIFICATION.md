@@ -1,5 +1,76 @@
 # Verification record
 
+## 2026-08-03 — History activity tab on the ticket detail drawer (user-requested)
+
+Requested directly by the user right after the Jira-layout batch landed: "a co pridat i zalozky history
+activity transitions ???" ("and what about also adding History/Activity/Transitions tabs?").
+`ticket_history` (`id`, `ticket_id`, `actor_user_id` nullable, `field_name`, `old_value`, `new_value`,
+`created_at`) already existed and was already written to by `changeTicketStatus`, `editTicket`, and
+`moveTicket`, but had no read-side API of its own until this batch -- purely write-only internal
+bookkeeping.
+
+### What changed
+
+- **Backend.** New `IDatabase::listTicketHistory(ticketKey)` on both `SqliteDatabase` and
+  `PostgresDatabase`, mirroring the existing `listComments`/`listWorklogs` per-ticket-list pattern (same
+  signature shape, a `TicketHistorySelect` SQL constant analogous to the existing `*Select` constants,
+  newest-first ordering `ORDER BY h.created_at DESC, h.id DESC`). The one structural difference from
+  `listComments`/`listWorklogs`: `ticket_history.actor_user_id` is nullable (`ON DELETE SET NULL`), unlike
+  `comments.author_user_id`/`worklogs.author_user_id` which are `NOT NULL`, so the query uses `LEFT JOIN
+  users u ON u.id = h.actor_user_id` (not `JOIN`) and the read helper null-checks before resolving a
+  `UserSummary` (`sqlite3_column_type(statement, 2) != SQLITE_NULL` for SQLite, `PQgetisnull(result, row,
+  2) == 0` for PostgreSQL). `TicketService::listTicketHistory` is a plain read-access-gated passthrough
+  (`requireReadAccess(actor); return database_->listTicketHistory(normalizeTicketKey(ticketKey));`). New
+  `GET /api/v1/tickets/{key}/history` route in `src/web/Api.cpp` with a `ticketHistoryEntryJson`
+  serializer, registered right before the existing comments GET route.
+- **Frontend.** The drawer's `.activity-tabs` gained a third tab, `data-activity-tab="history"`, showing
+  "History (N)". Its panel renders each entry as a Jira-style sentence via three new small helpers in
+  `web/app.js`: `historyFieldLabel` (snake_case field name -> readable label, e.g. `story_points` ->
+  "story points"), `historyValueLabel` (raw stored value -> display value -- resolves a status key through
+  the existing `STATUSES` list, a priority/type key through two new small `PRIORITY_LABELS`/
+  `TICKET_TYPE_LABELS` lookup maps, formats a due-date value through the existing `formatDate`, and
+  truncates a long summary/description value to 80 chars), and `historyChangeText` (combines old/new labels
+  into "set X to Y" / "cleared X (was Y)" / "changed X from Y to Z", matching Jira's own History tab
+  phrasing). These maps are deliberately scoped to History rendering only -- not a refactor of the many
+  pre-existing inline filter-dropdown option lists elsewhere in the file. No API or schema change beyond
+  the new route -- this batch is additive read-exposure of an existing table only.
+
+### Verification
+
+- Full rebuild in all three build configurations (default, SQLite-only, PostgreSQL-only) with zero new
+  warnings/errors; `ctest --output-on-failure` green in all three (new coverage in
+  `tests/sqlite_integration_tests.cpp`: `listTicketHistory` returns the status-change row plus one row per
+  field actually changed by a full edit; newest-first ordering; correct old/new values and resolved actor
+  on the status entry; the assignee-field-change row from `editTicket` is present; an unknown ticket key
+  returns an empty list, not an error).
+- **Test-authoring bug caught by `ctest` and fixed, not a real backend bug.** The ordering assertion
+  initially used `std::is_sorted` with a `>=` comparator on `createdAt` to check "newest first" -- not a
+  valid strict weak ordering (fails irreflexivity: `comp(x, x)` is true for `>=`), which made `is_sorted`
+  spuriously report "not sorted" whenever two adjacent history rows shared the exact same `created_at`
+  (common, since several rows are written within one `editTicket` transaction at the same
+  second-precision timestamp). Reproduced live via `curl` against a running server with the same status
+  change + full edit sequence, inspected the raw JSON from `GET /api/v1/tickets/TH-1/history`, and
+  confirmed the query's actual `ORDER BY ... DESC` was correct all along -- the bug was the test's
+  comparator, not the SQL. Fixed to strict `a.createdAt > b.createdAt`, with a comment above the assertion
+  explaining why `>=` is wrong here.
+- Live-verified over real HTTP against a fresh throwaway PostgreSQL database and a fresh SQLite database: a
+  status transition (`PATCH .../status`) and a full edit (`PATCH .../` with changed fields) each produce
+  the expected `ticket_history` rows via `GET .../history`, with correctly resolved actor and old/new
+  values. One test-scenario mistake caught and corrected during this pass (not a bug): an initial attempt
+  PATCHed a ticket to a status it was already in, expecting a new history row, and got none -- checking the
+  ticket's actual current status first confirmed it was a genuine same-status no-op (the target category
+  wasn't Done, so the resolution-retroactive-confirm special case from the previous batch didn't apply
+  either); retesting against a ticket with a different starting status produced the expected row.
+- Full Playwright/Chromium browser pass (`verify_history_tab.js`) against a fresh SQLite database -- 8/8
+  checks: three activity tabs present (Comments, Work log, History); History panel hidden by default;
+  visible after clicking its tab; a real edit (summary + priority change) produces entries matching
+  `/changed summary/` and `/changed priority/`; the priority entry shows the humanized label ("Low") not
+  the raw key; no raw snake_case field names (`story_points`, `due_date`, `ticket_type`) leak into the
+  rendered text; a status transition on a separate ticket shows readable status names ("Confirmed" ->
+  "In Progress"), not raw status keys. README's `docs/screenshots/05-ticket-detail.png` regenerated,
+  scrolled to the Activity section with the History tab active showing two realistic entries (a priority
+  change and a summary change).
+
 ## 2026-08-03 — Ticket detail layout restyled to look more like Jira (user-requested)
 
 Requested directly by the user: "prosim at je layout detailu ticketu vice podobny jire" ("please make the

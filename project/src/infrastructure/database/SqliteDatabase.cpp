@@ -273,6 +273,30 @@ SELECT c.id, c.ticket_id, u.id, u.display_name, u.email,
 FROM comments c JOIN users u ON u.id = c.author_user_id
 )SQL";
 
+Domain::TicketHistoryEntry readTicketHistoryEntry(sqlite3_stmt* statement) {
+    Domain::TicketHistoryEntry entry;
+    entry.id = text(statement, 0);
+    entry.ticketId = text(statement, 1);
+    if (sqlite3_column_type(statement, 2) != SQLITE_NULL) {
+        entry.actor = readUserSummary(statement, 2);
+    }
+    entry.fieldName = text(statement, 5);
+    entry.oldValue = optionalText(statement, 6);
+    entry.newValue = optionalText(statement, 7);
+    entry.createdAt = text(statement, 8);
+    return entry;
+}
+
+// LEFT JOIN (not JOIN, unlike CommentSelect/WorklogSelect above) --
+// actor_user_id is nullable (ON DELETE SET NULL), so a since-deleted
+// user's past history rows must still resolve instead of vanishing from
+// the JOIN entirely.
+constexpr const char* TicketHistorySelect = R"SQL(
+SELECT h.id, h.ticket_id, u.id, u.display_name, u.email,
+       h.field_name, h.old_value, h.new_value, h.created_at
+FROM ticket_history h LEFT JOIN users u ON u.id = h.actor_user_id
+)SQL";
+
 Domain::Worklog readWorklog(sqlite3_stmt* statement) {
     Domain::Worklog worklog;
     worklog.id = text(statement, 0);
@@ -1984,6 +2008,23 @@ VALUES (?, ?, ?, 'project', ?, ?)
         }
         throw;
     }
+}
+
+std::vector<Domain::TicketHistoryEntry> SqliteDatabase::listTicketHistory(const std::string& ticketKey) {
+    std::scoped_lock lock(mutex_);
+    const std::string sql = std::string(TicketHistorySelect) + R"SQL(
+JOIN tickets i ON i.id = h.ticket_id
+WHERE i.deleted_at IS NULL
+  AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
+ORDER BY h.created_at DESC, h.id DESC
+)SQL";
+    Statement statement(database_, sql);
+    statement.bind(1, ticketKey);
+    std::vector<Domain::TicketHistoryEntry> entries;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        entries.push_back(readTicketHistoryEntry(statement.get()));
+    }
+    return entries;
 }
 
 std::vector<Domain::Comment> SqliteDatabase::listComments(const std::string& ticketKey) {
