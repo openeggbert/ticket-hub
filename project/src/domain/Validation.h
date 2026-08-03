@@ -31,6 +31,12 @@ std::vector<std::string> validateCreateUser(const CreateUserRequest& request);
 
 std::vector<std::string> validateCreateProject(const CreateProjectRequest& request);
 
+// D19: name is required (per-project uniqueness is enforced at the database
+// layer, not here); description shares the same 10000-character bound as a
+// project's own description.
+std::vector<std::string> validateCreateComponent(const CreateComponentRequest& request);
+std::vector<std::string> validateEditComponent(const EditComponentRequest& request);
+
 std::vector<std::string> validateAddWorklog(const AddWorklogRequest& request);
 std::vector<std::string> validateEditWorklog(const EditWorklogRequest& request);
 

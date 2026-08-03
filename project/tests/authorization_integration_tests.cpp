@@ -537,6 +537,64 @@ int main() {
                "permanently deleting an already-gone attachment returns false");
     }
 
+    // --- Project components (D19, KEEP_FOR_V1): project-Admin-or-above,
+    // same level as archiving/deleting a project, no separate "component
+    // admin" role. Neither alex nor sam is TH-admin (both are plain TH
+    // members); alex is WEB-admin, sam has no WEB membership at all. ---
+    {
+        using TicketHub::Domain::CreateComponentRequest;
+        using TicketHub::Domain::EditComponentRequest;
+
+        CreateComponentRequest thComponent;
+        thComponent.projectKey = "TH";
+        thComponent.name = "Auth-test component";
+
+        require(throwsForbidden([&] { tickets.createComponent(thComponent, alex); }),
+               "a plain TH member (not TH admin) cannot create a TH component");
+        require(throwsForbidden([&] { tickets.createComponent(thComponent, sam); }),
+               "a plain TH member (not TH admin) cannot create a TH component (sam either)");
+
+        CreateComponentRequest webComponent;
+        webComponent.projectKey = "WEB";
+        webComponent.name = "Auth-test component";
+        require(throwsForbidden([&] { tickets.createComponent(webComponent, sam); }),
+               "a non-member cannot create a WEB component");
+        const auto createdWebComponent = tickets.createComponent(webComponent, alex);
+        require(createdWebComponent.name == "Auth-test component", "the WEB admin can create a WEB component");
+
+        require(tickets.listComponents("WEB", sam).size() == 1,
+               "any authenticated user can list a project's components, regardless of membership");
+
+        // Regression test for the same class of IDOR as attachments/comments/
+        // worklogs above: editComponent/deleteComponent must scope by
+        // (projectKey, componentId) together, not componentId alone. Uses
+        // demo (global admin, passes the role check for every project) so
+        // the mismatch itself -- not a role rejection -- is what's proven
+        // here.
+        require(!tickets.editComponent("TH", createdWebComponent.id,
+                                       EditComponentRequest{"Should not apply", "", std::nullopt, std::nullopt}, demo)
+                     .has_value(),
+               "a WEB component cannot be edited through a TH project URL (returns nullopt, not applied), even "
+               "for a global administrator who passes the role check for every project");
+        require(!tickets.deleteComponent("TH", createdWebComponent.id, demo),
+               "a WEB component cannot be deleted through a TH project URL either");
+
+        const auto editedWebComponent = tickets.editComponent("WEB", createdWebComponent.id,
+            EditComponentRequest{"Renamed component", "Now with a description", std::string("alex@ticket-hub.local"),
+                                 std::nullopt},
+            alex);
+        require(editedWebComponent.has_value() && editedWebComponent->name == "Renamed component",
+               "the WEB admin can edit a WEB component through the correctly-scoped URL");
+        require(editedWebComponent->lead.has_value() && editedWebComponent->lead->email == "alex@ticket-hub.local",
+               "editComponent sets the lead");
+
+        require(throwsForbidden([&] { tickets.deleteComponent("WEB", createdWebComponent.id, sam); }),
+               "a non-member cannot delete a WEB component");
+        require(tickets.deleteComponent("WEB", createdWebComponent.id, alex),
+               "the WEB admin can delete a WEB component through the correctly-scoped URL");
+        require(tickets.listComponents("WEB", demo).empty(), "the deleted component no longer appears in the list");
+    }
+
     // --- User directory for @mention autocomplete (D80) ---
     {
         const auto users = tickets.listUsers(sam);

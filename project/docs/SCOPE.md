@@ -225,6 +225,22 @@ remain as the long-term aspirational baseline only — do not build against them
 - **Batch 5 (done): Jira-style `/browse/{key}` direct ticket links** -- a new user-requested addition after
   the original list closed. New `GET /browse/<key>` server route plus `history.pushState`/`popstate` URL
   syncing in `web/app.js`. No backend/schema changes beyond the route. See `docs/VERIFICATION.md`.
+- **Batch 6 (done): full "issue" -> "ticket" terminology rename** -- database schema, REST API paths and
+  JSON fields, C++ code, and all UI text renamed to match the product's own name, migration
+  `016_ticket_terminology.sql`. Breaking API change (`/api/v1/issues` -> `/api/v1/tickets`); no compatibility
+  shim, since V1 has no external API consumers yet. See `docs/VERIFICATION.md`.
+- **Batch 7 (done): project components (D19, `KEEP_FOR_V1`)** -- the one V1-decided feature that was never
+  actually implemented, discovered while answering a user question about what entity fields tickets
+  support. Simple project components: name, description, lead, default assignee, at most one per ticket
+  (migration `017_project_components.sql`), exactly as originally decided -- no scope reduction needed,
+  since D19 was already "the cheapest reasonable form." New `GET`/`POST /api/v1/projects/{key}/components`
+  and `PATCH`/`DELETE /api/v1/projects/{key}/components/{id}` routes (project-Admin-or-above to
+  create/edit/delete, same read access as projects/tickets to list); `createTicket`/`editTicket` gained a
+  `componentName` field and `TicketFilter` gained a matching `componentName` filter; `cloneTicket` now
+  copies the component too, per the original clone decision text. No recycle bin -- D19 doesn't call for
+  one; deleting a component clears it from any ticket via `ON DELETE SET NULL`. `web/` gained a
+  project-card "Components" management dialog and a Component picker/filter/display in the ticket
+  create/edit/drawer/table surfaces. See `docs/VERIFICATION.md`.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 

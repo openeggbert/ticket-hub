@@ -112,6 +112,38 @@ Domain::User readUser(sqlite3_stmt* statement) {
 constexpr const char* UserSelect =
     "SELECT id, email, display_name, handle, time_zone, clock_format, active, is_admin, created_at FROM users";
 
+// Project components (D19). `lead`/`defaultAssignee` reuse readUserSummary
+// like Project.lead does; the compact ComponentSummary shape embedded in a
+// Ticket is filled separately, straight off TicketSelect's own comp.id/
+// comp.name columns (see readTicket), not via this full row.
+constexpr const char* ComponentSelect = R"SQL(
+SELECT c.id, p.project_key, c.name, c.description,
+       lead.id, lead.display_name, lead.email,
+       def.id, def.display_name, def.email,
+       c.created_at, c.updated_at
+FROM project_components c
+JOIN projects p ON p.id = c.project_id
+LEFT JOIN users lead ON lead.id = c.lead_user_id
+LEFT JOIN users def ON def.id = c.default_assignee_user_id
+)SQL";
+
+Domain::ProjectComponent readComponent(sqlite3_stmt* statement) {
+    Domain::ProjectComponent component;
+    component.id = text(statement, 0);
+    component.projectKey = text(statement, 1);
+    component.name = text(statement, 2);
+    component.description = text(statement, 3);
+    if (sqlite3_column_type(statement, 4) != SQLITE_NULL) {
+        component.lead = readUserSummary(statement, 4);
+    }
+    if (sqlite3_column_type(statement, 7) != SQLITE_NULL) {
+        component.defaultAssignee = readUserSummary(statement, 7);
+    }
+    component.createdAt = text(statement, 10);
+    component.updatedAt = text(statement, 11);
+    return component;
+}
+
 Domain::Ticket readTicket(sqlite3_stmt* statement) {
     Domain::Ticket ticket;
     ticket.id = text(statement, 0);
@@ -139,6 +171,9 @@ Domain::Ticket readTicket(sqlite3_stmt* statement) {
     ticket.version = sqlite3_column_int64(statement, 31);
     ticket.resolution = optionalText(statement, 32);
     ticket.rankOrder = sqlite3_column_int64(statement, 33);
+    if (sqlite3_column_type(statement, 34) != SQLITE_NULL) {
+        ticket.component = Domain::ComponentSummary{text(statement, 34), text(statement, 35)};
+    }
     return ticket;
 }
 
@@ -155,7 +190,8 @@ SELECT
     parent.ticket_key,
     i.story_points, i.due_date,
     COALESCE(GROUP_CONCAT(DISTINCT l.name), ''),
-    i.created_at, i.updated_at, i.version, i.resolution, i.rank_order
+    i.created_at, i.updated_at, i.version, i.resolution, i.rank_order,
+    comp.id, comp.name
 FROM tickets i
 JOIN projects p ON p.id = i.project_id
 JOIN ticket_types it ON it.id = i.ticket_type_id
@@ -166,6 +202,7 @@ LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
 LEFT JOIN tickets parent ON parent.id = i.parent_ticket_id
 LEFT JOIN ticket_labels il ON il.ticket_id = i.id
 LEFT JOIN labels l ON l.id = il.label_id
+LEFT JOIN project_components comp ON comp.id = i.component_id
 )SQL";
 
 std::string lookupId(sqlite3* database,
@@ -182,6 +219,19 @@ std::string lookupId(sqlite3* database,
 
 std::string requireUserId(sqlite3* database, const std::string& userId) {
     return lookupId(database, "users", "id", userId);
+}
+
+// Components are named uniquely per project, not globally (D19), so the
+// lookup must be scoped by projectId -- unlike lookupId's plain global
+// key/value lookup used for ticket types/statuses/priorities.
+std::string lookupComponentId(sqlite3* database, const std::string& projectId, const std::string& name) {
+    Statement statement(database, "SELECT id FROM project_components WHERE project_id = ? AND name = ?");
+    statement.bind(1, projectId);
+    statement.bind(2, name);
+    if (statement.step() != SQLITE_ROW) {
+        throw std::invalid_argument("Unknown component: " + name);
+    }
+    return text(statement.get(), 0);
 }
 
 std::string lookupTicketId(sqlite3* database, const std::string& ticketKey) {
@@ -962,6 +1012,136 @@ ON CONFLICT(setting_key) DO UPDATE SET value = excluded.value, updated_at = CURR
     expectDone(database_, statement, "Set installation setting");
 }
 
+// --- Project components (D19) ---
+
+std::vector<Domain::ProjectComponent> SqliteDatabase::listComponents(const std::string& projectKey) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(ComponentSelect) + " WHERE p.project_key = ? ORDER BY c.name");
+    statement.bind(1, projectKey);
+    std::vector<Domain::ProjectComponent> components;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        components.push_back(readComponent(statement.get()));
+    }
+    return components;
+}
+
+Domain::ProjectComponent SqliteDatabase::createComponent(const Domain::CreateComponentRequest& request) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        const std::string projectId = lookupId(database_, "projects", "project_key", request.projectKey);
+        std::optional<std::string> leadId;
+        if (request.leadEmail.has_value() && !request.leadEmail->empty()) {
+            leadId = lookupId(database_, "users", "email", *request.leadEmail);
+        }
+        std::optional<std::string> defaultAssigneeId;
+        if (request.defaultAssigneeEmail.has_value() && !request.defaultAssigneeEmail->empty()) {
+            defaultAssigneeId = lookupId(database_, "users", "email", *request.defaultAssigneeEmail);
+        }
+
+        const std::string componentId = Common::uuidV4();
+        Statement insert(database_, R"SQL(
+INSERT INTO project_components(id, project_id, name, description, lead_user_id, default_assignee_user_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL");
+        insert.bind(1, componentId);
+        insert.bind(2, projectId);
+        insert.bind(3, request.name);
+        insert.bind(4, request.description);
+        leadId ? insert.bind(5, *leadId) : insert.bindNull(5);
+        defaultAssigneeId ? insert.bind(6, *defaultAssigneeId) : insert.bindNull(6);
+        if (insert.step() != SQLITE_DONE) {
+            throw std::invalid_argument("Component name is already in use in this project: " + request.name);
+        }
+
+        executeScript("COMMIT;");
+        Statement read(database_, std::string(ComponentSelect) + " WHERE c.id = ?");
+        read.bind(1, componentId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Created component could not be read back");
+        }
+        return readComponent(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+std::optional<Domain::ProjectComponent> SqliteDatabase::findComponentById(const std::string& componentId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(ComponentSelect) + " WHERE c.id = ?");
+    statement.bind(1, componentId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readComponent(statement.get());
+}
+
+std::optional<Domain::ProjectComponent> SqliteDatabase::editComponent(const std::string& componentId,
+                                                                       const Domain::EditComponentRequest& request) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        Statement exists(database_, "SELECT 1 FROM project_components WHERE id = ?");
+        exists.bind(1, componentId);
+        if (exists.step() != SQLITE_ROW) {
+            executeScript("ROLLBACK;");
+            return std::nullopt;
+        }
+
+        std::optional<std::string> leadId;
+        if (request.leadEmail.has_value() && !request.leadEmail->empty()) {
+            leadId = lookupId(database_, "users", "email", *request.leadEmail);
+        }
+        std::optional<std::string> defaultAssigneeId;
+        if (request.defaultAssigneeEmail.has_value() && !request.defaultAssigneeEmail->empty()) {
+            defaultAssigneeId = lookupId(database_, "users", "email", *request.defaultAssigneeEmail);
+        }
+
+        Statement update(database_, R"SQL(
+UPDATE project_components
+SET name = ?, description = ?, lead_user_id = ?, default_assignee_user_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+)SQL");
+        update.bind(1, request.name);
+        update.bind(2, request.description);
+        leadId ? update.bind(3, *leadId) : update.bindNull(3);
+        defaultAssigneeId ? update.bind(4, *defaultAssigneeId) : update.bindNull(4);
+        update.bind(5, componentId);
+        if (update.step() != SQLITE_DONE) {
+            throw std::invalid_argument("Component name is already in use in this project: " + request.name);
+        }
+
+        executeScript("COMMIT;");
+        Statement read(database_, std::string(ComponentSelect) + " WHERE c.id = ?");
+        read.bind(1, componentId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Edited component could not be read back");
+        }
+        return readComponent(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool SqliteDatabase::deleteComponent(const std::string& componentId) {
+    std::scoped_lock lock(mutex_);
+    // No recycle bin (D19 does not call for one, unlike tickets/projects) --
+    // any ticket referencing this component has it cleared via the
+    // component_id column's ON DELETE SET NULL, not rejected or cascaded.
+    Statement statement(database_, "DELETE FROM project_components WHERE id = ?");
+    statement.bind(1, componentId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
 // --- Ticket tracker ---
 
 std::vector<Domain::Project> SqliteDatabase::listProjects() {
@@ -1017,6 +1197,7 @@ WHERE i.deleted_at IS NULL
         WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
   AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
        OR LOWER(i.ticket_key) LIKE LOWER(?8))
+  AND (?9 IS NULL OR LOWER(comp.name) = LOWER(?9))
 GROUP BY i.id
 ORDER BY i.updated_at DESC, i.ticket_key DESC
 LIMIT 200
@@ -1030,6 +1211,7 @@ LIMIT 200
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
     filter.label ? statement.bind(7, *filter.label) : statement.bindNull(7);
     filter.search ? statement.bind(8, "%" + *filter.search + "%") : statement.bindNull(8);
+    filter.componentName ? statement.bind(9, *filter.componentName) : statement.bindNull(9);
 
     std::vector<Domain::Ticket> tickets;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
@@ -1054,9 +1236,10 @@ WHERE i.deleted_at IS NULL
         WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
   AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
        OR LOWER(i.ticket_key) LIKE LOWER(?8))
+  AND (?9 IS NULL OR LOWER(comp.name) = LOWER(?9))
 GROUP BY i.id
 ORDER BY i.updated_at DESC, i.ticket_key DESC
-LIMIT ?9 OFFSET ?10
+LIMIT ?10 OFFSET ?11
 )SQL";
     Statement statement(database_, sql);
     filter.projectKey ? statement.bind(1, *filter.projectKey) : statement.bindNull(1);
@@ -1067,8 +1250,9 @@ LIMIT ?9 OFFSET ?10
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
     filter.label ? statement.bind(7, *filter.label) : statement.bindNull(7);
     filter.search ? statement.bind(8, "%" + *filter.search + "%") : statement.bindNull(8);
-    statement.bind(9, static_cast<std::int64_t>(limit));
-    statement.bind(10, static_cast<std::int64_t>(offset));
+    filter.componentName ? statement.bind(9, *filter.componentName) : statement.bindNull(9);
+    statement.bind(10, static_cast<std::int64_t>(limit));
+    statement.bind(11, static_cast<std::int64_t>(offset));
 
     std::vector<Domain::Ticket> tickets;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
@@ -1087,6 +1271,7 @@ JOIN ticket_types it ON it.id = i.ticket_type_id
 JOIN ticket_statuses s ON s.id = i.status_id
 JOIN priorities pr ON pr.id = i.priority_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
+LEFT JOIN project_components comp ON comp.id = i.component_id
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
   AND (?1 IS NULL OR p.project_key = ?1)
@@ -1100,6 +1285,7 @@ WHERE i.deleted_at IS NULL
         WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
   AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
        OR LOWER(i.ticket_key) LIKE LOWER(?8))
+  AND (?9 IS NULL OR LOWER(comp.name) = LOWER(?9))
 )SQL";
     Statement statement(database_, sql);
     filter.projectKey ? statement.bind(1, *filter.projectKey) : statement.bindNull(1);
@@ -1110,6 +1296,7 @@ WHERE i.deleted_at IS NULL
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
     filter.label ? statement.bind(7, *filter.label) : statement.bindNull(7);
     filter.search ? statement.bind(8, "%" + *filter.search + "%") : statement.bindNull(8);
+    filter.componentName ? statement.bind(9, *filter.componentName) : statement.bindNull(9);
 
     if (statement.step() != SQLITE_ROW) {
         return 0;
@@ -1163,6 +1350,10 @@ Domain::Ticket SqliteDatabase::createTicket(const Domain::CreateTicketRequest& r
         if (request.parentTicketKey.has_value() && !request.parentTicketKey->empty()) {
             parentId = lookupTicketId(database_, *request.parentTicketKey);
         }
+        std::optional<std::string> componentId;
+        if (request.componentName.has_value() && !request.componentName->empty()) {
+            componentId = lookupComponentId(database_, projectId, *request.componentName);
+        }
 
         // Simple integer manual order (D31): new tickets are appended after
         // the highest existing rank within their project.
@@ -1178,8 +1369,8 @@ Domain::Ticket SqliteDatabase::createTicket(const Domain::CreateTicketRequest& r
         Statement insert(database_, R"SQL(
 INSERT INTO tickets(id, project_id, ticket_number, ticket_key, summary, description,
                    ticket_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
-                   parent_ticket_id, story_points, due_date, rank_order, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                   parent_ticket_id, story_points, due_date, rank_order, component_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL");
         insert.bind(1, ticketId);
         insert.bind(2, projectId);
@@ -1196,6 +1387,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_
         request.storyPoints ? insert.bind(13, *request.storyPoints) : insert.bindNull(13);
         request.dueDate ? insert.bind(14, *request.dueDate) : insert.bindNull(14);
         insert.bind(15, rankOrder);
+        componentId ? insert.bind(16, *componentId) : insert.bindNull(16);
         expectDone(database_, insert, "Ticket insert");
 
         for (const auto& labelName : request.labels) {
@@ -1358,11 +1550,13 @@ std::optional<Domain::Ticket> SqliteDatabase::editTicket(const std::string& tick
         Statement current(database_, R"SQL(
 SELECT i.id, i.summary, i.description, pr.priority_key, assignee.email,
        i.story_points, i.due_date, i.version, it.type_key,
-       (SELECT ticket_key FROM tickets WHERE id = i.parent_ticket_id)
+       (SELECT ticket_key FROM tickets WHERE id = i.parent_ticket_id),
+       i.project_id, comp.name
 FROM tickets i
 JOIN priorities pr ON pr.id = i.priority_id
 JOIN ticket_types it ON it.id = i.ticket_type_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
+LEFT JOIN project_components comp ON comp.id = i.component_id
 WHERE i.deleted_at IS NULL
   AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
 )SQL");
@@ -1384,6 +1578,8 @@ WHERE i.deleted_at IS NULL
         const std::int64_t currentVersion = sqlite3_column_int64(current.get(), 7);
         const std::string oldTypeKey = text(current.get(), 8);
         const std::optional<std::string> oldParentKey = optionalText(current.get(), 9);
+        const std::string projectId = text(current.get(), 10);
+        const std::optional<std::string> oldComponentName = optionalText(current.get(), 11);
         if (expectedVersion && *expectedVersion != currentVersion) {
             throw Domain::ConcurrencyConflict("Ticket was modified by another user");
         }
@@ -1419,13 +1615,17 @@ WHERE i.deleted_at IS NULL
         if (request.parentTicketKey.has_value() && !request.parentTicketKey->empty()) {
             parentId = lookupTicketId(database_, *request.parentTicketKey);
         }
+        std::optional<std::string> componentId;
+        if (request.componentName.has_value() && !request.componentName->empty()) {
+            componentId = lookupComponentId(database_, projectId, *request.componentName);
+        }
         const std::string actorId = requireUserId(database_, actorUserId);
 
         Statement update(database_, R"SQL(
 UPDATE tickets
 SET summary = ?, description = ?, priority_id = ?, assignee_user_id = ?,
     ticket_type_id = ?, parent_ticket_id = ?,
-    story_points = ?, due_date = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+    story_points = ?, due_date = ?, component_id = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 )SQL");
         update.bind(1, request.summary);
@@ -1436,7 +1636,8 @@ WHERE id = ?
         parentId ? update.bind(6, *parentId) : update.bindNull(6);
         request.storyPoints ? update.bind(7, *request.storyPoints) : update.bindNull(7);
         request.dueDate ? update.bind(8, *request.dueDate) : update.bindNull(8);
-        update.bind(9, ticketId);
+        componentId ? update.bind(9, *componentId) : update.bindNull(9);
+        update.bind(10, ticketId);
         expectDone(database_, update, "Ticket edit update");
 
         Statement clearLabels(database_, "DELETE FROM ticket_labels WHERE ticket_id = ?");
@@ -1479,6 +1680,7 @@ VALUES (?, ?, ?, ?, ?, ?)
         recordHistory("due_date", historyText(oldDueDate), historyText(request.dueDate));
         recordHistory("ticket_type", oldTypeKey, request.ticketTypeKey);
         recordHistory("parent", historyText(oldParentKey), historyText(request.parentTicketKey));
+        recordHistory("component", historyText(oldComponentName), historyText(request.componentName));
 
         executeScript("COMMIT;");
         const std::string sql = std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";

@@ -134,6 +134,47 @@ struct TicketType {
     std::string color;
 };
 
+// Project components (D19, KEEP_FOR_V1): "small table plus one optional
+// ticket field" -- name, description, lead, default assignee; at most one
+// component per ticket. `ComponentSummary` is the compact id+name shape
+// embedded in a `Ticket` (mirrors how `TicketType`/`Priority` are embedded),
+// while `ProjectComponent` is the full row returned by the component
+// management API. No recycle bin/soft-delete columns -- D19 does not call
+// for one, unlike tickets/projects/comments.
+struct ComponentSummary {
+    std::string id;
+    std::string name;
+};
+
+struct ProjectComponent {
+    std::string id;
+    std::string projectKey;
+    std::string name;
+    std::string description;
+    std::optional<UserSummary> lead;
+    std::optional<UserSummary> defaultAssignee;
+    std::string createdAt;
+    std::string updatedAt;
+};
+
+struct CreateComponentRequest {
+    std::string projectKey;
+    std::string name;
+    std::string description;
+    std::optional<std::string> leadEmail;
+    std::optional<std::string> defaultAssigneeEmail;
+};
+
+// Full-replacement edit (PUT-style), matching every other edit request in
+// this codebase (EditTicketRequest, EditWorklogRequest, ...): every field is
+// always the caller's intended final value.
+struct EditComponentRequest {
+    std::string name;
+    std::string description;
+    std::optional<std::string> leadEmail;
+    std::optional<std::string> defaultAssigneeEmail;
+};
+
 // Fixed ticket types and the fixed hierarchy they imply (D5, D29, D64-D66):
 // Epic -> Story/Task/Bug -> Sub-task, with nothing above Epic and nothing
 // below Sub-task. There are no custom types in V1, so this is a hardcoded
@@ -367,6 +408,7 @@ struct Ticket {
     UserSummary reporter;
     std::optional<UserSummary> assignee;
     std::optional<std::string> parentTicketKey;
+    std::optional<ComponentSummary> component;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
     std::optional<std::string> resolution;
@@ -394,6 +436,7 @@ struct TicketFilter {
     std::optional<std::string> priorityKey;
     std::optional<std::string> assigneeEmail;
     std::optional<std::string> label;
+    std::optional<std::string> componentName;
     std::optional<std::string> dueBefore;
     std::optional<std::string> search;
 };
@@ -431,6 +474,11 @@ struct CreateTicketRequest {
     // see Domain::ticketTypeHierarchyLevel and TicketService::createTicket.
     std::optional<std::string> parentTicketKey;
     std::vector<std::string> labels;
+    // D19: at most one component per ticket, resolved by name (like
+    // assigneeEmail/priorityKey/label -- a human-readable identifier, not a
+    // raw component id) against the project's own components. nullopt/empty
+    // means no component.
+    std::optional<std::string> componentName;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
 };
@@ -451,6 +499,7 @@ struct EditTicketRequest {
     std::string priorityKey;
     std::optional<std::string> assigneeEmail;
     std::vector<std::string> labels;
+    std::optional<std::string> componentName;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
     std::string ticketTypeKey;

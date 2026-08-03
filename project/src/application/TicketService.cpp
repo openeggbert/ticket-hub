@@ -65,6 +65,7 @@ Domain::EditTicketRequest editRequestFrom(const Domain::Ticket& ticket) {
     request.priorityKey = ticket.priority.key;
     request.assigneeEmail = ticket.assignee ? std::optional<std::string>(ticket.assignee->email) : std::nullopt;
     request.labels = ticket.labels;
+    request.componentName = ticket.component ? std::optional<std::string>(ticket.component->name) : std::nullopt;
     request.storyPoints = ticket.storyPoints;
     request.dueDate = ticket.dueDate;
     request.ticketTypeKey = ticket.type.key;
@@ -589,6 +590,7 @@ Domain::Ticket TicketService::cloneTicket(const std::string& ticketKey, const Do
     clone.ticketTypeKey = source->type.key;
     clone.priorityKey = source->priority.key;
     clone.labels = source->labels;
+    clone.componentName = source->component ? std::optional<std::string>(source->component->name) : std::nullopt;
     if (source->type.key == Domain::TicketTypeSubTask && source->parentTicketKey) {
         clone.parentTicketKey = source->parentTicketKey;
     }
@@ -884,6 +886,61 @@ void TicketService::setBoardColumnWipLimit(const std::string& statusKey, const s
     if (!database_->setBoardColumnWipLimit(statusKey, wipLimit)) {
         throw std::invalid_argument("Unknown status key: " + statusKey);
     }
+}
+
+std::vector<Domain::ProjectComponent> TicketService::listComponents(const std::string& projectKey,
+                                                                     const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listComponents(Domain::normalizeProjectKey(projectKey));
+}
+
+Domain::ProjectComponent TicketService::createComponent(Domain::CreateComponentRequest request, const Domain::Principal& actor) {
+    request.projectKey = Domain::normalizeProjectKey(request.projectKey);
+    requireProjectRole(actor, request.projectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    if (request.leadEmail) {
+        request.leadEmail = Domain::normalizeEmail(*request.leadEmail);
+    }
+    if (request.defaultAssigneeEmail) {
+        request.defaultAssigneeEmail = Domain::normalizeEmail(*request.defaultAssigneeEmail);
+    }
+    const auto errors = Domain::validateCreateComponent(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->createComponent(request);
+}
+
+std::optional<Domain::ProjectComponent> TicketService::editComponent(const std::string& projectKey,
+                                                                      const std::string& componentId,
+                                                                      Domain::EditComponentRequest request,
+                                                                      const Domain::Principal& actor) {
+    const std::string normalizedProjectKey = Domain::normalizeProjectKey(projectKey);
+    requireProjectRole(actor, normalizedProjectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    const auto existing = database_->findComponentById(componentId);
+    if (!existing || existing->projectKey != normalizedProjectKey) {
+        return std::nullopt;
+    }
+    if (request.leadEmail) {
+        request.leadEmail = Domain::normalizeEmail(*request.leadEmail);
+    }
+    if (request.defaultAssigneeEmail) {
+        request.defaultAssigneeEmail = Domain::normalizeEmail(*request.defaultAssigneeEmail);
+    }
+    const auto errors = Domain::validateEditComponent(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    return database_->editComponent(componentId, request);
+}
+
+bool TicketService::deleteComponent(const std::string& projectKey, const std::string& componentId, const Domain::Principal& actor) {
+    const std::string normalizedProjectKey = Domain::normalizeProjectKey(projectKey);
+    requireProjectRole(actor, normalizedProjectKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    const auto existing = database_->findComponentById(componentId);
+    if (!existing || existing->projectKey != normalizedProjectKey) {
+        return false;
+    }
+    return database_->deleteComponent(componentId);
 }
 
 Domain::Project TicketService::createProject(Domain::CreateProjectRequest request, const Domain::Principal& actor) {

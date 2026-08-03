@@ -174,6 +174,9 @@ Domain::Ticket readTicket(PGresult* result, int row) {
     ticket.version = int64Value(result, row, 31);
     ticket.resolution = optionalValue(result, row, 32);
     ticket.rankOrder = int64Value(result, row, 33);
+    if (PQgetisnull(result, row, 34) == 0) {
+        ticket.component = Domain::ComponentSummary{value(result, row, 34), value(result, row, 35)};
+    }
     return ticket;
 }
 
@@ -190,7 +193,8 @@ SELECT
     parent.ticket_key,
     i.story_points, i.due_date::text,
     labels.names,
-    i.created_at::text, i.updated_at::text, i.version, i.resolution, i.rank_order
+    i.created_at::text, i.updated_at::text, i.version, i.resolution, i.rank_order,
+    comp.id, comp.name
 FROM tickets i
 JOIN projects p ON p.id = i.project_id
 JOIN ticket_types it ON it.id = i.ticket_type_id
@@ -204,6 +208,7 @@ LEFT JOIN LATERAL (
     FROM ticket_labels il JOIN labels l ON l.id = il.label_id
     WHERE il.ticket_id = i.id
 ) labels ON TRUE
+LEFT JOIN project_components comp ON comp.id = i.component_id
 )SQL";
 
 std::string lookupId(PGconn* connection,
@@ -223,6 +228,48 @@ std::string lookupId(PGconn* connection,
 std::string requireUserId(PGconn* connection, const std::string& userId) {
     return lookupId(connection, "users", "id", userId);
 }
+
+// Components are named uniquely per project, not globally (D19), so the
+// lookup must be scoped by projectId -- unlike lookupId's plain global
+// key/value lookup used for ticket types/statuses/priorities.
+std::string lookupComponentId(PGconn* connection, const std::string& projectId, const std::string& name) {
+    auto result = execParams(connection,
+                             "SELECT id FROM project_components WHERE project_id = $1 AND name = $2",
+                             {projectId, name},
+                             "Lookup component");
+    if (PQntuples(result.get()) != 1) {
+        throw std::invalid_argument("Unknown component: " + name);
+    }
+    return value(result.get(), 0, 0);
+}
+
+Domain::ProjectComponent readComponent(PGresult* result, int row) {
+    Domain::ProjectComponent component;
+    component.id = value(result, row, 0);
+    component.projectKey = value(result, row, 1);
+    component.name = value(result, row, 2);
+    component.description = value(result, row, 3);
+    if (PQgetisnull(result, row, 4) == 0) {
+        component.lead = readUserSummary(result, row, 4);
+    }
+    if (PQgetisnull(result, row, 7) == 0) {
+        component.defaultAssignee = readUserSummary(result, row, 7);
+    }
+    component.createdAt = value(result, row, 10);
+    component.updatedAt = value(result, row, 11);
+    return component;
+}
+
+constexpr const char* ComponentSelect = R"SQL(
+SELECT c.id, p.project_key, c.name, c.description,
+       lead.id, lead.display_name, lead.email,
+       def.id, def.display_name, def.email,
+       c.created_at::text, c.updated_at::text
+FROM project_components c
+JOIN projects p ON p.id = c.project_id
+LEFT JOIN users lead ON lead.id = c.lead_user_id
+LEFT JOIN users def ON def.id = c.default_assignee_user_id
+)SQL";
 
 std::string lookupTicketId(PGconn* connection, const std::string& ticketKey) {
     auto result = execParams(connection, R"SQL(
@@ -912,6 +959,139 @@ ON CONFLICT (setting_key) DO UPDATE SET value = EXCLUDED.value, updated_at = CUR
                {key, value}, "Set installation setting");
 }
 
+// --- Project components (D19) ---
+
+std::vector<Domain::ProjectComponent> PostgresDatabase::listComponents(const std::string& projectKey) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(),
+                             std::string(ComponentSelect) + " WHERE p.project_key = $1 ORDER BY c.name",
+                             {projectKey}, "List components");
+    std::vector<Domain::ProjectComponent> components;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        components.push_back(readComponent(result.get(), row));
+    }
+    return components;
+}
+
+Domain::ProjectComponent PostgresDatabase::createComponent(const Domain::CreateComponentRequest& request) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin create component transaction");
+    try {
+        const std::string projectId = lookupId(connection.get(), "projects", "project_key", request.projectKey);
+        std::optional<std::string> leadId;
+        if (request.leadEmail.has_value() && !request.leadEmail->empty()) {
+            leadId = lookupId(connection.get(), "users", "email", *request.leadEmail);
+        }
+        std::optional<std::string> defaultAssigneeId;
+        if (request.defaultAssigneeEmail.has_value() && !request.defaultAssigneeEmail->empty()) {
+            defaultAssigneeId = lookupId(connection.get(), "users", "email", *request.defaultAssigneeEmail);
+        }
+
+        auto existing = execParams(connection.get(), "SELECT 1 FROM project_components WHERE project_id = $1 AND name = $2",
+                                   {projectId, request.name}, "Check existing component name");
+        if (PQntuples(existing.get()) != 0) {
+            throw std::invalid_argument("Component name is already in use in this project: " + request.name);
+        }
+
+        const std::string componentId = Common::uuidV4();
+        execParams(connection.get(), R"SQL(
+INSERT INTO project_components(id, project_id, name, description, lead_user_id, default_assignee_user_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL",
+                   {componentId, projectId, request.name, request.description, leadId, defaultAssigneeId},
+                   "Insert component");
+
+        exec(connection.get(), "COMMIT", "Commit create component transaction");
+
+        auto result = execParams(connection.get(), std::string(ComponentSelect) + " WHERE c.id = $1",
+                                 {componentId}, "Read created component");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Created component could not be read back");
+        }
+        return readComponent(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback create component transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+std::optional<Domain::ProjectComponent> PostgresDatabase::findComponentById(const std::string& componentId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), std::string(ComponentSelect) + " WHERE c.id = $1",
+                             {componentId}, "Find component");
+    if (PQntuples(result.get()) != 1) {
+        return std::nullopt;
+    }
+    return readComponent(result.get(), 0);
+}
+
+std::optional<Domain::ProjectComponent> PostgresDatabase::editComponent(const std::string& componentId,
+                                                                          const Domain::EditComponentRequest& request) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin edit component transaction");
+    try {
+        auto existing = execParams(connection.get(), "SELECT project_id FROM project_components WHERE id = $1",
+                                   {componentId}, "Find component for edit");
+        if (PQntuples(existing.get()) != 1) {
+            exec(connection.get(), "ROLLBACK", "Rollback edit component transaction");
+            return std::nullopt;
+        }
+        const std::string projectId = value(existing.get(), 0, 0);
+
+        std::optional<std::string> leadId;
+        if (request.leadEmail.has_value() && !request.leadEmail->empty()) {
+            leadId = lookupId(connection.get(), "users", "email", *request.leadEmail);
+        }
+        std::optional<std::string> defaultAssigneeId;
+        if (request.defaultAssigneeEmail.has_value() && !request.defaultAssigneeEmail->empty()) {
+            defaultAssigneeId = lookupId(connection.get(), "users", "email", *request.defaultAssigneeEmail);
+        }
+
+        auto nameClash = execParams(connection.get(),
+                                    "SELECT 1 FROM project_components WHERE project_id = $1 AND name = $2 AND id <> $3",
+                                    {projectId, request.name, componentId}, "Check component name clash");
+        if (PQntuples(nameClash.get()) != 0) {
+            throw std::invalid_argument("Component name is already in use in this project: " + request.name);
+        }
+
+        execParams(connection.get(), R"SQL(
+UPDATE project_components
+SET name = $1, description = $2, lead_user_id = $3, default_assignee_user_id = $4, updated_at = CURRENT_TIMESTAMP
+WHERE id = $5
+)SQL",
+                   {request.name, request.description, leadId, defaultAssigneeId, componentId},
+                   "Update component");
+
+        exec(connection.get(), "COMMIT", "Commit edit component transaction");
+
+        auto result = execParams(connection.get(), std::string(ComponentSelect) + " WHERE c.id = $1",
+                                 {componentId}, "Read edited component");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Edited component could not be read back");
+        }
+        return readComponent(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback edit component transaction");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool PostgresDatabase::deleteComponent(const std::string& componentId) {
+    auto connection = connect(connectionString_);
+    // No recycle bin (D19 does not call for one, unlike tickets/projects) --
+    // any ticket referencing this component has it cleared via the
+    // component_id column's ON DELETE SET NULL, not rejected or cascaded.
+    auto result = execParams(connection.get(), "DELETE FROM project_components WHERE id = $1",
+                             {componentId}, "Delete component");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
 // --- Ticket tracker ---
 
 std::vector<Domain::Project> PostgresDatabase::listProjects() {
@@ -968,6 +1148,7 @@ WHERE i.deleted_at IS NULL
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
   AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
+  AND ($9::text IS NULL OR comp.name ILIKE $9)
 ORDER BY i.updated_at DESC, i.ticket_key DESC
 LIMIT 200
 )SQL";
@@ -980,7 +1161,8 @@ LIMIT 200
                               filter.assigneeEmail,
                               filter.dueBefore,
                               filter.label,
-                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt},
+                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt,
+                              filter.componentName},
                              "List tickets");
     std::vector<Domain::Ticket> tickets;
     for (int row = 0; row < PQntuples(result.get()); ++row) {
@@ -1004,8 +1186,9 @@ WHERE i.deleted_at IS NULL
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
   AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
+  AND ($9::text IS NULL OR comp.name ILIKE $9)
 ORDER BY i.updated_at DESC, i.ticket_key DESC
-LIMIT $9::int OFFSET $10::int
+LIMIT $10::int OFFSET $11::int
 )SQL";
     auto result = execParams(connection.get(),
                              sql,
@@ -1017,6 +1200,7 @@ LIMIT $9::int OFFSET $10::int
                               filter.dueBefore,
                               filter.label,
                               filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt,
+                              filter.componentName,
                               std::optional<std::string>(std::to_string(limit)),
                               std::optional<std::string>(std::to_string(offset))},
                              "List tickets (paginated)");
@@ -1037,6 +1221,7 @@ JOIN ticket_types it ON it.id = i.ticket_type_id
 JOIN ticket_statuses s ON s.id = i.status_id
 JOIN priorities pr ON pr.id = i.priority_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
+LEFT JOIN project_components comp ON comp.id = i.component_id
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
   AND ($1::text IS NULL OR p.project_key = $1)
@@ -1049,6 +1234,7 @@ WHERE i.deleted_at IS NULL
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
   AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
+  AND ($9::text IS NULL OR comp.name ILIKE $9)
 )SQL";
     auto result = execParams(connection.get(),
                              sql,
@@ -1059,7 +1245,8 @@ WHERE i.deleted_at IS NULL
                               filter.assigneeEmail,
                               filter.dueBefore,
                               filter.label,
-                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt},
+                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt,
+                              filter.componentName},
                              "Count tickets");
     if (PQntuples(result.get()) == 0) {
         return 0;
@@ -1110,6 +1297,10 @@ Domain::Ticket PostgresDatabase::createTicket(const Domain::CreateTicketRequest&
         if (request.parentTicketKey && !request.parentTicketKey->empty()) {
             parentId = lookupTicketId(connection.get(), *request.parentTicketKey);
         }
+        std::optional<std::string> componentId;
+        if (request.componentName && !request.componentName->empty()) {
+            componentId = lookupComponentId(connection.get(), projectId, *request.componentName);
+        }
 
         // Simple integer manual order (D31): new tickets are appended after
         // the highest existing rank within their project. The project row is
@@ -1124,9 +1315,9 @@ Domain::Ticket PostgresDatabase::createTicket(const Domain::CreateTicketRequest&
         execParams(connection.get(), R"SQL(
 INSERT INTO tickets(id, project_id, ticket_number, ticket_key, summary, description,
                    ticket_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
-                   parent_ticket_id, story_points, due_date, rank_order, created_at, updated_at)
+                   parent_ticket_id, story_points, due_date, rank_order, component_id, created_at, updated_at)
 VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
-        $12, $13::double precision, $14::date, $15::bigint, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        $12, $13::double precision, $14::date, $15::bigint, $16, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL",
                    {ticketId,
                     projectId,
@@ -1142,7 +1333,8 @@ VALUES ($1, $2, $3::bigint, $4, $5, $6, $7, $8, $9, $10, $11,
                     parentId,
                     request.storyPoints ? std::optional<std::string>(std::to_string(*request.storyPoints)) : std::nullopt,
                     request.dueDate,
-                    std::to_string(rankOrder)},
+                    std::to_string(rankOrder),
+                    componentId},
                    "Insert ticket");
 
         for (const auto& labelName : request.labels) {
@@ -1298,11 +1490,13 @@ std::optional<Domain::Ticket> PostgresDatabase::editTicket(const std::string& ti
         auto current = execParams(connection.get(), R"SQL(
 SELECT i.id, i.summary, i.description, pr.priority_key, assignee.email,
        i.story_points, i.due_date::text, i.version, it.type_key,
-       (SELECT ticket_key FROM tickets WHERE id = i.parent_ticket_id)
+       (SELECT ticket_key FROM tickets WHERE id = i.parent_ticket_id),
+       i.project_id, comp.name
 FROM tickets i
 JOIN priorities pr ON pr.id = i.priority_id
 JOIN ticket_types it ON it.id = i.ticket_type_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
+LEFT JOIN project_components comp ON comp.id = i.component_id
 WHERE i.deleted_at IS NULL
   AND (i.ticket_key = $1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = $1))
 FOR UPDATE OF i
@@ -1326,6 +1520,8 @@ FOR UPDATE OF i
         const std::int64_t currentVersion = int64Value(current.get(), 0, 7);
         const std::string oldTypeKey = value(current.get(), 0, 8);
         const std::optional<std::string> oldParentKey = optionalValue(current.get(), 0, 9);
+        const std::string projectId = value(current.get(), 0, 10);
+        const std::optional<std::string> oldComponentName = optionalValue(current.get(), 0, 11);
         if (expectedVersion && *expectedVersion != currentVersion) {
             throw Domain::ConcurrencyConflict("Ticket was modified by another user");
         }
@@ -1353,14 +1549,18 @@ FOR UPDATE OF i
         if (request.parentTicketKey && !request.parentTicketKey->empty()) {
             parentId = lookupTicketId(connection.get(), *request.parentTicketKey);
         }
+        std::optional<std::string> componentId;
+        if (request.componentName && !request.componentName->empty()) {
+            componentId = lookupComponentId(connection.get(), projectId, *request.componentName);
+        }
         const std::string actorId = requireUserId(connection.get(), actorUserId);
 
         execParams(connection.get(), R"SQL(
 UPDATE tickets
 SET summary = $1, description = $2, priority_id = $3, assignee_user_id = $4,
     ticket_type_id = $5, parent_ticket_id = $6,
-    story_points = $7::double precision, due_date = $8::date, version = version + 1, updated_at = CURRENT_TIMESTAMP
-WHERE id = $9
+    story_points = $7::double precision, due_date = $8::date, component_id = $9, version = version + 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = $10
 )SQL",
                    {request.summary,
                     request.description,
@@ -1370,6 +1570,7 @@ WHERE id = $9
                     parentId,
                     request.storyPoints ? std::optional<std::string>(std::to_string(*request.storyPoints)) : std::nullopt,
                     request.dueDate,
+                    componentId,
                     ticketId},
                    "Update ticket fields");
 
@@ -1409,6 +1610,7 @@ VALUES ($1, $2, $3, $4, $5, $6)
         recordHistory("due_date", historyText(oldDueDate), historyText(request.dueDate));
         recordHistory("ticket_type", oldTypeKey, request.ticketTypeKey);
         recordHistory("parent", historyText(oldParentKey), historyText(request.parentTicketKey));
+        recordHistory("component", historyText(oldComponentName), historyText(request.componentName));
 
         exec(connection.get(), "COMMIT", "Commit edit ticket transaction");
         auto result = execParams(connection.get(), std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",

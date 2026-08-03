@@ -181,8 +181,9 @@ public:
     bool restoreAttachment(const std::string& attachmentId, const Domain::Principal& actor);
     bool permanentlyDeleteAttachment(const std::string& attachmentId, const Domain::Principal& actor);
 
-    // Simple field-copy clone (D60): summary/description/type/priority/labels
-    // into a new ticket in the same project, plus a `clones`/`is cloned by`
+    // Simple field-copy clone (D60): summary/description/type/priority/
+    // labels/component into a new ticket in the same project, plus a
+    // `clones`/`is cloned by`
     // link back to the original. Assignee, story points, due date, and
     // (except the one structurally-required case below) the parent/Epic link
     // are not copied. Requires project-Member-or-above, same as createTicket.
@@ -266,6 +267,25 @@ public:
                                           const std::string& label,
                                           const Domain::Principal& actor);
     Domain::BulkActionResult bulkDelete(const std::vector<std::string>& ticketKeys, const Domain::Principal& actor);
+
+    // --- Project components (D19, KEEP_FOR_V1) ---
+    // Read access mirrors projects/tickets (any authenticated user, or
+    // anonymous if the installation toggle is on). Create/edit/delete are
+    // project-management actions, so they require project-Admin-or-above,
+    // the same level as archiving/deleting a project -- there is no
+    // separate "component admin" role in the reduced-scope model. edit/
+    // delete are scoped to (projectKey, componentId) together, not just
+    // componentId, the same IDOR-safe pattern used by worklogs/comments/
+    // attachments: a component id belonging to a different project is
+    // treated as not found, never silently acted on.
+    std::vector<Domain::ProjectComponent> listComponents(const std::string& projectKey,
+                                                          const std::optional<Domain::Principal>& actor);
+    Domain::ProjectComponent createComponent(Domain::CreateComponentRequest request, const Domain::Principal& actor);
+    std::optional<Domain::ProjectComponent> editComponent(const std::string& projectKey,
+                                                           const std::string& componentId,
+                                                           Domain::EditComponentRequest request,
+                                                           const Domain::Principal& actor);
+    bool deleteComponent(const std::string& projectKey, const std::string& componentId, const Domain::Principal& actor);
 
     // --- Project lifecycle (Phase 2, D3/D87/D88/D89) ---
     // Creation requires global administrator: there is no project to hold a

@@ -56,6 +56,24 @@ int main() {
     require(!validatePassword("someone@example.com", "someone@example.com", "Someone").empty(),
            "password identical to email is rejected");
 
+    CreateComponentRequest validComponent;
+    validComponent.projectKey = "TH";
+    validComponent.name = "Backend";
+    require(validateCreateComponent(validComponent).empty(), "valid component request");
+
+    CreateComponentRequest invalidComponent;
+    invalidComponent.projectKey = "1";
+    invalidComponent.name = "";
+    require(validateCreateComponent(invalidComponent).size() == 2, "invalid component request reports all expected errors");
+
+    EditComponentRequest validEditComponent;
+    validEditComponent.name = "Frontend";
+    require(validateEditComponent(validEditComponent).empty(), "valid component edit request");
+
+    EditComponentRequest invalidEditComponent;
+    invalidEditComponent.name = "";
+    require(validateEditComponent(invalidEditComponent).size() == 1, "invalid component edit request reports missing name");
+
     CreateUserRequest validUser;
     validUser.email = "new.user@ticket-hub.local";
     validUser.displayName = "New User";

@@ -60,6 +60,10 @@ Current schema migrations:
   PostgreSQL's OID-based dependency tracking needs no special handling at all. The PostgreSQL migration
   additionally renames the auto-generated constraint names (primary keys, unique constraints, foreign
   keys, checks) for full consistency, since a table/column `RENAME` does not rename those on its own.
+- `017_project_components.sql` — post-V1 follow-up, project components (D19, `KEEP_FOR_V1`), the one
+  decided-and-scoped-for-V1 feature that was never actually implemented. Adds `project_components` and
+  `tickets.component_id` (nullable, `ON DELETE SET NULL`). See "`project_components`" below for the full
+  shape.
 
 `002_seed_demo.sql` remains an explicitly invoked, idempotent development seed rather than a schema migration. It now also inserts a dev-only Argon2id password hash (`demo12345`) into `local_credentials` for all three demo users, an explicit `rank_order` (equal to `ticket_number`) for each seeded ticket, (since `010_mentions_and_notifications.sql`, which `seed-demo` always applies first) a `handle` for each of the three demo users, and (since `013_board_columns.sql`) one `board_columns` row per fixed workflow status, with "In Progress" given a demo WIP limit of 3.
 
@@ -248,6 +252,33 @@ it); `moveTicket` now inserts the vacated key here on every move, and it is safe
 - `ticket_labels`: ticket/label composite PK.
 
 Application services trim, lowercase and deduplicate new labels.
+
+### `project_components`
+
+`id`, `project_id`, `name`, `description`, `lead_user_id` nullable, `default_assignee_user_id` nullable,
+`created_at`, `updated_at`; `UNIQUE(project_id, name)` -- migration `017_project_components.sql` (D19,
+`KEEP_FOR_V1`). "Simple project components: name, description, lead, default assignee; at most one per
+ticket" -- already the cheapest reasonable form per the decision text ("small table plus one optional
+ticket field"), kept exactly as originally decided. `tickets.component_id` (nullable, `ON DELETE SET
+NULL`) is that one optional field. No recycle bin/soft-delete columns, unlike tickets/projects/comments --
+D19 does not call for one; `IDatabase::deleteComponent` is a plain hard delete, and any ticket that
+referenced the deleted component simply has `component_id` cleared via the foreign key's `ON DELETE SET
+NULL`, not rejected or cascaded. `IDatabase::createComponent`/`editComponent` resolve `leadEmail`/
+`defaultAssigneeEmail` the same way `createTicket`/`editTicket` resolve `assigneeEmail` -- a human-readable
+identifier in the request, not a raw user id -- and a duplicate `(project_id, name)` throws
+`std::invalid_argument` (the table's own `UNIQUE` constraint). `TicketService::createComponent`/
+`editComponent`/`deleteComponent` require project-Admin-or-above, the same level as archiving/deleting a
+project itself; `listComponents` shares the read-access rule every other project/ticket read uses (any
+authenticated user, or anonymous if the installation toggle is on). `editComponent`/`deleteComponent` are
+scoped to `(projectKey, componentId)` together, not `componentId` alone -- the same IDOR-safe pattern
+`editWorklog`/`deleteAttachment` already established -- so a component id belonging to a different project
+is treated as not found, never silently acted on through the wrong project's URL.
+`TicketService::createTicket`/`editTicket` resolve a `componentName` in the request against the ticket's
+own project's components (`std::invalid_argument` if unknown); `TicketService::cloneTicket` (D60) copies
+the component into the clone, per the original decision text's own "summary/description/type/priority/
+labels/component" list for cloning. `Domain::TicketFilter::componentName` filters ticket lists the same
+way `label` does (case-insensitive match against the ticket's own component name, no cross-project
+ambiguity since a ticket's `component_id` already points at exactly one project's component).
 
 ### Comments
 
