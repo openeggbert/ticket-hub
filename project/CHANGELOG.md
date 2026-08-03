@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Bulk Done-status picker and keyboard multi-select (post-V1)
+
+- **Bulk status changes now support Done-category statuses**: the bulk status picker no longer excludes
+  them, and a resolution picker appears (matching the drawer/board pattern) whenever the selected status
+  requires one. The backend already supported a shared `resolution` in the bulk request; only the UI was
+  missing.
+- **Keyboard-driven multi-select for the issues table**: a "select all" checkbox in the table header;
+  Shift+click a row checkbox to range-select between it and the last-clicked one; Shift+ArrowDown/ArrowUp
+  on a focused checkbox extends the selection one row at a time from the keyboard alone.
+- Both are `web/`-only changes -- no backend, schema, or API changes.
+- Fourth and final item of the optional, non-roadmap follow-up list, picked by explicit user choice.
+
 ## Unreleased — Kanban board drag-and-drop (post-V1)
 
 - **Drag-and-drop card movement** between board columns: dropping a card on a different column applies

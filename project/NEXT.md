@@ -32,6 +32,10 @@ picked by explicit user choice; see "The roadmap is now complete" below for deta
 **Post-V1, batch 3 (done):** drag-and-drop card movement on the Kanban board -- the third optional item,
 again picked by explicit user choice; see "The roadmap is now complete" below for detail.
 
+**Post-V1, batch 4 (done):** the bulk Done-status picker (with a shared resolution prompt) and keyboard-
+driven multi-select for the issues table -- the last two items on the optional-follow-up list, both picked
+together in one go; see "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -688,10 +692,10 @@ left:
 
 1. **Milestones 1-4, i.e. the entire reduced-scope V1 roadmap, are now fully complete** per
    `docs/REDUCED_SCOPE_ROADMAP.md` -- see "The roadmap is now complete" below.
-2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop card movement on
-   the Board view is now done (post-V1 batch 3 -- see "The roadmap is now complete" below); still open: a
-   friendlier bulk-status picker that also supports Done-category statuses by prompting for a shared
-   resolution, and keyboard-driven multi-select.
+2. Optional UX polish that was never part of the write-route coverage goal is now **fully done**:
+   drag-and-drop card movement on the Board view (post-V1 batch 3), the bulk Done-status picker with a
+   shared-resolution prompt, and keyboard-driven multi-select for the issues table (both post-V1 batch 4)
+   -- see "The roadmap is now complete" below.
 3. Re-typing (`issueTypeKey`) and re-parenting (`parentIssueKey`) an issue after creation, previously the
    one item left deliberately unimplemented, is now done (post-V1 batch 2 -- see "The roadmap is now
    complete" below), including a Type/Parent picker in the issue drawer's edit form.
@@ -725,12 +729,11 @@ SQLite-only, and PostgreSQL-only configurations all compile and their test suite
 from the security self-review is either fixed or recorded as an explicit, decision-consistent accepted
 residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 
-What's left is not roadmap work, only optional follow-up if this project continues past V1: a friendlier
-bulk-status picker that also supports Done-category statuses by prompting for a shared resolution, and
-keyboard-driven multi-select (drag-and-drop board reordering is now done -- post-V1 batch 3, below). None
-of this is required to consider V1 complete, and none of it should be started without a fresh, explicit
-product conversation -- the same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all
-along.
+**Every item identified as optional, non-roadmap follow-up when the reduced-scope V1 roadmap closed is now
+done** (post-V1 batches 1-4, below). There is currently no further work queued -- anything beyond this
+point is new scope and, per the same rule that has applied to
+`docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should not be started without a fresh, explicit product
+conversation.
 
 **Post-V1 batch 1 (done):** the user was asked to pick the first piece of optional follow-up and chose a
 web UI for managing personal access tokens and active sessions -- both already had a complete REST API and
@@ -782,6 +785,29 @@ effects, confirmable). Screenshotted in both light and dark mode. Both existing 
 re-run clean. Native HTML5 drag-and-drop has no keyboard equivalent; the drawer's status dropdown remains
 the keyboard-operable path (verified as part of the earlier D47 accessibility pass), so this adds a faster
 mouse-only option rather than replacing the accessible one. Full detail in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 4 (done):** the user was asked to pick the next piece of optional follow-up and chose both
+remaining items together -- the bulk Done-status picker and keyboard-driven multi-select. Bulk status
+changes to a Done-category status previously weren't reachable from the bulk bar at all (the picker
+excluded them client-side, even though the server already accepted and forwarded a shared `resolution` to
+every issue in the batch); fixed by including them in `#bulk-status-select` again and adding a
+`#bulk-resolution-select` that appears exactly when a Done-category status is chosen, mirroring the
+drawer's existing reveal-on-selection pattern. Keyboard multi-select added a "select all" checkbox in the
+issues table header (checked/unchecked/indeterminate tri-state synced to the current selection),
+Shift+click range selection between the last-clicked checkbox and the current one, and Shift+ArrowDown/
+ArrowUp on a focused checkbox to extend a range one row at a time and move focus along with it -- a
+genuinely keyboard-only path the shift-click convention alone doesn't provide. Both changes are entirely
+`web/app.js` -- no backend, schema, or API changes (the bulk-status backend already supported the shared
+resolution; basic single-checkbox keyboard toggling already worked via native `<input type="checkbox">`
+semantics). Browser-verified with Playwright/Chromium: confirmed the resolution picker's reveal/hide
+behavior and that a bulk Done transition applies the same resolution to every selected issue (checked via
+a direct API read afterward); confirmed the header checkbox toggles all/none; confirmed Shift+click checks
+every row in a range, not just the endpoints; confirmed two consecutive Shift+ArrowDown presses from a
+freshly-checked first row grow the selection by one each time with focus moving along; reconfirmed the
+pre-existing "checkbox click never opens the drawer" guard still holds. Screenshotted in both light and
+dark mode. Both existing browser regression scripts re-run clean. This closes out every item on the
+optional-follow-up list identified when the reduced-scope V1 roadmap closed. Full detail in
+`docs/VERIFICATION.md`.
 
 ## Verification status
 

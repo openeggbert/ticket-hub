@@ -74,6 +74,13 @@ remains only as optional, non-roadmap follow-up.
   Browser-verified with Playwright/Chromium (a manual multi-step mouse simulation was needed for reliable
   headless-Chromium HTML5 drag verification, since Playwright's built-in `dragTo()` proved unreliable for
   longer drag distances specifically). The drawer's dropdown remains the keyboard-operable path.
+- **Post-V1, optional follow-up (batch 4, final).** The user was asked to pick the next item and chose
+  both remaining ones: the bulk Done-status picker (the bulk status route already accepted a shared
+  `resolution`; only the UI excluded Done-category statuses) and keyboard-driven multi-select for the
+  issues table (a header select-all checkbox, Shift+click range select, Shift+ArrowDown/ArrowUp keyboard
+  range extension). Both `web/`-only. Browser-verified with Playwright/Chromium in both light and dark
+  mode. **This was the last item on the optional-follow-up list -- there is currently no further queued
+  work.**
 
 ## Implementation rules
 

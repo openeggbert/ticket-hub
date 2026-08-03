@@ -523,7 +523,7 @@ function issueRows(issues, { orderable = false, selectable = false } = {}) {
   }
   return issues.map((issue, index) => `
     <tr data-issue-key="${escapeHtml(issue.key)}">
-      ${selectable ? `<td class="select-column"><input type="checkbox" class="issue-select" value="${escapeHtml(issue.key)}"></td>` : ''}
+      ${selectable ? `<td class="select-column"><input type="checkbox" class="issue-select" value="${escapeHtml(issue.key)}" aria-label="Select ${escapeHtml(issue.key)}"></td>` : ''}
       <td><span class="issue-type" title="${escapeHtml(issue.type.name)}"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)}</span></td>
       <td><span class="issue-key">${escapeHtml(issue.key)}</span></td>
       <td class="issue-summary">${escapeHtml(issue.summary)}</td>
@@ -1022,7 +1022,8 @@ async function renderIssuesView(showingDeleted) {
   const isAdmin = Boolean(state.principal?.isAdmin);
   const projectOptions = state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('');
   const statusOptions = STATUSES.map(status => `<option value="${status.key}" ${status.key === state.status ? 'selected' : ''}>${status.name}</option>`).join('');
-  const bulkStatusOptions = STATUSES.filter(status => status.category !== 'done').map(status => `<option value="${status.key}">${status.name}</option>`).join('');
+  const bulkStatusOptions = STATUSES.map(status => `<option value="${status.key}">${status.name}</option>`).join('');
+  const bulkResolutionOptions = RESOLUTIONS.map(resolution => `<option value="${resolution.key}">${resolution.name}</option>`).join('');
   content.innerHTML = `
     <div class="page-header">
       <div>
@@ -1069,7 +1070,8 @@ async function renderIssuesView(showingDeleted) {
       </div>
       <div class="bulk-bar hidden" id="bulk-bar">
         <span id="bulk-count">0 selected</span>
-        <select id="bulk-status-select" title="Done-category statuses need a resolution and aren't offered here">${bulkStatusOptions}</select>
+        <select id="bulk-status-select">${bulkStatusOptions}</select>
+        <select id="bulk-resolution-select" class="hidden" title="Required to move to a Done-category status">${bulkResolutionOptions}</select>
         <button type="button" class="secondary-button" id="bulk-status-apply">Set status</button>
         <select id="bulk-assignee-select">
           <option value="">Unassigned</option>
@@ -1086,7 +1088,7 @@ async function renderIssuesView(showingDeleted) {
       <div style="overflow-x:auto">
         <table class="issue-table">
           <thead><tr>
-            ${showingDeleted ? '' : '<th class="select-column"></th>'}
+            ${showingDeleted ? '' : `<th class="select-column"><input type="checkbox" id="select-all-issues" aria-label="Select all issues" ${issues.length ? '' : 'disabled'}></th>`}
             <th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th>
             ${showingDeleted ? '<th>Actions</th>' : ''}
             ${orderable ? '<th>Order</th>' : ''}
@@ -1187,18 +1189,58 @@ async function renderIssuesView(showingDeleted) {
   }
 
   const bulkBar = document.querySelector('#bulk-bar');
-  const selectedKeys = () => [...document.querySelectorAll('.issue-select:checked')].map(box => box.value);
+  const checkboxes = [...document.querySelectorAll('.issue-select')];
+  const selectedKeys = () => checkboxes.filter(box => box.checked).map(box => box.value);
+  const selectAllBox = document.querySelector('#select-all-issues');
   const refreshBulkBar = () => {
     const count = selectedKeys().length;
     document.querySelector('#bulk-count').textContent = `${count} selected`;
     bulkBar.classList.toggle('hidden', count === 0);
+    if (selectAllBox) {
+      selectAllBox.checked = checkboxes.length > 0 && count === checkboxes.length;
+      selectAllBox.indeterminate = count > 0 && count < checkboxes.length;
+    }
   };
-  document.querySelectorAll('.issue-select').forEach(box => {
-    box.addEventListener('click', event => event.stopPropagation());
+  // Keyboard/shift-click multi-select: Shift+click a checkbox to check
+  // every row between it and the last-clicked one (the common "range
+  // select" convention); Shift+ArrowDown/ArrowUp does the same from the
+  // keyboard alone, checking the next/previous row and moving focus there
+  // so a range can be built without ever touching the mouse. The header
+  // checkbox selects/clears every visible row (native, so it's already
+  // keyboard-operable via Tab+Space).
+  let lastCheckedIndex = null;
+  checkboxes.forEach((box, index) => {
+    box.addEventListener('click', event => {
+      event.stopPropagation();
+      if (event.shiftKey && lastCheckedIndex !== null) {
+        const [start, end] = [lastCheckedIndex, index].sort((a, b) => a - b);
+        for (let i = start; i <= end; i++) {
+          checkboxes[i].checked = box.checked;
+        }
+      }
+      lastCheckedIndex = index;
+    });
     box.addEventListener('change', refreshBulkBar);
+    box.addEventListener('keydown', event => {
+      if (!event.shiftKey || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+      const nextIndex = event.key === 'ArrowDown' ? index + 1 : index - 1;
+      const nextBox = checkboxes[nextIndex];
+      if (!nextBox) return;
+      event.preventDefault();
+      nextBox.checked = true;
+      nextBox.focus();
+      lastCheckedIndex = nextIndex;
+      refreshBulkBar();
+    });
+  });
+  selectAllBox?.addEventListener('change', () => {
+    checkboxes.forEach(box => { box.checked = selectAllBox.checked; });
+    lastCheckedIndex = null;
+    refreshBulkBar();
   });
   document.querySelector('#bulk-clear')?.addEventListener('click', () => {
     document.querySelectorAll('.issue-select:checked').forEach(box => { box.checked = false; });
+    lastCheckedIndex = null;
     refreshBulkBar();
   });
   const runBulk = async (path, extraPayload, verb) => {
@@ -1210,7 +1252,26 @@ async function renderIssuesView(showingDeleted) {
       await renderIssuesView(false);
     } catch (error) { showToast(error.message); }
   };
-  document.querySelector('#bulk-status-apply')?.addEventListener('click', () => runBulk('/api/v1/issues/bulk/status', { statusKey: document.querySelector('#bulk-status-select').value }, 'Bulk status change'));
+  // Bulk transition to a Done-category status shares the same resolution
+  // across every selected issue (D68-D70) -- the server already supported
+  // this (bulkChangeStatus forwards one shared `resolution` to each issue's
+  // own changeStatus call, same as the drawer/board's single-issue path),
+  // this only adds the picker so it's actually reachable from the bulk bar.
+  const bulkStatusSelect = document.querySelector('#bulk-status-select');
+  const bulkResolutionSelect = document.querySelector('#bulk-resolution-select');
+  const refreshBulkResolutionVisibility = () => {
+    const status = STATUSES.find(candidate => candidate.key === bulkStatusSelect.value);
+    bulkResolutionSelect.classList.toggle('hidden', status?.category !== 'done');
+  };
+  bulkStatusSelect?.addEventListener('change', refreshBulkResolutionVisibility);
+  refreshBulkResolutionVisibility();
+  document.querySelector('#bulk-status-apply')?.addEventListener('click', () => {
+    const statusKey = bulkStatusSelect.value;
+    const status = STATUSES.find(candidate => candidate.key === statusKey);
+    const payload = { statusKey };
+    if (status?.category === 'done') payload.resolution = bulkResolutionSelect.value;
+    runBulk('/api/v1/issues/bulk/status', payload, 'Bulk status change');
+  });
   document.querySelector('#bulk-assign-apply')?.addEventListener('click', () => runBulk('/api/v1/issues/bulk/assign', { assigneeEmail: document.querySelector('#bulk-assignee-select').value || null }, 'Bulk assign'));
   document.querySelector('#bulk-label-apply')?.addEventListener('click', () => {
     const label = document.querySelector('#bulk-label-input').value.trim();
