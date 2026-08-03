@@ -116,6 +116,23 @@ own live-delivery verification: a mixed anonymous/numbered SQLite bind-index mis
 delivery's own id into its `last_error` column instead of the actual error message. See `docs/SCOPE.md`'s
 "Batch 14" entry and the detailed section below for full detail.
 
+**Post-V1, batch 15 (done, 2026-08-03):** REST write idempotency keys (D128, deferred-after-V1) --
+requested from a follow-up menu offered after batch 14 closed the original six-item list; the user picked
+exactly this one item ("pouze 1"). An optional `Idempotency-Key` header on the five POST routes that
+create a new, independently visible resource (ticket, project, comment, worklog, ticket clone) -- a
+retried request with the same key and body replays the original response instead of creating a duplicate;
+the same key reused with a genuinely different body gets a 409, not a silently wrong replay. New
+`idempotency_keys` table (migration `020_idempotency_keys.sql`). The demo web UI's own five equivalent
+forms/buttons now send this header too, and disable their submit control for the duration of the request
+-- the button-disable is what actually stops a literal double-click (a fresh key alone can't, since one is
+minted per handler call), while the key covers the case a double-click guard can't: a successful response
+that never reaches the browser, followed by a manual retry. Found and fixed a real pre-existing bug while
+wiring the frontend: `api()`'s `fetch(path, { headers, ...options })` let `options.headers` silently
+clobber the function's own merged `Content-Type`/`X-CSRF-Token` headers whenever a caller passed one --
+invisible until this batch became the first caller ever to do so, at which point every wired action
+started failing with a spurious 403. See `docs/SCOPE.md`'s "Batch 15" entry and the detailed section below
+for full detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -1366,6 +1383,53 @@ against a fresh SQLite database covered the new admin "Webhooks" screen: creatin
 environment, so the updated `Dockerfile`'s build could not be executed here -- the `libcurl4-openssl-dev`/
 `libcurl4` additions were reviewed by inspection only; a real Docker build should be run once network/daemon
 access is available. Full detail in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 15 (done, 2026-08-03):** REST write idempotency keys (D128, deferred-after-V1) -- offered
+as one item on a follow-up menu after batch 14 closed the original six-item list ("jaka dalsi mozna
+vylepseni?" -- "what other possible improvements?"); the user picked exactly this one ("pouze 1").
+
+- **Scope.** Opt-in per request: only a request that actually carries an `Idempotency-Key` header is ever
+  looked up or cached, every other request is entirely unaffected. Wired into exactly five POST routes that
+  create a new, independently visible resource -- `POST /api/v1/tickets`, `POST /api/v1/projects`,
+  `POST /api/v1/tickets/{key}/comments`, `POST /api/v1/tickets/{key}/worklogs`,
+  `POST /api/v1/tickets/{key}/clone` -- not a generic mechanism applied to every write route: PATCH/DELETE/
+  bulk/status-change routes already converge to the same end state on repeat, so there is no duplicate
+  *record* for a key to prevent there.
+- **Backend.** New `idempotency_keys` table (`PRIMARY KEY (user_id, idempotency_key)`, migration
+  `020_idempotency_keys.sql`) and `IDatabase::findIdempotencyRecord`/`recordIdempotencyResult` on both
+  adapters (the latter deliberately best-effort -- `INSERT OR IGNORE` / `ON CONFLICT DO NOTHING` -- so a
+  narrow concurrent-retry race never surfaces as a 500), with thin `TicketService` pass-throughs. New
+  `Api.cpp` helpers `idempotencyReplay`/`recordIdempotentResult`: a previously-unseen key proceeds normally
+  and its 2xx response is cached afterward (a non-2xx response is never cached, so a corrected retry after
+  a validation failure just runs normally); a key whose cached `request_hash` (SHA-256 of the route path
+  plus the raw body -- not just the body, so the same key reused across two different routes/tickets can
+  never be mistaken for a legitimate retry even if the bodies coincidentally match) matches gets that
+  response replayed (`Idempotency-Replayed: true`); a mismatch gets `409`.
+- **Frontend.** The demo web UI's five equivalent forms/buttons send a fresh `crypto.randomUUID()` via a
+  new `idempotencyHeaders()` helper on every submit, and each submit control is disabled for the duration
+  of its request -- two complementary defenses, not one: the button-disable is what actually stops a
+  literal double-click (the key alone can't, since a fresh one is minted per handler invocation), while the
+  key covers the case a double-click guard can't -- a successful response that never reaches the browser,
+  followed by a manual retry once the control re-enables.
+- **A real pre-existing bug was found and fixed while wiring the frontend**, unrelated to idempotency logic
+  itself: `web/app.js`'s shared `api()` helper built `fetch(path, { headers, ...options })` -- spreading
+  `...options` *after* the carefully-merged `headers` object meant any caller that itself passed an
+  `options.headers` key would silently clobber that merge, dropping `Content-Type`/`X-CSRF-Token` entirely.
+  Invisible until this batch's `idempotencyHeaders()` became the first caller ever to pass one: every wired
+  create action started failing with `403 Missing or invalid CSRF token`. Caught immediately via a live
+  Playwright verification pass (not shipped); fixed by reordering to `fetch(path, { ...options, headers })`.
+
+New test coverage: `tests/sqlite_integration_tests.cpp` covers a lookup miss (`nullopt`), a stored record
+round-tripping its hash/status/body exactly, the same key value used by two different users being unrelated
+records, and the best-effort duplicate-write semantics (a second write for an already-recorded key is
+silently ignored). Verified: full rebuild and `ctest` clean in all three build configurations. Live-verified
+over real HTTP against both a fresh PostgreSQL database and a fresh SQLite database: the happy-path replay
+(identical second response, no duplicate row -- confirmed via both the API and a direct database count),
+the same-key-different-body 409, the cross-route collision defense, the oversized-key 400, and the
+failed-attempts-are-never-cached case. A full Playwright/Chromium browser pass against a fresh SQLite
+database exercised all five wired UI actions end-to-end with no console errors and no duplicate records,
+confirmed the submit-button-disabled behavior, and is what caught the `api()` bug above. Full detail in
+`docs/VERIFICATION.md`.
 
 ## Verification status
 

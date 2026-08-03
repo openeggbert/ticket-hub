@@ -478,6 +478,21 @@ public:
     virtual std::vector<Domain::EmailDelivery> listPendingEmailDeliveries(int limit) = 0;
     virtual void recordEmailDeliveryResult(const std::string& deliveryId, bool success,
                                            const std::optional<std::string>& error) = 0;
+
+    // --- REST write idempotency keys (D128, deferred-after-V1, user-requested) ---
+    // Scoped per (userId, idempotencyKey), not globally -- two different
+    // users coincidentally choosing the same key value never collide. Only
+    // successful (2xx) responses are ever stored (see
+    // TicketService::recordIdempotencyResult); a lookup miss simply means
+    // "proceed normally," not an error. `recordIdempotencyResult` is
+    // best-effort: a duplicate-key write (a narrow concurrent-retry race)
+    // is silently ignored rather than raised, since the caller's real
+    // response has already been computed and returned either way.
+    virtual std::optional<Domain::IdempotencyRecord> findIdempotencyRecord(
+        const std::string& userId, const std::string& idempotencyKey) = 0;
+    virtual void recordIdempotencyResult(const std::string& userId, const std::string& idempotencyKey,
+                                         const std::string& requestHash, int responseStatus,
+                                         const std::string& responseBody) = 0;
 };
 
 } // namespace TicketHub::Infrastructure::Database

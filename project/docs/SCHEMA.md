@@ -581,6 +581,28 @@ credentials are a deliberate, documented exception to "store token/session verif
 signing needs the raw key at send time (unlike a bearer-token comparison), so the secret is stored in
 cleartext the same way the database connection string itself already is.
 
+### `idempotency_keys`
+
+REST write idempotency keys (D128, deferred-after-V1, user-requested) -- migration
+`020_idempotency_keys.sql`. `user_id` (`ON DELETE CASCADE`), `idempotency_key`, `request_hash` (SHA-256 of
+the route path plus the raw request body -- guards against the same key being reused for a genuinely
+different request, or accidentally across two different routes/tickets, which is rejected with 409 rather
+than silently replaying the wrong cached response), `response_status`, `response_body`, `created_at`.
+`PRIMARY KEY (user_id, idempotency_key)` -- scoped per caller, so two different users coincidentally
+choosing the same key value never collide. Only a successful (2xx) response is ever stored (see
+`TicketService::recordIdempotencyResult`'s callers in `src/web/Api.cpp`): a lookup miss simply means
+"proceed normally," not an error. No expiry/purge job in this batch -- V1 has no background job
+infrastructure (`docs/REMOVED_AND_DEFERRED_FEATURES.md` D51) -- rows accumulate for the lifetime of the
+installation, the same posture as `audit_events`.
+
+Wired into exactly five POST routes that create a new, independently visible resource
+(`/api/v1/tickets`, `/api/v1/projects`, `/api/v1/tickets/{key}/comments`, `/api/v1/tickets/{key}/worklogs`,
+`/api/v1/tickets/{key}/clone`), not a generic mechanism applied to every write route -- PATCH/DELETE/
+bulk/status-change routes already converge to the same end state on repeat, so there is no duplicate
+*record* for a key to prevent there. `recordIdempotencyResult` is best-effort (`INSERT OR IGNORE` /
+`ON CONFLICT DO NOTHING`): a narrow concurrent-retry race is silently ignored rather than raised, since the
+caller's actual HTTP response was already computed and returned either way.
+
 ## Current indexes
 
 Indexes cover project/status/assignee/update ticket access, live ticket listing, comment timelines, aliases, label joins, and session lookup/expiry. Full-text indexes are not planned at all for V1 -- search uses a plain `LIKE`/`ILIKE` query (`docs/REDUCED_SCOPE_SPECIFICATION.md` section 10).

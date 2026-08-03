@@ -941,6 +941,35 @@ int main() {
                    "last_error stores the actual failure message, not the delivery's own id");
         }
 
+        // --- REST write idempotency keys (D128, user-requested) ---
+        {
+            require(!database.findIdempotencyRecord(demoUserId, "no-such-key").has_value(),
+                   "a lookup miss returns nullopt, not an error");
+
+            database.recordIdempotencyResult(demoUserId, "key-1", "hash-a", 201, "{\"key\":\"TH-99\"}");
+            const auto stored = database.findIdempotencyRecord(demoUserId, "key-1");
+            require(stored.has_value(), "a stored result is found again by the same (user, key) pair");
+            require(stored->requestHash == "hash-a" && stored->responseStatus == 201
+                        && stored->responseBody == "{\"key\":\"TH-99\"}",
+                   "the stored record round-trips its hash/status/body exactly");
+
+            require(!database.findIdempotencyRecord(alexUserId, "key-1").has_value(),
+                   "the same key value used by a different user is a separate, unrelated record");
+
+            // recordIdempotencyResult is best-effort (INSERT OR IGNORE /
+            // ON CONFLICT DO NOTHING): a second write for an
+            // already-recorded (user, key) pair must not throw, and must
+            // not silently overwrite the first result -- the caller's
+            // actual HTTP response was already computed and returned by
+            // the time this write happens either way, so the *first*
+            // recorded response is the one future replays should see.
+            database.recordIdempotencyResult(demoUserId, "key-1", "hash-b", 500, "should not overwrite");
+            const auto afterSecondWrite = database.findIdempotencyRecord(demoUserId, "key-1");
+            require(afterSecondWrite.has_value() && afterSecondWrite->requestHash == "hash-a"
+                        && afterSecondWrite->responseStatus == 201,
+                   "a duplicate-key write is silently ignored, keeping the original stored result");
+        }
+
         const auto dashboard = database.dashboardStats();
         require(dashboard.totalTickets == 9, "dashboard includes newly created ticket");
         require(!dashboard.recentTickets.empty() && dashboard.recentTickets.front().key == created.key,

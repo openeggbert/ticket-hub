@@ -775,4 +775,15 @@ struct EmailDelivery {
     int attemptCount{};
 };
 
+// --- REST write idempotency keys (D128, deferred-after-V1, user-requested) ---
+// Scoped per (userId, key) -- see IDatabase::findIdempotencyRecord. Only the
+// small set of POST routes proven to risk a duplicate *record* on retry
+// (ticket/project/comment/worklog creation, ticket clone) look these up; see
+// src/web/Api.cpp's idempotencyReplay/recordIdempotentResult.
+struct IdempotencyRecord {
+    std::string requestHash;
+    int responseStatus{};
+    std::string responseBody;
+};
+
 } // namespace TicketHub::Domain

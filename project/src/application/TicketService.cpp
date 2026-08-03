@@ -1240,6 +1240,17 @@ bool TicketService::deleteWebhookSubscription(const std::string& subscriptionId,
     return database_->deleteWebhookSubscription(subscriptionId);
 }
 
+std::optional<Domain::IdempotencyRecord> TicketService::findIdempotencyRecord(
+    const std::string& userId, const std::string& idempotencyKey) {
+    return database_->findIdempotencyRecord(userId, idempotencyKey);
+}
+
+void TicketService::recordIdempotencyResult(const std::string& userId, const std::string& idempotencyKey,
+                                            const std::string& requestHash, const int responseStatus,
+                                            const std::string& responseBody) {
+    database_->recordIdempotencyResult(userId, idempotencyKey, requestHash, responseStatus, responseBody);
+}
+
 namespace {
 // A minimal, self-contained JSON string builder -- TicketService has no
 // crow::json dependency (that's the web layer's, src/web/Api.cpp), and the

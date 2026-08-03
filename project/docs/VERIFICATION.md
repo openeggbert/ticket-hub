@@ -1,5 +1,126 @@
 # Verification record
 
+## 2026-08-03 — REST write idempotency keys (D128), user-requested, deferred-after-V1
+
+Requested from a follow-up menu offered after the webhooks/email batch closed the original six-item list
+("jaka dalsi mozna vylepseni?" -- "what other possible improvements?"); the user picked exactly this one
+item ("pouze 1" -- "only 1"). See `docs/SCOPE.md`'s "Batch 15" entry for the exact scope rationale.
+
+### What changed
+
+- **Schema.** New `idempotency_keys` (`user_id` `ON DELETE CASCADE`, `idempotency_key`, `request_hash`,
+  `response_status`, `response_body`, `created_at`; `PRIMARY KEY (user_id, idempotency_key)`) table,
+  migration `020_idempotency_keys.sql` in both `migrations/sqlite/` and `migrations/postgresql/`.
+- **Backend.** `Domain::IdempotencyRecord`. New `IDatabase::findIdempotencyRecord`/
+  `recordIdempotencyResult` on both `SqliteDatabase` and `PostgresDatabase` -- `recordIdempotencyResult`
+  uses `INSERT OR IGNORE` (SQLite) / `ON CONFLICT (user_id, idempotency_key) DO NOTHING` (PostgreSQL)
+  rather than a plain `INSERT`, so a narrow concurrent-retry race (two requests carrying the same key
+  arriving before either has stored its result) never surfaces as a 500 -- the caller's own response was
+  already computed and returned either way. Thin `TicketService::findIdempotencyRecord`/
+  `recordIdempotencyResult` pass-throughs, deliberately with no project/global-admin gating (scoped to the
+  caller's own userId by construction; the underlying action already enforces its own authorization before
+  either is ever called).
+- **API.** New `src/web/Api.cpp` helpers, both in the file's anonymous namespace:
+  - `idempotencyReplay(service, principal, request)` returns a response the route should return
+    immediately (a cached replay or a `409` conflict) or `std::nullopt` ("proceed normally"). An absent
+    header is the common case (`nullopt` immediately, zero database round-trip). An oversized header
+    (>200 chars) is rejected with `400`. Otherwise it hashes `request.url + "\n" + request.body` via
+    `Common::sha256Hex` and looks up `(principal.userId, key)`: a miss means proceed; a hit whose stored
+    hash matches returns the cached response verbatim (`Idempotency-Replayed: true` header added); a hit
+    whose stored hash differs returns `409`.
+  - `recordIdempotentResult(service, principal, request, response)` stores the response after a route's
+    normal logic completes, but only when the header was present *and* the response is 2xx -- a failed
+    attempt (validation error, forbidden, etc.) leaves no side effect to protect against, so caching it
+    would incorrectly block a legitimate corrected retry with the same key.
+  - Wired into `POST /api/v1/tickets`, `POST /api/v1/projects`, `POST /api/v1/tickets/{key}/comments`,
+    `POST /api/v1/tickets/{key}/worklogs`, and `POST /api/v1/tickets/{key}/clone` -- each route calls
+    `idempotencyReplay` right after its existing body-size check (before parsing JSON) and
+    `recordIdempotentResult` right after building its success response, immediately before returning it.
+  - Hashing the route path together with the body (not just the body) is a deliberate defense-in-depth
+    choice beyond what D128's own text strictly requires: without it, the same key value accidentally
+    reused across two different routes (or the same route against two different tickets, e.g. two
+    `POST /api/v1/tickets/{key}/comments` calls with an identical comment body on different tickets) with
+    coincidentally-identical bodies could theoretically be mistaken for a legitimate retry. With the path
+    included, any such reuse always produces a hash mismatch and a `409`, never a nonsensical cross-
+    resource replay.
+- **Frontend.** New `idempotencyHeaders()` helper in `web/app.js` (`{ 'Idempotency-Key': crypto.randomUUID()
+  }`), called fresh on every submit from the five equivalent UI actions (create-ticket, create-project,
+  add-comment, log-time, clone-ticket). Each action's submit button/control is now also disabled for the
+  duration of its request (re-enabled in a `finally`/`catch` block on failure; left disabled through a
+  success path that immediately re-renders and discards the old button element anyway).
+
+### Errors and fixes
+
+A real, pre-existing bug was found and fixed while wiring the frontend, unrelated to idempotency logic
+itself. `web/app.js`'s shared `api()` helper built its `fetch` call as:
+
+```js
+const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+// ... CSRF token added to `headers` here ...
+const response = await fetch(path, { headers, ...options });
+```
+
+Spreading `...options` *after* `headers` meant that if `options` itself carried its own `headers` key, that
+key would silently overwrite the `headers` property already set on the object literal (later keys win in
+object literal construction) -- discarding the carefully-merged `Content-Type: application/json` and
+`X-CSRF-Token` headers entirely and falling back to whatever bare `options.headers` contained. Before this
+batch, **no caller had ever passed `options.headers`** (grep-confirmed across every existing `api(...)`
+call site), so `options.headers` was always `undefined` and spreading it added/overwrote nothing --
+the bug was entirely latent. This batch's `idempotencyHeaders()` became the first caller ever to pass an
+explicit `headers` key, immediately triggering it: every wired create action's request went out with
+`Content-Type: text/plain;charset=UTF-8` (the browser's fetch default when no Content-Type is set) and no
+`X-CSRF-Token` header at all, and the server correctly rejected every one with `403 Missing or invalid CSRF
+token`.
+
+Caught immediately via a live Playwright verification pass (inspecting actual outgoing request headers),
+before any of this could be considered shipped. Fixed by reordering the spread:
+
+```js
+const response = await fetch(path, { ...options, headers });
+```
+
+so the function's own merged `headers` always wins over anything (or nothing) `options` itself might
+supply. Re-verified with the same Playwright script: the POST now carries the correct
+`Content-Type: application/json` and `X-CSRF-Token` headers, and returns `201` as expected.
+
+### How it was verified
+
+- Full rebuild and `ctest --output-on-failure` clean (8/8) in all three build configurations (default,
+  SQLite-only, PostgreSQL-only).
+- `tests/sqlite_integration_tests.cpp` gained direct `IDatabase` coverage: a lookup miss returns `nullopt`
+  (not an error); a stored record is found again by the same `(user, key)` pair and round-trips its
+  hash/status/body exactly; the same key value used by a different user is a separate, unrelated record
+  (confirming the composite-primary-key scoping); a second `recordIdempotencyResult` call for an
+  already-recorded key is silently ignored rather than throwing or overwriting the original stored result
+  (confirming the `INSERT OR IGNORE` best-effort semantics).
+- **Live end-to-end, PostgreSQL.** Started PostgreSQL 16 locally against a fresh database and the real
+  compiled server over `curl`: sent the same `POST /api/v1/tickets` request twice with an identical
+  `Idempotency-Key` and body -- the second response was byte-identical to the first (same ticket `id`/
+  `key`) with an added `Idempotency-Replayed: true` header, and a follow-up ticket list confirmed exactly
+  one `TH-7` existed, not two. Reused the same key with a different `summary` -- got `409` with the
+  expected message. Reused the same key on a *different* route
+  (`POST /api/v1/tickets/TH-1/comments`) -- also correctly got `409` (the cross-route collision defense
+  working as designed), not a nonsensical comment-as-ticket replay. Sent a request with no `summary` (a
+  validation failure) under a fresh key -- got `400`; retried with the same key and a corrected body --
+  got a genuine `201`, not a `409`, confirming failed attempts are never cached. Sent a request with a
+  201-character `Idempotency-Key` -- got `400` ("exceeds the maximum length"). Directly inspected the
+  `idempotency_keys` table afterward: exactly two rows (the two successful attempts), confirming the failed
+  400 attempt was correctly never persisted.
+- **Live end-to-end, SQLite.** Repeated the worklog-creation and ticket-clone cases against a fresh SQLite
+  database over real HTTP: two identical `POST .../worklogs` requests with the same key produced
+  byte-identical responses and left exactly one row in `worklogs`; two identical
+  `POST .../clone` requests likewise produced byte-identical responses and left exactly one new ticket in
+  the database (9 total: 8 seed + 1 clone, not 10).
+- **Browser verification (Playwright/Chromium)**, against a fresh SQLite database: logged in, created a
+  ticket via the real create-ticket modal, added a comment, logged time, and cloned the ticket -- all four
+  actions succeeded with no console errors, the comment-form's submit button was confirmed re-enabled after
+  its request completed, and a direct database check afterward showed exactly the expected row counts (one
+  new ticket, one new comment beyond the two seeded ones, one worklog, one clone -- no duplicates) and
+  exactly five `idempotency_keys` rows, one per successful action. This same verification pass, on its
+  first run (before the `api()` fix above), is what caught the `403`/spread-order bug -- the second and
+  third exploratory runs against the raw network layer (inspecting `req.headers()`/`postData()` directly)
+  pinpointed the exact missing `Content-Type`/`X-CSRF-Token` headers that led to the root cause.
+
 ## 2026-08-03 — Outbound webhooks (D39/D41) and outbound email (D52), user-requested, deferred-after-V1
 
 Requested directly by the user as items 11 and 12 off the same menu of possible new functionality as the

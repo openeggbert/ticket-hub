@@ -203,6 +203,12 @@ public:
     void recordEmailDeliveryResult(const std::string& deliveryId, bool success,
                                    const std::optional<std::string>& error) override;
 
+    std::optional<Domain::IdempotencyRecord> findIdempotencyRecord(
+        const std::string& userId, const std::string& idempotencyKey) override;
+    void recordIdempotencyResult(const std::string& userId, const std::string& idempotencyKey,
+                                 const std::string& requestHash, int responseStatus,
+                                 const std::string& responseBody) override;
+
 private:
     sqlite3* database_{};
     std::string migrationsDirectory_;

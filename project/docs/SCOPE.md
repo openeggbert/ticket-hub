@@ -582,6 +582,68 @@ remain as the long-term aspirational baseline only — do not build against them
   Playwright/Chromium browser pass against a fresh SQLite database covered the new admin "Webhooks" screen:
   creating a subscription (secret-once banner), the subscription list, and delete. See
   `docs/VERIFICATION.md`.
+- **Batch 15 (done): REST write idempotency keys (D128, deferred-after-V1)** -- requested from a follow-up
+  menu offered after Batch 14 closed out the original six-item list ("napis mi seznam moznych novych
+  funkcionalit a ja se rozhodnu" again; the user picked exactly this one item, "pouze 1"). An optional
+  `Idempotency-Key` request header, opt-in per request: only a request that actually carries the header is
+  ever looked up or cached, every other request is entirely unaffected. Scoped to the five POST routes
+  proven to risk a duplicate *record* on client retry -- `POST /api/v1/tickets`, `POST /api/v1/projects`,
+  `POST /api/v1/tickets/{key}/comments`, `POST /api/v1/tickets/{key}/worklogs`,
+  `POST /api/v1/tickets/{key}/clone` -- not a generic mechanism applied to every write route: PATCH/DELETE/
+  bulk/status-change routes already converge to the same end state on repeat, so there is no duplicate
+  *record* for a key to prevent there.
+  - **Backend.** New `idempotency_keys` table (migration `020_idempotency_keys.sql`, `PRIMARY KEY (user_id,
+    idempotency_key)` -- scoped per caller, so two different users coincidentally choosing the same key
+    value never collide) and `IDatabase::findIdempotencyRecord`/`recordIdempotencyResult` on both adapters,
+    with thin `TicketService` pass-throughs (no project/global-admin gating needed -- scoped to the caller's
+    own userId by construction, and the underlying action already enforces its own authorization before
+    either is ever called). `recordIdempotencyResult` is deliberately best-effort (`INSERT OR IGNORE` /
+    `ON CONFLICT DO NOTHING`): a narrow concurrent-retry race (two requests carrying the same key arriving
+    before either has stored its result) is silently ignored rather than raised, since the caller's actual
+    response was already computed and returned either way. New `Api.cpp` helpers `idempotencyReplay`/
+    `recordIdempotentResult`, wired into each of the five routes: a request carrying a previously-unseen key
+    proceeds normally and its 2xx response is cached afterward (a non-2xx response is never cached -- if the
+    original attempt failed validation, no side effect happened, so a retry with the same key should simply
+    run normally, not replay a cached error forever); a request whose key already has a cached record with a
+    *matching* SHA-256 hash of `route path + "\n" + request body` gets that cached response replayed
+    (`Idempotency-Replayed: true` header added); a mismatched hash (the same key reused for a genuinely
+    different request, or accidentally reused across two different routes/tickets) gets `409`, never a
+    nonsensical replay -- hashing the route path together with the body (not just the body) is what makes
+    that last case safe even when two different routes' bodies coincidentally match.
+  - **Frontend.** The demo web UI's own five equivalent forms/buttons (create-ticket, create-project,
+    add-comment, add-worklog, clone-ticket) send a fresh `crypto.randomUUID()` as the header on every
+    submit via a new `idempotencyHeaders()` helper, and each submit control is disabled for the duration of
+    its request -- the two defenses are complementary, not redundant: disabling the button is what actually
+    stops a literal double-click from firing two requests in the first place (the idempotency key can't
+    prevent that on its own, since a fresh key is minted per handler invocation), while the key is what
+    protects the case a double-click guard can't cover -- a successful response that never reaches the
+    browser (dropped connection, closed tab) followed by the user manually retrying once the control is
+    re-enabled.
+  - **A real pre-existing bug was found and fixed while wiring the frontend**, unrelated to idempotency
+    logic itself: `api()`'s `fetch(path, { headers, ...options })` call spread `...options` *after*
+    `headers`, so any caller that itself passed an `options.headers` key would have that silently clobber
+    the function's own carefully-merged `Content-Type`/`X-CSRF-Token` headers -- invisible until this
+    batch's `idempotencyHeaders()` became the first caller ever to pass one, at which point every wired
+    create action returned `403 Missing or invalid CSRF token` (caught immediately via a live browser
+    verification pass, not shipped). Fixed by reordering to `fetch(path, { ...options, headers })`, so the
+    function's own merged `headers` always wins.
+
+  New test coverage: `tests/sqlite_integration_tests.cpp` covers a lookup miss (`nullopt`, not an error), a
+  stored record round-tripping its hash/status/body exactly, the same key value used by two different users
+  being unrelated records, and `recordIdempotencyResult`'s best-effort duplicate-write semantics (a second
+  write for an already-recorded key is silently ignored, keeping the original stored result rather than
+  overwriting it). Verified: full rebuild and `ctest` clean in all three build configurations. Live-verified
+  over real HTTP against both a fresh PostgreSQL database and a fresh SQLite database: the happy-path replay
+  (identical second response, `Idempotency-Replayed: true`, no duplicate row created -- confirmed via both
+  the API list and a direct database row count), the same-key-different-body `409`, the cross-route
+  collision defense (the same key reused on a different route also correctly `409`s rather than replaying
+  the wrong resource), the oversized-key `400`, and the "failed attempt is never cached, so a corrected
+  retry with the same key just succeeds" case -- confirmed via the raw `idempotency_keys` table only ever
+  containing the two *successful* attempts, never the intermediate `400`. A full Playwright/Chromium browser
+  pass against a fresh SQLite database exercised all five wired UI actions (create ticket, create project,
+  add comment, log time, clone) end-to-end with no console errors and no duplicate records, confirmed the
+  submit-button-disabled-during-request behavior, and is what caught the `api()` spread-order bug above
+  before it could ship. See `docs/VERIFICATION.md`.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 

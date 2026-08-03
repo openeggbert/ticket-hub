@@ -537,6 +537,19 @@ function getCookie(name) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+// REST write idempotency keys (D128, deferred-after-V1, user-requested): a
+// fresh key generated once per user-initiated submit (not stored/reused
+// across separate submits) means the classic double-click-the-Create-button
+// or flaky-connection-triggers-a-retry scenario replays the first attempt's
+// response instead of creating a second ticket/comment/worklog/clone. Wired
+// only into the handful of routes the server actually recognizes this
+// header on (see idempotencyReplay in src/web/Api.cpp) -- sending it
+// anywhere else would simply be ignored, so this stays a small, targeted
+// addition rather than a change to the shared api() helper itself.
+function idempotencyHeaders() {
+  return { 'Idempotency-Key': crypto.randomUUID() };
+}
+
 async function api(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
@@ -544,7 +557,13 @@ async function api(path, options = {}) {
     const csrfToken = getCookie('th_csrf');
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   }
-  const response = await fetch(path, { headers, ...options });
+  // `headers` must be spread AFTER `...options`, not before: `options` can
+  // legitimately carry its own `headers` key (e.g. idempotencyHeaders()),
+  // and an earlier `{ headers, ...options }` ordering let that key silently
+  // clobber this function's own merged Content-Type/X-CSRF-Token headers
+  // whenever a caller passed one -- invisible until the first caller
+  // actually did (see idempotencyHeaders() below).
+  const response = await fetch(path, { ...options, headers });
   if (response.status === 401 && path !== '/api/v1/auth/login' && path !== '/api/v1/auth/me') {
     showLoginScreen();
     throw new Error('Your session expired. Please sign in again.');
@@ -2938,13 +2957,18 @@ async function openTicket(ticketKey, editing = false) {
           await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       });
-      document.querySelector('#clone-ticket').addEventListener('click', async () => {
+      document.querySelector('#clone-ticket').addEventListener('click', async event => {
+        const button = event.currentTarget;
+        button.disabled = true;
         try {
-          const cloned = await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/clone`, { method: 'POST' });
+          const cloned = await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/clone`, { method: 'POST', headers: idempotencyHeaders() });
           showToast(`${ticket.key} cloned as ${cloned.key}`);
           await renderCurrentView();
           await openTicket(cloned.key);
-        } catch (error) { showToast(error.message); }
+        } catch (error) {
+          showToast(error.message);
+          button.disabled = false;
+        }
       });
       document.querySelector('#delete-ticket')?.addEventListener('click', async () => {
         try {
@@ -2996,20 +3020,27 @@ async function openTicket(ticketKey, editing = false) {
       attachMentionAutocomplete(document.querySelector('#worklog-form textarea[name=comment]'));
       document.querySelector('#worklog-form').addEventListener('submit', async event => {
         event.preventDefault();
-        const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+        const form = event.currentTarget;
+        const values = Object.fromEntries(new FormData(form).entries());
         const timeSpentSeconds = parseDurationToSeconds(values.duration);
         if (!timeSpentSeconds) {
           showToast('Duration must look like "1h 30m", "2h", or "45m"');
           return;
         }
+        const submitButton = form.querySelector('button[type=submit]');
+        if (submitButton) submitButton.disabled = true;
         try {
           await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/worklogs`, {
             method: 'POST',
+            headers: idempotencyHeaders(),
             body: JSON.stringify({ workDate: values.workDate, timeSpentSeconds, comment: values.comment.trim() || null })
           });
           showToast('Time logged');
           await openTicket(ticket.key);
-        } catch (error) { showToast(error.message); }
+        } catch (error) {
+          showToast(error.message);
+          if (submitButton) submitButton.disabled = false;
+        }
       });
       document.querySelectorAll('[data-delete-worklog]').forEach(button => button.addEventListener('click', async () => {
         try {
@@ -3090,13 +3121,19 @@ async function openTicket(ticketKey, editing = false) {
       attachMentionAutocomplete(document.querySelector('#comment-form textarea[name=body]'));
       document.querySelector('#comment-form').addEventListener('submit', async event => {
         event.preventDefault();
-        const body = new FormData(event.currentTarget).get('body').trim();
+        const form = event.currentTarget;
+        const body = new FormData(form).get('body').trim();
         if (!body) return;
+        const submitButton = form.querySelector('button[type=submit]');
+        if (submitButton) submitButton.disabled = true;
         try {
-          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/comments`, { method: 'POST', headers: idempotencyHeaders(), body: JSON.stringify({ body }) });
           showToast('Comment added');
           await openTicket(ticket.key);
-        } catch (error) { showToast(error.message); }
+        } catch (error) {
+          showToast(error.message);
+          if (submitButton) submitButton.disabled = false;
+        }
       });
       document.querySelectorAll('[data-delete-comment]').forEach(button => button.addEventListener('click', async () => {
         try {
@@ -3474,8 +3511,19 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
     customFieldValues: collectCustomFieldValues(form, createModalCustomFields)
   };
   const errorElement = document.querySelector('#create-error');
+  // Disabling the submit button for the duration of the request is the
+  // primary defense against a literal double-click firing two submissions
+  // (it blocks the second click outright, before a second request is even
+  // sent); the Idempotency-Key header above is the complementary defense
+  // for the case a double-click guard can't cover -- the response to a
+  // successful request never reaches the browser (dropped connection,
+  // closed tab) and the user manually retries once the button is enabled
+  // again, in which case the server replays the first attempt's response
+  // instead of creating a second ticket.
+  const submitButton = form.querySelector('button[type=submit]');
+  if (submitButton) submitButton.disabled = true;
   try {
-    const created = await api('/api/v1/tickets', { method: 'POST', body: JSON.stringify(payload) });
+    const created = await api('/api/v1/tickets', { method: 'POST', headers: idempotencyHeaders(), body: JSON.stringify(payload) });
     state.selectedProject = created.projectKey;
     form.reset();
     closeCreateModal();
@@ -3485,6 +3533,8 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
   } catch (error) {
     errorElement.textContent = error.message;
     errorElement.classList.remove('hidden');
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 });
 
@@ -3498,8 +3548,10 @@ document.querySelector('#project-form').addEventListener('submit', async event =
     description: values.description.trim()
   };
   const errorElement = document.querySelector('#project-error');
+  const submitButton = form.querySelector('button[type=submit]');
+  if (submitButton) submitButton.disabled = true;
   try {
-    const created = await api('/api/v1/projects', { method: 'POST', body: JSON.stringify(payload) });
+    const created = await api('/api/v1/projects', { method: 'POST', headers: idempotencyHeaders(), body: JSON.stringify(payload) });
     form.reset();
     closeProjectModal();
     showToast(`${created.key} created`);
@@ -3508,6 +3560,8 @@ document.querySelector('#project-form').addEventListener('submit', async event =
   } catch (error) {
     errorElement.textContent = error.message;
     errorElement.classList.remove('hidden');
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 });
 
