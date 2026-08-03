@@ -684,6 +684,44 @@ int main() {
                    "and rank order now disagree)");
         }
 
+        // --- Retroactively confirming a resolution on a ticket that reached
+        // Done without one (found while giving the ticket drawer a more
+        // Jira-like layout: the resolution-confirm UI is reachable whenever
+        // a ticket is Done-category with no resolution, regardless of
+        // whether the requested status equals the current one -- but
+        // changeTicketStatus's same-status guard used to always no-op,
+        // silently dropping the resolution). Unreachable through the normal
+        // API (which requires a resolution for any real transition into
+        // Done), but can happen with historical/imported data. ---
+        {
+            CreateTicketRequest doneRequest;
+            doneRequest.projectKey = "TH";
+            doneRequest.summary = "Ticket for retroactive resolution test";
+            const auto doneTicket = database.createTicket(doneRequest, demoUserId);
+            executeSql(databasePath,
+                       "UPDATE tickets SET status_id = (SELECT id FROM ticket_statuses WHERE status_key = 'done') "
+                       "WHERE id = '" + doneTicket.id + "'");
+            const auto beforeConfirm = database.findTicketByKey(doneTicket.key);
+            require(beforeConfirm.has_value() && beforeConfirm->status.key == "done" && !beforeConfirm->resolution.has_value(),
+                   "the ticket is now Done with no resolution, the state this fix targets");
+
+            require(database.changeTicketStatus(doneTicket.key, "done", demoUserId, std::string("fixed"), beforeConfirm->version),
+                   "a same-status call with a resolution succeeds instead of silently no-opping");
+            const auto afterConfirm = database.findTicketByKey(doneTicket.key);
+            require(afterConfirm.has_value() && afterConfirm->resolution.has_value() && *afterConfirm->resolution == "fixed",
+                   "the resolution is actually persisted");
+            require(afterConfirm->version == beforeConfirm->version + 1,
+                   "the optimistic-lock version is incremented, same as any other status-endpoint write");
+
+            require(database.changeTicketStatus(doneTicket.key, "done", demoUserId, std::string("wont-fix"), afterConfirm->version),
+                   "a same-status call is still accepted (no-op) once a resolution already exists");
+            const auto afterNoop = database.findTicketByKey(doneTicket.key);
+            require(afterNoop.has_value() && afterNoop->resolution.has_value() && *afterNoop->resolution == "fixed",
+                   "the existing resolution is NOT overwritten by a same-status no-op call");
+            require(afterNoop->version == afterConfirm->version,
+                   "a genuine no-op does not increment the version");
+        }
+
         bool reorderCrossProjectRejected = false;
         try {
             database.reorderTicket("TH-1", std::string("WEB-1"));

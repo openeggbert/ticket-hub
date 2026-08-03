@@ -336,6 +336,49 @@ remain as the long-term aspirational baseline only — do not build against them
   on both the Tickets and Backlog tables and absent on the Dashboard's compact widgets, the worklog field
   being a textarea with a Markdown toolbar, and a submitted worklog rendering **bold** text and a bullet
   list as real HTML rather than literal Markdown syntax). See `docs/VERIFICATION.md`.
+- **Batch 10 (done): ticket detail drawer restyled to look more like Jira** -- a pure UI/layout change
+  (no API/schema changes) requested directly by the user ("prosim at je layout detailu ticketu vice
+  podobny jire" -- "please make the ticket detail layout more similar to Jira"). The status select moved
+  out of the sidebar into a prominent, colored pill-button (`.status-pill`, reusing the existing todo/
+  in_progress/done category colors from `.status-chip`) right under the title, with the resolution
+  picker/confirm flow inline next to it instead of buried in a `meta-row`. The sidebar became two
+  bordered "Details" and "Dates" panel cards (Assignee/Reporter/Priority/Labels/Component/Story points/
+  Due date/Parent/Move-to-project, then Created/Updated separately, mirroring Jira's own panel split).
+  Comments and Work log became tabs in a single "Activity" section (`.activity-tabs`, one panel each,
+  toggled by a new `activeActivityTab` module-level variable so the choice survives a full drawer
+  re-fetch -- e.g. logging time keeps the Work log tab active so the new entry is visible immediately
+  without an extra click) instead of two always-visible stacked sections; each panel's add-form now sits
+  above its list, matching Jira's comment-box-at-top convention. "Links" was relabeled "Linked issues".
+  Every existing interactive behavior (watch/vote/clone/edit/delete, status change, resolution confirm/
+  cancel, links, attachments, comments including edit/delete/reactions, worklogs, move-to-project) kept
+  its exact same element `id`s/`data-*` attributes and event wiring -- only the surrounding markup and
+  CSS moved, so no JavaScript logic needed to change for any of them, only the new tab-switching handler.
+  Two real bugs were found and fixed during this batch's own browser verification: (1) a pre-existing
+  backend bug in `changeTicketStatus` (both adapters) -- confirming a resolution while the requested
+  status equals the ticket's current status (e.g. a ticket that is already Done-category but has no
+  resolution recorded, which can happen with historical/imported data) hit a same-status no-op guard that
+  silently discarded the resolution and the whole request, even though the UI's resolution-confirm flow
+  is legitimately reachable in exactly that state; fixed by narrowing the no-op guard to skip only when
+  there is truly nothing to change, so a same-status call is still applied when it's newly supplying a
+  resolution that was missing. This bug pre-dates this batch (the interactive resolution flow existed
+  identically in the old sidebar-buried layout) but became more likely to be hit once the redesign made
+  it more prominent, so it was fixed as part of this batch rather than left in a newly-showcased control.
+  (2) A CSS regression introduced by this batch itself: `.resolution-inline { display: flex; }` overrides
+  the browser's default `[hidden] { display: none }` rule (same selector specificity, later in the
+  cascade), so the resolution picker was showing even for non-Done statuses until a `.resolution-inline
+  [hidden] { display: none; }` override was added.
+  New test coverage: `tests/sqlite_integration_tests.cpp` covers the resolution no-op-guard fix directly
+  (forces a ticket into Done with no resolution via raw SQL, since the normal API can't produce that
+  state; confirms a same-status call with a resolution now persists it and bumps the version; confirms a
+  further same-status call once a resolution already exists remains a true no-op, neither overwriting the
+  resolution nor bumping the version). Verified: full rebuild and `ctest` clean in all three build
+  configurations; the resolution-confirm fix live-verified over real HTTP against both a fresh PostgreSQL
+  database and a fresh SQLite database; a full Playwright/Chromium browser pass (20/20 checks) covering
+  the pill/toolbar/sidebar-panel structure, both activity tabs (including that logging time keeps the
+  Work log tab active and the new entry's Markdown renders), and every pre-existing action (watch/edit/
+  status-change/resolution-confirm) still working through the restyled markup; new screenshots for all
+  three status-category pill colors and dark mode confirmed the `[hidden]` CSS fix. README's ticket-detail
+  screenshot regenerated. See `docs/VERIFICATION.md`.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
