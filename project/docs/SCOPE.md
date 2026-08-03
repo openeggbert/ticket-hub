@@ -288,6 +288,54 @@ remain as the long-term aspirational baseline only — do not build against them
   database via `curl` (preferences round-trip, project/ticket key rename and alias resolution, 409
   conflict response); browser-verified end-to-end with Playwright/Chromium against a fresh SQLite database
   (all 5 behaviors, 13/13 checks). See `docs/VERIFICATION.md`.
+- **Batch 9 (done): a dedicated Backlog screen, Markdown-supported worklogs, and Created/Updated columns**
+  -- three user-requested changes in one pass:
+  - **Backlog gets its own screen, amending D32.** D32 ("one board column equals one workflow status")
+    originally put Backlog on the board like every other status; the user pointed out a project's backlog
+    can grow far past what a Kanban column usefully displays, so Backlog is removed from the board (now 4
+    columns: Confirmed, In Progress, In Review, Done) and gets a new dedicated, paginated "Backlog" screen
+    instead (`web/app.js` `renderBacklog`, new nav item between Board and Tickets). Unlike every other list
+    in this app -- which all still rely on the fixed 200-row cap -- this screen uses real server-side
+    pagination (`page`/`pageSize`, the existing D126 contract) since backlog size is explicitly unbounded
+    by design. Ordered by a new `sort=rank` query parameter (`Domain::TicketFilter::sortByRank`, both
+    adapters' `listTickets` overloads switch their `ORDER BY` from `updated_at DESC` to `rank_order,
+    ticket_number` when set) so "page 1" is always the top of the backlog by priority, not an arbitrary
+    recency-based cut -- the manual reorder arrows (D31) work exactly as they already do on the Tickets
+    view, just always enabled here since the screen is always scoped to one project. The Board's own
+    ticket fetch changed too: instead of one unfiltered `fetchTickets()` call, `fetchBoardTickets()` issues
+    one request per board status, so the board's fixed page-size budget is spent entirely on statuses it
+    actually renders instead of possibly being consumed by backlog rows that would never appear on it
+    anyway (a real, if narrower-than-advertised, correctness problem the old single-fetch approach had
+    once a project's backlog grew past ~200 tickets). "Board"/"Backlog" shortcut buttons link the two
+    screens both ways.
+  - **Worklogs are Markdown-supported, not forced single-line.** The "what did you work on" field was a
+    plain single-line `<input>`, rendered with `escapeHtml` into inline text -- the backend already allowed
+    up to 10,000 characters with no single-line restriction (`Domain::validateAddWorklog`), so this was a
+    pure frontend gap. Changed to a `<textarea>` with the exact same Markdown toolbar (`attachMarkdownToolbar`)
+    and @mention autocomplete already used for comments and the description field, rendered through
+    `renderMarkdown` into a `.markdown-body` block instead of an inline escaped span.
+  - **Created/Updated columns on every ticket table.** The ticket detail drawer already showed both (`ticket.
+    createdAt` via `formatDate`, `ticket.updatedAt` via `relativeDate`) but neither ticket *list* did.
+    `ticketRows` (shared by the Tickets view and the new Backlog screen) gained both columns, behind a new
+    `showTimestamps` option defaulting to `true`; the Dashboard's compact "Assigned to me"/"Watching"/
+    "Recently active" widgets (`tablePanel`) explicitly opt out (`showTimestamps: false`) to stay terse,
+    matching their own "focused overview" framing.
+
+  No backend schema change -- `sort=rank` is a new, backward-compatible query parameter (existing callers
+  that never send it get the exact same `updated_at DESC` order they always did); `created_at`/`updated_at`
+  were already returned by every ticket JSON response, just not rendered in list views. New test coverage:
+  `tests/sqlite_integration_tests.cpp` asserts `sortByRank` orders both the unpaginated and paginated
+  `listTickets` overloads by `rank_order`/`ticket_number`, and that omitting it keeps the pre-existing
+  `updated_at`-based order. Verified: full rebuild and `ctest` clean in all three build configurations; a
+  fresh live PostgreSQL database exercised over HTTP (`status=selected` on the board-status endpoint
+  excludes backlog tickets; `sort=rank` paginated backlog listing returns the lowest-rank ticket first; a
+  multi-line, Markdown-syntax worklog comment round-trips byte-for-byte); a full Playwright/Chromium
+  browser pass against a fresh SQLite database seeded with 60+ backlog tickets (19/19 checks: no Backlog
+  column on the board, Backlog/Board shortcut buttons both directions, correct page-1/page-2 row counts and
+  Previous/Next button disabled states, reorder arrows changing row order, Created/Updated columns present
+  on both the Tickets and Backlog tables and absent on the Dashboard's compact widgets, the worklog field
+  being a textarea with a Markdown toolbar, and a submitted worklog rendering **bold** text and a bullet
+  list as real HTML rather than literal Markdown syntax). See `docs/VERIFICATION.md`.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 

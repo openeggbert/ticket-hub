@@ -1303,7 +1303,7 @@ WHERE i.deleted_at IS NULL
        OR LOWER(i.ticket_key) LIKE LOWER(?8))
   AND (?9 IS NULL OR LOWER(comp.name) = LOWER(?9))
 GROUP BY i.id
-ORDER BY i.updated_at DESC, i.ticket_key DESC
+)SQL" + (filter.sortByRank ? "ORDER BY i.rank_order, i.ticket_number\n" : "ORDER BY i.updated_at DESC, i.ticket_key DESC\n") + R"SQL(
 LIMIT 200
 )SQL";
     Statement statement(database_, sql);
@@ -1342,7 +1342,7 @@ WHERE i.deleted_at IS NULL
        OR LOWER(i.ticket_key) LIKE LOWER(?8))
   AND (?9 IS NULL OR LOWER(comp.name) = LOWER(?9))
 GROUP BY i.id
-ORDER BY i.updated_at DESC, i.ticket_key DESC
+)SQL" + (filter.sortByRank ? "ORDER BY i.rank_order, i.ticket_number\n" : "ORDER BY i.updated_at DESC, i.ticket_key DESC\n") + R"SQL(
 LIMIT ?10 OFFSET ?11
 )SQL";
     Statement statement(database_, sql);

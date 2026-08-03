@@ -14,11 +14,11 @@ visible.
 | | |
 |---|---|
 | **Login** ![Login screen](docs/screenshots/01-login.png) | **Dashboard** ![Dashboard](docs/screenshots/02-dashboard.png) |
-| **Board** ![Kanban board](docs/screenshots/03-board.png) | **Tickets** ![Tickets list with filters](docs/screenshots/04-tickets.png) |
-| **Ticket detail** ![Ticket detail drawer](docs/screenshots/05-ticket-detail.png) | **New ticket** ![Create ticket modal](docs/screenshots/06-new-ticket-modal.png) |
-| **Projects** ![Projects](docs/screenshots/07-projects.png) | **Account** ![Account preferences, tokens, and sessions](docs/screenshots/08-account.png) |
-| **Audit log** ![Audit log](docs/screenshots/09-audit-log.png) | **Attachment recycle bin** ![Attachment recycle bin](docs/screenshots/10-attachment-recycle-bin.png) |
-| **Dashboard (dark mode)** ![Dashboard in dark mode](docs/screenshots/11-dashboard-dark.png) | |
+| **Board** ![Kanban board](docs/screenshots/03-board.png) | **Backlog** ![Backlog screen](docs/screenshots/12-backlog.png) |
+| **Tickets** ![Tickets list with filters](docs/screenshots/04-tickets.png) | **Ticket detail** ![Ticket detail drawer, with a Markdown worklog entry](docs/screenshots/05-ticket-detail.png) |
+| **New ticket** ![Create ticket modal](docs/screenshots/06-new-ticket-modal.png) | **Projects** ![Projects](docs/screenshots/07-projects.png) |
+| **Account** ![Account preferences, tokens, and sessions](docs/screenshots/08-account.png) | **Audit log** ![Audit log](docs/screenshots/09-audit-log.png) |
+| **Attachment recycle bin** ![Attachment recycle bin](docs/screenshots/10-attachment-recycle-bin.png) | **Dashboard (dark mode)** ![Dashboard in dark mode](docs/screenshots/11-dashboard-dark.png) |
 
 ## Project status
 
@@ -36,8 +36,11 @@ Since then: Jira-style `/browse/{key}` direct ticket links with full browser his
 recently, five V1-decided features a full decision-register audit found were never actually implemented —
 Markdown checklist rendering (D62), a "No Epic" ticket filter (D66), a conflict dialog on a stale
 optimistic-lock save (D129), self-service timezone/clock-format preferences (D45), and changing an active
-project's key (D91). See `NEXT.md`'s "The roadmap is now complete" section for the exact closing detail
-and `docs/VERIFICATION.md` for exactly what was tested and how.
+project's key (D91); and, most recently, a dedicated paginated Backlog screen amending D32 (a project's
+backlog can grow past what a Kanban column usefully holds, so it's off the board and on its own screen),
+Markdown-supported worklogs (no longer forced single-line), and Created/Updated columns on every ticket
+list. See `NEXT.md`'s "The roadmap is now complete" section for the exact closing detail and
+`docs/VERIFICATION.md` for exactly what was tested and how.
 
 Implemented now:
 
@@ -81,6 +84,13 @@ Implemented now:
 - **a "No Epic" ticket filter** (D66): client-side-only, matching D10's ad-hoc-filter convention,
 - **a conflict dialog on a stale save** (D129): a 409 from a ticket edit now offers "Reload latest
   version" instead of a generic error toast,
+- **a dedicated, paginated Backlog screen** (amends D32): Backlog is off the board (now 4 columns) and has
+  its own screen with real server-side pagination, ordered by manual rank (`sort=rank`) so priority order
+  survives paging -- a project's backlog is explicitly unbounded, unlike every other list in this app,
+- **Markdown-supported worklogs**: the "what did you work on" field is a Markdown textarea (toolbar,
+  @mention autocomplete, live preview) rendered as real HTML, not a plain single-line input,
+- **Created/Updated columns** on every ticket list table (Tickets, Backlog), matching what the ticket
+  detail drawer already showed,
 - **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
   both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
@@ -320,8 +330,12 @@ versioning; not specified by any decision text, a conservative choice documented
 response envelope is `{"items": [...], "page", "pageSize", "totalItems", "totalPages"}`; a caller that
 sends neither parameter gets exactly the same result set the route always returned (the pre-existing,
 previously undocumented 200-row cap this fixes the silent-truncation transparency of), now with an
-honest `totalItems` so a caller can tell whether more rows exist. No other list endpoint is paginated yet
--- this is a deliberate, documented partial rollout of D126, not full coverage. Every JSON request body
+honest `totalItems` so a caller can tell whether more rows exist. `GET /api/v1/tickets` also accepts an
+optional `sort=rank` parameter: when present, results are ordered by the same manual `rank_order` the
+reorder arrows write to (D31) instead of the default `updated_at DESC` -- used by the web client's Backlog
+screen so a paginated, priority-ordered backlog listing is possible; omitting it keeps every existing
+caller's behavior unchanged. No other list endpoint is paginated yet -- this is a deliberate, documented
+partial rollout of D126, not full coverage. Every JSON request body
 is capped at 1 MiB (`413` if exceeded) and every bulk-action `ticketKeys` array is capped at 200 items
 (`400` if exceeded) -- fixed constants, no admin configuration, per D125. PAT authentication (D39/D40) is
 already live: every
@@ -374,7 +388,7 @@ trip; there is no admin configuration for either limit.
 | `PUT` | `/api/v1/settings/anonymous-read` | session + CSRF, global admin | `{enabled}` |
 | `GET` | `/api/v1/settings/latest-known-version` | session, global admin | `{currentVersion, latestKnownVersion, updateAvailable}` (D112) |
 | `PUT` | `/api/v1/settings/latest-known-version` | session + CSRF, global admin | `{version}` -- sets what the admin banner compares against |
-| `GET` | `/api/v1/tickets` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `component`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126) |
+| `GET` | `/api/v1/tickets` | session, or anon if enabled | filter by `project`, `status`, `type`, `priority`, `assignee`, `label`, `component`, `dueBefore`, `q` (ad-hoc only, D10/D43; `q` also matches description); paginated via `page`/`pageSize` (D126); `sort=rank` orders by manual rank instead of `updated_at DESC` |
 | `GET` | `/api/v1/tickets/export.csv` | session, or anon if enabled | read-only CSV export of tickets (D48), same filters as above |
 | `POST` | `/api/v1/tickets` | session + CSRF, project member | create ticket (`assigneeEmail`, `parentTicketKey`, `componentName`) |
 | `GET` | `/api/v1/tickets/{key}` | session, or anon if enabled | current key or permanent alias |
