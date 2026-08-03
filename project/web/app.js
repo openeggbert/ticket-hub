@@ -63,6 +63,11 @@ function initialState() {
     // derivable from data already on hand once tickets are fetched.
     filterEpic: '',
     filterDueBefore: '',
+    // Backlog screen (page-based, D126): reset to 1 whenever the selected
+    // project or a filter changes, left as-is across an internal re-render
+    // (e.g. after a reorder) so the user's position in a large backlog
+    // survives their own actions.
+    backlogPage: 1,
     currentTicket: null,
     principal: null,
     // Cached user directory (D80) -- powers @mention autocomplete. Fetched
@@ -616,8 +621,8 @@ function labelsMarkup(labels = []) {
 // list, since reorderTicket's `beforeTicketKey` anchor must be in the same
 // project as the ticket being moved. `selectable` adds a checkbox column for
 // bulk actions (D36).
-function ticketRows(tickets, { orderable = false, selectable = false } = {}) {
-  const extraColumns = (orderable ? 1 : 0) + (selectable ? 1 : 0);
+function ticketRows(tickets, { orderable = false, selectable = false, showTimestamps = true } = {}) {
+  const extraColumns = (orderable ? 1 : 0) + (selectable ? 1 : 0) + (showTimestamps ? 2 : 0);
   if (!tickets.length) {
     return `<tr><td colspan="${6 + extraColumns}"><div class="empty-state"><strong>No tickets found</strong>Adjust the filters or create a new ticket.</div></td></tr>`;
   }
@@ -630,6 +635,8 @@ function ticketRows(tickets, { orderable = false, selectable = false } = {}) {
       <td>${statusChip(ticket)}</td>
       <td>${priorityChip(ticket)}</td>
       <td>${assigneeMarkup(ticket)}</td>
+      ${showTimestamps ? `<td class="ticket-timestamp">${escapeHtml(formatDate(ticket.createdAt))}</td>
+      <td class="ticket-timestamp" title="${escapeHtml(ticket.updatedAt)}">${escapeHtml(relativeDate(ticket.updatedAt))}</td>` : ''}
       ${orderable ? `<td class="order-cell">
         <button type="button" class="icon-button" data-move-up="${escapeHtml(ticket.key)}" ${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
         <button type="button" class="icon-button" data-move-down="${escapeHtml(ticket.key)}" ${index === tickets.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
@@ -660,7 +667,7 @@ function tablePanel(tickets, title = 'Tickets') {
       <div style="overflow-x:auto">
         <table class="ticket-table">
           <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th></tr></thead>
-          <tbody>${ticketRows(tickets)}</tbody>
+          <tbody>${ticketRows(tickets, { showTimestamps: false })}</tbody>
         </table>
       </div>
     </div>`;
@@ -1247,6 +1254,7 @@ async function renderTicketsView(showingDeleted) {
           <thead><tr>
             ${showingDeleted ? '' : `<th class="select-column"><input type="checkbox" id="select-all-tickets" aria-label="Select all tickets" ${tickets.length ? '' : 'disabled'}></th>`}
             <th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th>
+            ${showingDeleted ? '' : '<th>Created</th><th>Updated</th>'}
             ${showingDeleted ? '<th>Actions</th>' : ''}
             ${orderable ? '<th>Order</th>' : ''}
           </tr></thead>
@@ -1450,6 +1458,25 @@ async function renderTicketsView(showingDeleted) {
   bindTicketLinks();
 }
 
+// Board columns exclude Backlog (product amendment, user-requested): a
+// project's backlog can grow far past what a Kanban column can usefully
+// display, so it gets its own paginated screen (renderBacklog) instead of
+// competing for board space. Fetching per-status below (rather than one
+// unfiltered fetchTickets() call) means the board's own fixed page-size
+// budget is spent entirely on the statuses it actually renders, instead of
+// possibly being consumed by backlog rows that would never appear on the
+// board anyway.
+const BOARD_STATUSES = STATUSES.filter(status => status.key !== 'backlog');
+
+async function fetchBoardTickets() {
+  const results = await Promise.all(BOARD_STATUSES.map(status => {
+    const params = ticketFilterParams();
+    params.set('status', status.key);
+    return api(`/api/v1/tickets?${params}`);
+  }));
+  state.tickets = results.flatMap(result => result.items);
+}
+
 async function renderBoard() {
   state.selectedProject ||= state.projects[0]?.key || null;
   state.search = '';
@@ -1462,10 +1489,10 @@ async function renderBoard() {
   state.filterEpic = '';
   state.filterDueBefore = '';
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  const [, boardColumns] = await Promise.all([fetchTickets(), api('/api/v1/board-columns')]);
+  const [, boardColumns] = await Promise.all([fetchBoardTickets(), api('/api/v1/board-columns')]);
   const isAdmin = Boolean(state.principal?.isAdmin);
   const selected = state.projects.find(project => project.key === state.selectedProject);
-  const columns = STATUSES.map(status => {
+  const columns = BOARD_STATUSES.map(status => {
     const tickets = state.tickets.filter(ticket => ticket.status.key === status.key);
     // Kanban WIP limits (D32/D33): a single flat, installation-wide limit
     // per fixed workflow status -- soft and display-time-only, an
@@ -1503,10 +1530,14 @@ async function renderBoard() {
 
   content.innerHTML = `
     <div class="page-header">
-      <div><span class="eyebrow">${escapeHtml(state.selectedProject || 'Project')}</span><h1>${escapeHtml(selected?.name || 'Board')}</h1><p>Simple status-based Kanban board.${isAdmin ? ' Soft WIP limits are installation-wide and apply to every project’s board.' : ''}</p></div>
-      <div class="page-actions"><select id="board-project" class="status-select">${state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('')}</select></div>
+      <div><span class="eyebrow">${escapeHtml(state.selectedProject || 'Project')}</span><h1>${escapeHtml(selected?.name || 'Board')}</h1><p>Simple status-based Kanban board. Backlog tickets live on their own screen.${isAdmin ? ' Soft WIP limits are installation-wide and apply to every project’s board.' : ''}</p></div>
+      <div class="page-actions">
+        <button type="button" class="secondary-button" id="board-view-backlog">☰ Backlog</button>
+        <select id="board-project" class="status-select">${state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('')}</select>
+      </div>
     </div>
     <div class="board">${columns}</div>`;
+  document.querySelector('#board-view-backlog').addEventListener('click', () => navigate('backlog'));
   document.querySelector('#board-project').addEventListener('change', event => {
     state.selectedProject = event.target.value;
     renderBoard().catch(showError);
@@ -1523,6 +1554,177 @@ async function renderBoard() {
     } catch (error) { showToast(error.message); }
   }));
   bindBoardDragAndDrop();
+  bindTicketLinks();
+}
+
+const BacklogPageSize = 50;
+
+// Dedicated Backlog screen (product amendment, user-requested): a project's
+// backlog is where everything not yet actively worked ends up, so unlike
+// every other list in this app it has no natural upper bound -- putting it
+// in its own Kanban column (as D32's "one column per status" originally
+// specified) breaks down once that column can hold thousands of tickets.
+// This screen is real server-side pagination (page/pageSize, same
+// contract as D126) rather than the fixed-200-row cap every other list in
+// this app still relies on, ordered by the same manual rank (`sort=rank`)
+// the reorder arrows already write to via `reorderTicket` -- so "page 1" is
+// always the top of the backlog by priority, not an arbitrary recency-based
+// cut. Always scoped to exactly one project (like the Board), since rank
+// order and the reorder arrows are only meaningful within one project.
+async function renderBacklog() {
+  state.selectedProject ||= state.projects[0]?.key || null;
+  content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  const selected = state.projects.find(project => project.key === state.selectedProject);
+
+  if (!state.selectedProject) {
+    content.innerHTML = `
+      <div class="page-header"><div><span class="eyebrow">Backlog</span><h1>Backlog</h1><p>Prioritize the work not yet ready for the board.</p></div></div>
+      <div class="empty-state">Create a project first.</div>`;
+    return;
+  }
+
+  const params = ticketFilterParams();
+  params.set('status', 'backlog');
+  params.set('sort', 'rank');
+  params.set('page', String(state.backlogPage));
+  params.set('pageSize', String(BacklogPageSize));
+  let page;
+  try {
+    page = await api(`/api/v1/tickets?${params}`);
+  } catch (error) {
+    showError(error);
+    return;
+  }
+  const tickets = page.items;
+  const totalPages = Math.max(page.totalPages, 1);
+
+  content.innerHTML = `
+    <div class="page-header">
+      <div><span class="eyebrow">${escapeHtml(state.selectedProject)}</span><h1>${escapeHtml(selected?.name || 'Backlog')} backlog</h1><p>Prioritize the work not yet ready for the board. Use the arrows to set priority order.</p></div>
+      <div class="page-actions">
+        <button type="button" class="secondary-button" id="backlog-view-board">▦ Board</button>
+        <select id="backlog-project" class="status-select">${state.projects.map(project => `<option value="${escapeHtml(project.key)}" ${project.key === state.selectedProject ? 'selected' : ''}>${escapeHtml(project.key)} — ${escapeHtml(project.name)}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="filter-bar">
+        <select id="backlog-type-filter">
+          <option value="">All types</option>
+          <option value="epic" ${state.filterType === 'epic' ? 'selected' : ''}>Epic</option>
+          <option value="story" ${state.filterType === 'story' ? 'selected' : ''}>Story</option>
+          <option value="task" ${state.filterType === 'task' ? 'selected' : ''}>Task</option>
+          <option value="bug" ${state.filterType === 'bug' ? 'selected' : ''}>Bug</option>
+          <option value="sub-task" ${state.filterType === 'sub-task' ? 'selected' : ''}>Sub-task</option>
+        </select>
+        <select id="backlog-priority-filter">
+          <option value="">All priorities</option>
+          <option value="highest" ${state.filterPriority === 'highest' ? 'selected' : ''}>Highest</option>
+          <option value="high" ${state.filterPriority === 'high' ? 'selected' : ''}>High</option>
+          <option value="medium" ${state.filterPriority === 'medium' ? 'selected' : ''}>Medium</option>
+          <option value="low" ${state.filterPriority === 'low' ? 'selected' : ''}>Low</option>
+          <option value="lowest" ${state.filterPriority === 'lowest' ? 'selected' : ''}>Lowest</option>
+        </select>
+        <select id="backlog-assignee-filter">
+          <option value="">Any assignee</option>
+          <option value="demo@ticket-hub.local" ${state.filterAssignee === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
+          <option value="alex@ticket-hub.local" ${state.filterAssignee === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
+          <option value="sam@ticket-hub.local" ${state.filterAssignee === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
+        </select>
+        <input id="backlog-label-filter" value="${escapeHtml(state.filterLabel)}" placeholder="Label" style="width:110px">
+        <input id="backlog-component-filter" value="${escapeHtml(state.filterComponent)}" placeholder="Component" style="width:110px">
+        <input id="backlog-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key, summary, or description">
+        <button class="secondary-button" id="backlog-clear-filters">Clear</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="ticket-table">
+          <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th><th>Created</th><th>Updated</th><th>Order</th></tr></thead>
+          <tbody>${ticketRows(tickets, { orderable: true, selectable: false })}</tbody>
+        </table>
+      </div>
+      <div class="pagination-bar">
+        <span>${page.totalItems} backlog ticket${page.totalItems === 1 ? '' : 's'} — page ${page.page} of ${totalPages}</span>
+        <div>
+          <button type="button" class="secondary-button" id="backlog-prev" ${page.page <= 1 ? 'disabled' : ''}>← Previous</button>
+          <button type="button" class="secondary-button" id="backlog-next" ${page.page >= totalPages ? 'disabled' : ''}>Next →</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.querySelector('#backlog-view-board').addEventListener('click', () => navigate('board'));
+  document.querySelector('#backlog-project').addEventListener('change', event => {
+    state.selectedProject = event.target.value;
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  });
+  document.querySelector('#backlog-type-filter').addEventListener('change', event => {
+    state.filterType = event.target.value;
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  });
+  document.querySelector('#backlog-priority-filter').addEventListener('change', event => {
+    state.filterPriority = event.target.value;
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  });
+  document.querySelector('#backlog-assignee-filter').addEventListener('change', event => {
+    state.filterAssignee = event.target.value;
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  });
+  document.querySelector('#backlog-label-filter').addEventListener('input', debounce(event => {
+    state.filterLabel = event.target.value.trim();
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  }, 300));
+  document.querySelector('#backlog-component-filter').addEventListener('input', debounce(event => {
+    state.filterComponent = event.target.value.trim();
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  }, 300));
+  document.querySelector('#backlog-search-filter').addEventListener('input', debounce(event => {
+    state.search = event.target.value.trim();
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  }, 300));
+  document.querySelector('#backlog-clear-filters').addEventListener('click', () => {
+    state.filterType = '';
+    state.filterPriority = '';
+    state.filterAssignee = '';
+    state.filterLabel = '';
+    state.filterComponent = '';
+    state.search = '';
+    state.backlogPage = 1;
+    renderBacklog().catch(showError);
+  });
+  document.querySelector('#backlog-prev').addEventListener('click', () => {
+    state.backlogPage = Math.max(1, state.backlogPage - 1);
+    renderBacklog().catch(showError);
+  });
+  document.querySelector('#backlog-next').addEventListener('click', () => {
+    state.backlogPage = state.backlogPage + 1;
+    renderBacklog().catch(showError);
+  });
+  document.querySelectorAll('[data-move-up]').forEach(button => button.addEventListener('click', async event => {
+    event.stopPropagation();
+    const key = button.dataset.moveUp;
+    const index = tickets.findIndex(candidate => candidate.key === key);
+    if (index <= 0) return;
+    try {
+      await api(`/api/v1/tickets/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeTicketKey: tickets[index - 1].key }) });
+      await renderBacklog();
+    } catch (error) { showToast(error.message); }
+  }));
+  document.querySelectorAll('[data-move-down]').forEach(button => button.addEventListener('click', async event => {
+    event.stopPropagation();
+    const key = button.dataset.moveDown;
+    const index = tickets.findIndex(candidate => candidate.key === key);
+    if (index === -1 || index >= tickets.length - 1) return;
+    const beforeTicketKey = index + 2 < tickets.length ? tickets[index + 2].key : null;
+    try {
+      await api(`/api/v1/tickets/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeTicketKey }) });
+      await renderBacklog();
+    } catch (error) { showToast(error.message); }
+  }));
   bindTicketLinks();
 }
 
@@ -1970,6 +2172,7 @@ async function renderCurrentView() {
   try {
     if (state.view === 'dashboard') await renderDashboard();
     else if (state.view === 'board') await renderBoard();
+    else if (state.view === 'backlog') await renderBacklog();
     else if (state.view === 'tickets') await renderTickets();
     else if (state.view === 'account') await renderAccountView();
     else if (state.view === 'audit') await renderAuditLog();
@@ -2152,14 +2355,14 @@ async function openTicket(ticketKey, editing = false) {
                     <span class="small-avatar">${escapeHtml(initials(worklog.author.displayName))}</span>
                     <div class="worklog-details">
                       <span><strong>${escapeHtml(formatDuration(worklog.timeSpentSeconds))}</strong> by ${escapeHtml(worklog.author.displayName)} on ${escapeHtml(formatDate(worklog.workDate))}</span>
-                      ${worklog.comment ? `<span class="worklog-comment">${escapeHtml(worklog.comment)}</span>` : ''}
+                      ${worklog.comment ? `<div class="worklog-comment markdown-body">${renderMarkdown(worklog.comment)}</div>` : ''}
                     </div>
                     <button type="button" class="icon-button" data-delete-worklog="${escapeHtml(worklog.id)}" aria-label="Delete worklog">×</button>
                   </div>`).join('') : '<div class="empty-state">No time logged yet.</div>'}</div>
                 <form class="worklog-form" id="worklog-form">
                   <input name="workDate" type="date" required value="${new Date().toISOString().slice(0, 10)}">
                   <input name="duration" placeholder="e.g. 1h 30m" required pattern="^(\\d+h)?\\s*(\\d+m)?$">
-                  <input name="comment" placeholder="What did you work on? (optional)">
+                  <textarea name="comment" rows="2" placeholder="What did you work on? (optional, Markdown supported)"></textarea>
                   <button class="secondary-button" type="submit">Log time</button>
                 </form>
               </section>
@@ -2351,6 +2554,8 @@ async function openTicket(ticketKey, editing = false) {
         document.querySelector('#drawer-status').value = ticket.status.key;
         document.querySelector('#drawer-resolution-row').hidden = true;
       });
+      attachMarkdownToolbar(document.querySelector('#worklog-form textarea[name=comment]'), ticket.key);
+      attachMentionAutocomplete(document.querySelector('#worklog-form textarea[name=comment]'));
       document.querySelector('#worklog-form').addEventListener('submit', async event => {
         event.preventDefault();
         const values = Object.fromEntries(new FormData(event.currentTarget).entries());
@@ -2362,7 +2567,7 @@ async function openTicket(ticketKey, editing = false) {
         try {
           await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/worklogs`, {
             method: 'POST',
-            body: JSON.stringify({ workDate: values.workDate, timeSpentSeconds, comment: values.comment || null })
+            body: JSON.stringify({ workDate: values.workDate, timeSpentSeconds, comment: values.comment.trim() || null })
           });
           showToast('Time logged');
           await openTicket(ticket.key);

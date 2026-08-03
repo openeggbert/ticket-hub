@@ -199,6 +199,7 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .ticket-table tbody tr:hover { background: var(--surface-hover); }
 .ticket-key { color: var(--primary); font-weight: 700; white-space: nowrap; }
 .ticket-summary { min-width: 260px; font-weight: 600; }
+.ticket-timestamp { white-space: nowrap; color: var(--muted); font-size: 12px; }
 .ticket-type { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .status-chip, .priority-chip, .label-chip {
   display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
@@ -220,6 +221,9 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .ticket-table th.select-column, .ticket-table td.select-column { width: 1%; padding-right: 0; }
 .order-cell { white-space: nowrap; }
 .order-cell .icon-button { width: 24px; height: 24px; font-size: 14px; }
+.pagination-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-secondary); }
+.pagination-bar .secondary-button { padding: 6px 12px; font-size: 12px; }
+.pagination-bar .secondary-button:disabled { opacity: .5; cursor: not-allowed; }
 .order-cell .icon-button:disabled { opacity: .3; cursor: default; }
 
 .board { display: grid; grid-template-columns: repeat(5, minmax(250px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 10px; }

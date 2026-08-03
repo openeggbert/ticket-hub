@@ -654,6 +654,36 @@ int main() {
         require(th3AfterEnd->rankOrder > th7AfterEnd->rankOrder,
                "reordering with no anchor appends the ticket to the end of its project");
 
+        // --- Backlog screen ordering (`sort=rank`): listTickets sorts by
+        // rank_order/ticket_number instead of the default updated_at DESC
+        // when TicketFilter::sortByRank is set, in both the unpaginated and
+        // paginated overloads. ---
+        {
+            TicketFilter rankFilter;
+            rankFilter.projectKey = "TH";
+            rankFilter.sortByRank = true;
+            const auto rankOrdered = database.listTickets(rankFilter);
+            require(std::is_sorted(rankOrdered.begin(), rankOrdered.end(),
+                                   [](const auto& a, const auto& b) { return a.rankOrder < b.rankOrder; }),
+                   "sortByRank orders listTickets by rank_order instead of updated_at");
+            require(!rankOrdered.empty() && rankOrdered.back().key == "TH-3",
+                   "TH-3 (reordered to the end above) sorts last by rank");
+
+            const auto rankOrderedPaged = database.listTickets(rankFilter, 200, 0);
+            require(std::is_sorted(rankOrderedPaged.begin(), rankOrderedPaged.end(),
+                                   [](const auto& a, const auto& b) { return a.rankOrder < b.rankOrder; }),
+                   "sortByRank also orders the paginated listTickets overload by rank_order");
+
+            TicketFilter defaultOrderFilter;
+            defaultOrderFilter.projectKey = "TH";
+            const auto defaultOrdered = database.listTickets(defaultOrderFilter);
+            require(!std::is_sorted(defaultOrdered.begin(), defaultOrdered.end(),
+                                    [](const auto& a, const auto& b) { return a.rankOrder < b.rankOrder; }),
+                   "without sortByRank, listTickets does not happen to already be in rank order "
+                   "(TH-3 was just reordered to the end above, so the default updated_at-based order "
+                   "and rank order now disagree)");
+        }
+
         bool reorderCrossProjectRejected = false;
         try {
             database.reorderTicket("TH-1", std::string("WEB-1"));

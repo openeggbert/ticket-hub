@@ -462,6 +462,14 @@ struct TicketFilter {
     std::optional<std::string> componentName;
     std::optional<std::string> dueBefore;
     std::optional<std::string> search;
+    // Backlog screen (D31/D32 amendment): order by the same manual
+    // `rank_order` the reorder arrows already write to, instead of the
+    // default `updated_at DESC` -- so a paginated, filtered backlog listing
+    // shows tickets in actual priority order rather than an arbitrary
+    // recency-based page cut. Meaningless across multiple projects (rank is
+    // per-project), so the web client only ever sends this alongside a
+    // single `projectKey`.
+    bool sortByRank = false;
 };
 
 // Numbered/offset pagination (D126); "no cursor mechanism." `pageSize` is

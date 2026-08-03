@@ -451,6 +451,7 @@ Domain::TicketFilter ticketFilterFromQuery(const crow::request& request) {
     filter.componentName = queryParameter(request, "component");
     filter.dueBefore = queryParameter(request, "dueBefore");
     filter.search = queryParameter(request, "q");
+    filter.sortByRank = queryParameter(request, "sort") == "rank";
     return filter;
 }
 

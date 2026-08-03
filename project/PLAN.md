@@ -128,6 +128,24 @@ remains only as optional, non-roadmap follow-up.
   unclickable). New unit/integration/authorization test coverage; verified end-to-end against fresh live
   PostgreSQL and SQLite databases over real HTTP, and a full Playwright/Chromium browser pass (13/13
   checks).
+- **Post-V1, batch 9.** The user asked for the board to be fixed since a project's backlog can grow huge
+  and shouldn't sit in its own Kanban column, and for backlog tickets to get a dedicated screen instead;
+  mid-batch, also asked for every ticket to have Markdown-supported (not forced single-line) worklogs and
+  for created/updated timestamps to be shown. Backlog is now off the board (amending D32's "one column per
+  status" -- 4 columns remain: Confirmed, In Progress, In Review, Done) and has its own new, paginated
+  "Backlog" screen (the first list view in this app with real server-side pagination rather than the fixed
+  200-row cap, since a backlog is explicitly unbounded by design), ordered by a new `sort=rank` query
+  parameter (`Domain::TicketFilter::sortByRank`, both adapters) so paginated results follow the same manual
+  priority order the existing reorder arrows already write to. The board's own ticket fetch changed from
+  one unfiltered request to one status-filtered request per column, fixing a real correctness gap where a
+  large backlog could previously have silently consumed the board's fixed fetch budget. Worklogs' "what did
+  you work on" field is now a Markdown textarea (toolbar, live preview, @mention autocomplete) instead of a
+  plain single-line input -- a pure frontend fix, since the backend already allowed multi-line, 10,000-
+  character content. Every ticket list table (Tickets, Backlog) now shows Created/Updated columns, matching
+  what the ticket detail drawer already displayed; the Dashboard's compact widgets deliberately keep their
+  terser layout. New SQLite integration test coverage for `sortByRank`; verified end-to-end against a fresh
+  live PostgreSQL database over real HTTP and a full Playwright/Chromium browser pass (19/19 checks) against
+  a fresh SQLite database seeded with 62 backlog tickets to exercise real pagination.
   **There is currently no further queued work.**
 
 ## Implementation rules

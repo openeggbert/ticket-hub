@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — Dedicated Backlog screen, Markdown worklogs, Created/Updated columns
+
+- **Backlog is off the board and has its own screen (amends D32).** The board is now 4 columns (Confirmed,
+  In Progress, In Review, Done); a new "Backlog" nav screen holds backlog tickets instead, with real
+  server-side pagination (`page`/`pageSize`) since a backlog is explicitly unbounded, unlike every other
+  list in this app. Ordered by a new `sort=rank` query parameter on `GET /api/v1/tickets`
+  (`Domain::TicketFilter::sortByRank`) so paginated results follow the same manual priority order the
+  reorder arrows already write to, instead of the default `updated_at DESC`. The board's own ticket fetch
+  now issues one request per board status instead of one unfiltered fetch, so its page-size budget is
+  never wasted on backlog rows it wouldn't render anyway.
+- **Worklogs are Markdown-supported, not forced single-line.** The "what did you work on" field is now a
+  Markdown textarea (toolbar, live preview, @mention autocomplete) rendered as real HTML, matching how
+  comments and ticket descriptions already work. No backend change -- the field already allowed multi-line,
+  10,000-character content; only the frontend `<input>` forced it single-line.
+- **Created/Updated columns on every ticket list table** (Tickets, the new Backlog screen), matching what
+  the ticket detail drawer already showed. The Dashboard's compact widgets keep their terser 6-column
+  layout by design.
+- Verified: full rebuild and `ctest` clean in all three build configurations (new SQLite integration test
+  coverage for `sortByRank`); live-verified against a fresh PostgreSQL database over real HTTP; full
+  Playwright/Chromium browser pass (19/19 checks) against a fresh SQLite database seeded with 60+ backlog
+  tickets, including pagination, reorder, and Markdown rendering.
+
 ## Unreleased — Five V1-decided gaps found by a full decision-register audit (D62/D66/D129/D45/D91)
 
 - Re-audited all 142 decisions in `docs/REDUCED_SCOPE_DECISIONS.md` against the actual codebase and found

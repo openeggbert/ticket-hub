@@ -57,6 +57,13 @@ self-service timezone/clock-format preferences (D45), and changing an active pro
 five implemented, tested, and verified in one batch; see `docs/SCOPE.md`'s "Batch 8" entry and
 "The roadmap is now complete" below for full detail.
 
+**Post-V1, batch 9 (done, 2026-08-03):** three more user-requested changes in one pass -- a project's
+backlog can grow far past what a Kanban column usefully displays, so Backlog is off the board (amending
+D32) and has its own dedicated, paginated screen instead; worklogs are now Markdown-supported instead of
+forced single-line; and every ticket list table now shows Created/Updated columns, matching what the
+ticket detail drawer already showed. See `docs/SCOPE.md`'s "Batch 9" entry and "The roadmap is now
+complete" below for full detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -970,6 +977,57 @@ PostgreSQL database and a fresh live SQLite database each exercised end-to-end o
 project's and its tickets' old keys still resolving via `ticket_key_aliases`; the 409 conflict response);
 and a full Playwright/Chromium browser pass against a fresh SQLite database covering all five behaviors
 (13/13 checks passed after the two fixes above). Full detail in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 9 (done, 2026-08-03):** three user-requested changes: "uprav board backlog muze byt
+obrovsky a nebude v vlastnim sloupci backlog ukoly by mely mit svoji specialni obrazovku" ("fix the board
+-- backlog can be huge and won't be in its own column, backlog tickets should have their own dedicated
+screen") and, mid-batch, "kazdy ticket bude mit komentarea worklogy. worklogy budou take markdown
+supported a ne jednoradkove nasilne jako nyni. ticket musi mit i created a updated" ("every ticket will
+have comments and worklogs; worklogs will also be Markdown-supported and not forced single-line as now;
+a ticket must also have created and updated").
+
+- **Backlog off the board, onto its own screen (amends D32).** D32 ("one board column equals one workflow
+  status") originally put Backlog on the board like every other status; removed (board is now 4 columns:
+  Confirmed, In Progress, In Review, Done) and replaced with a new dedicated "Backlog" nav screen
+  (`renderBacklog` in `web/app.js`), the first list view in this app to use real server-side pagination
+  (`page`/`pageSize`, D126's existing contract) rather than the fixed 200-row cap every other list still
+  relies on -- justified because backlog size is explicitly unbounded by design, unlike every other list.
+  Ordered by a new `sort=rank` query parameter (`Domain::TicketFilter::sortByRank`; both adapters'
+  `listTickets` overloads switch `ORDER BY` from `updated_at DESC` to `rank_order, ticket_number` when set,
+  a small backward-compatible addition -- omitting the parameter keeps every existing caller's behavior
+  unchanged) so "page 1" is always the top of the backlog by priority. The existing manual-reorder arrows
+  (D31) work exactly as they already do on the Tickets view, just always enabled here since the screen is
+  always scoped to one project. The Board's own ticket fetch also changed: `fetchBoardTickets()` now issues
+  one status-filtered request per board column instead of one unfiltered `fetchTickets()` call, so the
+  board's fixed page-size budget is spent entirely on the four statuses it renders rather than possibly
+  being consumed by backlog rows that would never have appeared on it anyway -- a real correctness gap the
+  old single-fetch approach had once a project's backlog grew past ~200 tickets, not just a display
+  preference. "Board"/"Backlog" shortcut buttons link the two screens both ways.
+- **Worklogs are Markdown-supported, not forced single-line.** The "what did you work on" field was a
+  plain `<input>` rendered with `escapeHtml`; the backend already allowed up to 10,000 characters with no
+  single-line restriction (`Domain::validateAddWorklog`), so this was purely a frontend gap. Changed to a
+  `<textarea>` with the same Markdown toolbar, live preview, and @mention autocomplete already used for
+  comments and the description field (`attachMarkdownToolbar`/`attachMentionAutocomplete`), rendered
+  through `renderMarkdown` into a `.markdown-body` block.
+- **Created/Updated columns on every ticket list.** The ticket detail drawer already showed both; the
+  Tickets view and the new Backlog screen's tables did not. `ticketRows` (shared by both) gained the two
+  columns behind a new `showTimestamps` option (default `true`); the Dashboard's compact "Assigned to
+  me"/"Watching"/"Recently active" widgets (`tablePanel`) explicitly opt out to stay terse, matching their
+  own "focused overview" framing -- no schema change, since `createdAt`/`updatedAt` were already returned
+  by every ticket JSON response.
+
+New test coverage: `tests/sqlite_integration_tests.cpp` asserts `sortByRank` orders both the unpaginated
+and paginated `listTickets` overloads by `rank_order`/`ticket_number`, and that omitting it preserves the
+pre-existing `updated_at`-based order. Verified: full rebuild and `ctest` clean in all three build
+configurations; a fresh live PostgreSQL database exercised over HTTP (a board-status-filtered fetch
+excludes backlog tickets; a `sort=rank` paginated backlog listing returns the lowest-rank ticket first; a
+multi-line, Markdown-syntax worklog comment round-trips byte-for-byte); a full Playwright/Chromium browser
+pass against a fresh SQLite database seeded with 60+ backlog tickets (19/19 checks: no Backlog column on
+the board, both shortcut buttons, correct page-1/page-2 row counts and Previous/Next disabled states,
+reorder arrows changing row order across a page, Created/Updated columns present on Tickets/Backlog and
+absent on the Dashboard's compact widgets, the worklog field being a Markdown-toolbar textarea, and a
+submitted worklog rendering **bold** text and a bullet list as real HTML). Full detail in
+`docs/VERIFICATION.md`.
 
 ## Verification status
 

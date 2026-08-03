@@ -1224,7 +1224,7 @@ WHERE i.deleted_at IS NULL
         WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
   AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
   AND ($9::text IS NULL OR comp.name ILIKE $9)
-ORDER BY i.updated_at DESC, i.ticket_key DESC
+)SQL" + (filter.sortByRank ? "ORDER BY i.rank_order, i.ticket_number\n" : "ORDER BY i.updated_at DESC, i.ticket_key DESC\n") + R"SQL(
 LIMIT 200
 )SQL";
     auto result = execParams(connection.get(),
@@ -1262,7 +1262,7 @@ WHERE i.deleted_at IS NULL
         WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
   AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
   AND ($9::text IS NULL OR comp.name ILIKE $9)
-ORDER BY i.updated_at DESC, i.ticket_key DESC
+)SQL" + (filter.sortByRank ? "ORDER BY i.rank_order, i.ticket_number\n" : "ORDER BY i.updated_at DESC, i.ticket_key DESC\n") + R"SQL(
 LIMIT $10::int OFFSET $11::int
 )SQL";
     auto result = execParams(connection.get(),
