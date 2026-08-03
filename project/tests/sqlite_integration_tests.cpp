@@ -132,6 +132,7 @@ int main() {
         edit.summary = "Verify portable database architecture (edited)";
         edit.description = "Updated by the SQLite integration test.";
         edit.priorityKey = "highest";
+        edit.issueTypeKey = "task";
         edit.assigneeEmail = "sam@ticket-hub.local";
         edit.labels = {"database"};
         edit.storyPoints = 5.0;

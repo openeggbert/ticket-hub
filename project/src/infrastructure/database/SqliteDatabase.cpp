@@ -1357,9 +1357,11 @@ std::optional<Domain::Issue> SqliteDatabase::editIssue(const std::string& issueK
     try {
         Statement current(database_, R"SQL(
 SELECT i.id, i.summary, i.description, pr.priority_key, assignee.email,
-       i.story_points, i.due_date, i.version
+       i.story_points, i.due_date, i.version, it.type_key,
+       (SELECT issue_key FROM issues WHERE id = i.parent_issue_id)
 FROM issues i
 JOIN priorities pr ON pr.id = i.priority_id
+JOIN issue_types it ON it.id = i.issue_type_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
 WHERE i.deleted_at IS NULL
   AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
@@ -1380,8 +1382,31 @@ WHERE i.deleted_at IS NULL
         }
         const std::optional<std::string> oldDueDate = optionalText(current.get(), 6);
         const std::int64_t currentVersion = sqlite3_column_int64(current.get(), 7);
+        const std::string oldTypeKey = text(current.get(), 8);
+        const std::optional<std::string> oldParentKey = optionalText(current.get(), 9);
         if (expectedVersion && *expectedVersion != currentVersion) {
             throw Domain::ConcurrencyConflict("Issue was modified by another user");
+        }
+
+        // Re-typing across hierarchy levels (Epic <-> Story/Task/Bug <->
+        // Sub-task) is only safe to apply if this issue currently has no
+        // children -- a child's own hierarchy rule ("my parent must be an
+        // Epic" / "my parent must be a Story, Task, or Bug") depends on
+        // this issue's *current* level, and cascading a fix to every child
+        // is out of scope (mirrors moveIssue's existing "has children"
+        // rejection). Same-level retyping (e.g. Task -> Bug) never affects
+        // children, since they all share hierarchy level 0. This must be
+        // checked transactionally, not in TicketService, since a concurrent
+        // insert of a new child between the check and the update would
+        // otherwise race past it.
+        if (Domain::issueTypeHierarchyLevel(oldTypeKey) != Domain::issueTypeHierarchyLevel(request.issueTypeKey)) {
+            Statement childCheck(database_, "SELECT COUNT(*) FROM issues WHERE parent_issue_id = ? AND deleted_at IS NULL");
+            childCheck.bind(1, issueId);
+            childCheck.step();
+            if (sqlite3_column_int64(childCheck.get(), 0) > 0) {
+                throw std::invalid_argument(
+                    "Cannot change an issue's type across hierarchy levels while it has child issues");
+            }
         }
 
         const std::string priorityId = lookupId(database_, "priorities", "priority_key", request.priorityKey);
@@ -1389,11 +1414,17 @@ WHERE i.deleted_at IS NULL
         if (request.assigneeEmail.has_value() && !request.assigneeEmail->empty()) {
             assigneeId = lookupId(database_, "users", "email", *request.assigneeEmail);
         }
+        const std::string issueTypeId = lookupId(database_, "issue_types", "type_key", request.issueTypeKey);
+        std::optional<std::string> parentId;
+        if (request.parentIssueKey.has_value() && !request.parentIssueKey->empty()) {
+            parentId = lookupIssueId(database_, *request.parentIssueKey);
+        }
         const std::string actorId = requireUserId(database_, actorUserId);
 
         Statement update(database_, R"SQL(
 UPDATE issues
 SET summary = ?, description = ?, priority_id = ?, assignee_user_id = ?,
+    issue_type_id = ?, parent_issue_id = ?,
     story_points = ?, due_date = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 )SQL");
@@ -1401,9 +1432,11 @@ WHERE id = ?
         update.bind(2, request.description);
         update.bind(3, priorityId);
         assigneeId ? update.bind(4, *assigneeId) : update.bindNull(4);
-        request.storyPoints ? update.bind(5, *request.storyPoints) : update.bindNull(5);
-        request.dueDate ? update.bind(6, *request.dueDate) : update.bindNull(6);
-        update.bind(7, issueId);
+        update.bind(5, issueTypeId);
+        parentId ? update.bind(6, *parentId) : update.bindNull(6);
+        request.storyPoints ? update.bind(7, *request.storyPoints) : update.bindNull(7);
+        request.dueDate ? update.bind(8, *request.dueDate) : update.bindNull(8);
+        update.bind(9, issueId);
         expectDone(database_, update, "Issue edit update");
 
         Statement clearLabels(database_, "DELETE FROM issue_labels WHERE issue_id = ?");
@@ -1444,6 +1477,8 @@ VALUES (?, ?, ?, ?, ?, ?)
         recordHistory("assignee", historyText(oldAssigneeEmail), historyText(request.assigneeEmail));
         recordHistory("story_points", historyText(oldStoryPoints), historyText(request.storyPoints));
         recordHistory("due_date", historyText(oldDueDate), historyText(request.dueDate));
+        recordHistory("issue_type", oldTypeKey, request.issueTypeKey);
+        recordHistory("parent", historyText(oldParentKey), historyText(request.parentIssueKey));
 
         executeScript("COMMIT;");
         const std::string sql = std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";

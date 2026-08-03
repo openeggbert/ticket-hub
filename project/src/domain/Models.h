@@ -440,9 +440,11 @@ struct CreateIssueRequest {
 // request, not a JSON-merge-patch: every field here is always the caller's
 // intended final value (an absent optional field means "no value", not
 // "leave whatever is there alone") -- the caller is expected to pre-populate
-// an edit form/request from the current issue. `issueTypeKey` and
-// `parentIssueKey` are intentionally not editable yet; re-typing or
-// re-parenting an issue after creation is not yet implemented (see NEXT.md).
+// an edit form/request from the current issue. `issueTypeKey`/
+// `parentIssueKey` re-typing/re-parenting is validated the same way as at
+// creation (TicketService::validateHierarchyShape) plus a database-state
+// check that a hierarchy-level change never orphans existing child issues
+// (IDatabase::editIssue) -- see docs/VERIFICATION.md for the exact rules.
 struct EditIssueRequest {
     std::string summary;
     std::string description;
@@ -451,6 +453,8 @@ struct EditIssueRequest {
     std::vector<std::string> labels;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
+    std::string issueTypeKey;
+    std::optional<std::string> parentIssueKey;
 };
 
 struct AddCommentRequest {

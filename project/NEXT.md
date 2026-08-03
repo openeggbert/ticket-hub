@@ -25,6 +25,10 @@ file for what remains only as optional, non-roadmap follow-up.
 **Post-V1, batch 1 (done):** a web UI for managing personal access tokens and active sessions -- the
 first optional item, picked by explicit user choice; see "The roadmap is now complete" below for detail.
 
+**Post-V1, batch 2 (done):** re-typing (`issueTypeKey`) and re-parenting (`parentIssueKey`) an issue after
+creation -- the one deliberate gap left open since Phase 3, closed as the second optional item, again
+picked by explicit user choice; see "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -67,7 +71,9 @@ anything from the removed/deferred list without an explicit new product conversa
   description, priority, assignee, story points, due date, and labels, sharing `changeIssueStatus`'s
   optimistic-locking contract (`expectedVersion` -> `Domain::ConcurrencyConflict`) and the same
   project-Member-or-above role requirement. One `issue_history` row per field that actually changed.
-  Does not edit `issueTypeKey`/`parentIssueKey` -- re-typing/re-parenting is not yet implemented. Shared
+  Does not edit `issueTypeKey`/`parentIssueKey` at this point in the project -- re-typing/re-parenting was
+  added later, as the second batch of post-V1 optional follow-up (see "The roadmap is now complete" near
+  the end of this file). Shared
   validation logic factored into `appendIssueContentErrors` (`Validation.cpp`) and `normalizeLabels`
   (`TicketService.cpp`) instead of duplicating it between create and edit.
 - **Phase 3, partial continued (issue links and cloning), this batch:** the fixed issue-link catalog
@@ -111,8 +117,8 @@ anything from the removed/deferred list without an explicit new product conversa
   bug during this batch: `002_seed_demo.sql` runs outside the checksummed migration flow and, in practice,
   after all schema migrations including `007_ranking.sql`, so its seeded issues were getting the column's
   `DEFAULT 0` instead of a backfilled rank -- fixed by setting `rank_order` explicitly in the seed
-  `INSERT` itself. This closes out Phase 3's core-layer scope except for re-typing/re-parenting (see
-  "Rest of Phase 3" below).
+  `INSERT` itself. This closed out Phase 3's core-layer scope at the time except for re-typing/re-parenting,
+  which was added later as post-V1 optional follow-up (see "The roadmap is now complete" below).
 - Tested: `ctest --output-on-failure` is 7/7 green (`domain`, `migration`, `sqlite-integration`,
   `identity`, `authorization`, `workflow`, `crypto`) on SQLite, in all three build configurations (full,
   SQLite-only, PostgreSQL-only). Every Phase 2/3 core-layer addition was additionally verified manually
@@ -683,19 +689,18 @@ left:
    the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
    status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
    for a shared resolution; keyboard-driven multi-select.
-3. Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation is still
-   deliberately unimplemented at the application/database layer (see "The roadmap is now complete" below)
-   -- no UI would have anywhere to call into for this even if it existed.
+3. Re-typing (`issueTypeKey`) and re-parenting (`parentIssueKey`) an issue after creation, previously the
+   one item left deliberately unimplemented, is now done (post-V1 batch 2 -- see "The roadmap is now
+   complete" below), including a Type/Parent picker in the issue drawer's edit form.
 
 ## The roadmap is now complete
 
-Phase 3's core/CLI/test layer is complete except for one deliberately-unimplemented item, unchanged since
-Phase 3 and not revisited in any later phase:
-
-- Re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation --
-  `TicketService::editIssue` deliberately does not touch either field. `moveIssue` (D37) exists but
-  deliberately does not re-parent or un-parent -- it rejects moving an issue that currently has a parent
-  or any children, so this remains the one open path in the entire roadmap.
+Phase 3's core/CLI/test/server/UI layer is now **fully complete**: re-typing (`issueTypeKey`) and
+re-parenting (`parentIssueKey`) an issue after creation -- the one item left open since Phase 3 -- was
+added as post-V1 batch 2 (below). `moveIssue` (D37) still deliberately does not re-parent/un-parent as
+*part of a project move* -- an issue with a parent or children must be edited via `editIssue` first to
+clear them, then moved -- that split is a deliberate design choice (moving projects and changing hierarchy
+position are different operations), not a remaining gap.
 
 Milestone 2 (Phases 4 and 5) is **fully closed**. Milestone 3 (Phase 6: REST API v1/export; Phase 7:
 backup/restore/upgrade/observability) is **fully closed**: personal access tokens (D39/D40), the
@@ -717,11 +722,11 @@ SQLite-only, and PostgreSQL-only configurations all compile and their test suite
 from the security self-review is either fixed or recorded as an explicit, decision-consistent accepted
 residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 
-What's left is not roadmap work, only optional follow-up if this project continues past V1: re-typing/
-re-parenting an issue (above) and the optional UX polish listed above (drag-and-drop board reordering, a
-friendlier bulk Done-status picker, keyboard multi-select). None of this is required to consider V1
-complete, and none of it should be started without a fresh, explicit product conversation -- the same rule
-that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along.
+What's left is not roadmap work, only optional follow-up if this project continues past V1: the optional
+UX polish listed above (drag-and-drop board reordering, a friendlier bulk Done-status picker, keyboard
+multi-select). None of this is required to consider V1 complete, and none of it should be started without
+a fresh, explicit product conversation -- the same rule that has applied to
+`docs/REMOVED_AND_DEFERRED_FEATURES.md` all along.
 
 **Post-V1 batch 1 (done):** the user was asked to pick the first piece of optional follow-up and chose a
 web UI for managing personal access tokens and active sessions -- both already had a complete REST API and
@@ -733,6 +738,27 @@ consumer of existing, already-tested endpoints. Browser-verified end-to-end with
 including a genuine two-cookie-jar session test confirming "sign out everywhere else" actually invalidates
 the other session server-side (not just hides it in the UI) while preserving the caller's own. Full detail
 in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 2 (done):** the user was asked to pick the next piece of optional follow-up and chose
+re-typing/re-parenting an issue after creation -- the one deliberate gap left open since Phase 3.
+`Domain::EditIssueRequest` gained `issueTypeKey`/`parentIssueKey`; `TicketService::requireValidHierarchy`
+was refactored into a shared `validateHierarchyShape` used by both `createIssue` and `editIssue` (same
+Epic/Sub-task/same-project/parent-level rules as creation, plus a new self-parent guard). Whether a
+hierarchy-level retype would orphan existing children depends on concurrent database state, so that one
+check runs transactionally inside `IDatabase::editIssue` in both adapters -- same "has children" precedent
+`moveIssue` already established -- rejecting a level-crossing retype (Epic <-> Story/Task/Bug <-> Sub-task)
+only when the issue currently has children; same-level retyping (e.g. Task -> Bug) is always allowed.
+New `issue_type`/`parent` `issue_history` rows on change. New Type/Parent controls in the issue drawer's
+edit form, mirroring the create modal's picker (`refreshEditParentOptions`). New hierarchy-edit test
+coverage in `tests/workflow_integration_tests.cpp`; three existing `EditIssueRequest` construction sites
+across two other test files needed an explicit `issueTypeKey` once the field became required (deliberately
+*not* defaulted the way `CreateIssueRequest`'s is, since silently defaulting an edit's missing type could
+silently retype an issue). Verified end-to-end over the real HTTP API against **live PostgreSQL** (this
+touches both database adapters) -- created an Epic, retyped it with no children (succeeded), created an
+Epic with a child and confirmed the cross-level retype was rejected, then re-parented the child to a third
+Epic and confirmed both new history rows via `psql`. Browser-verified with Playwright/Chromium including
+the server-rejection path (error banner shown, edit form stays open, no silent data loss). Full detail in
+`docs/VERIFICATION.md`.
 
 ## Verification status
 

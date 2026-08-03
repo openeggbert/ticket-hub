@@ -48,6 +48,7 @@ int main() {
     namespace fs = std::filesystem;
     using TicketHub::Application::TicketService;
     using TicketHub::Domain::CreateIssueRequest;
+    using TicketHub::Domain::EditIssueRequest;
     using TicketHub::Domain::Principal;
     using TicketHub::Infrastructure::Database::SqliteDatabase;
 
@@ -75,6 +76,23 @@ int main() {
         request.issueTypeKey = type;
         request.summary = summary;
         request.description = "workflow_integration_tests fixture";
+        return request;
+    };
+
+    // Carries every current field forward unchanged (mirrors
+    // TicketService::editRequestFrom, which is private) so a test only has
+    // to override the one or two fields it's actually exercising.
+    auto editFrom = [](const TicketHub::Domain::Issue& issue) {
+        EditIssueRequest request;
+        request.summary = issue.summary;
+        request.description = issue.description;
+        request.priorityKey = issue.priority.key;
+        request.assigneeEmail = issue.assignee ? std::optional<std::string>(issue.assignee->email) : std::nullopt;
+        request.labels = issue.labels;
+        request.storyPoints = issue.storyPoints;
+        request.dueDate = issue.dueDate;
+        request.issueTypeKey = issue.type.key;
+        request.parentIssueKey = issue.parentIssueKey;
         return request;
     };
 
@@ -114,6 +132,109 @@ int main() {
         crossProjectSubTask.parentIssueKey = story.key; // story is in TH
         require(throwsInvalidArgument([&] { tickets.createIssue(crossProjectSubTask, demo); }),
                "a parent issue must be in the same project");
+    }
+
+    // --- Re-typing and re-parenting after creation (editIssue), previously
+    // unimplemented -- see NEXT.md's prior history ---
+    {
+        // Same-level retyping (Story/Task/Bug all share hierarchy level 0)
+        // never touches parent/child rules and is always allowed.
+        const auto toRetype = tickets.createIssue(makeRequest("story", "Retype: story to bug"), demo);
+        auto sameLevelEdit = editFrom(toRetype);
+        sameLevelEdit.issueTypeKey = "bug";
+        const auto retyped = tickets.editIssue(toRetype.key, sameLevelEdit, demo);
+        require(retyped.has_value() && retyped->type.key == "bug",
+               "retyping among Story/Task/Bug (same hierarchy level) succeeds");
+
+        // Re-parenting alone (type unchanged): move a story from one epic
+        // to another, then clear its parent entirely.
+        const auto epicA = tickets.createIssue(makeRequest("epic", "Reparent: epic A"), demo);
+        const auto epicB = tickets.createIssue(makeRequest("epic", "Reparent: epic B"), demo);
+        auto storyUnderA = makeRequest("story", "Reparent: story under epic A");
+        storyUnderA.parentIssueKey = epicA.key;
+        const auto movable = tickets.createIssue(storyUnderA, demo);
+
+        auto reparentEdit = editFrom(movable);
+        reparentEdit.parentIssueKey = epicB.key;
+        const auto reparented = tickets.editIssue(movable.key, reparentEdit, demo);
+        require(reparented.has_value() && reparented->parentIssueKey.has_value()
+                    && *reparented->parentIssueKey == epicB.key,
+               "re-parenting alone (type unchanged) moves a story to a different epic");
+
+        auto clearParentEdit = editFrom(*reparented);
+        clearParentEdit.parentIssueKey = std::nullopt;
+        const auto cleared = tickets.editIssue(movable.key, clearParentEdit, demo);
+        require(cleared.has_value() && !cleared->parentIssueKey.has_value(), "a parent can be cleared via edit");
+
+        // An epic still cannot gain a parent via edit; a sub-task still
+        // cannot lose its parent via edit -- edit-time re-parenting reuses
+        // the exact same shape rules as create-time (D5/D29/D64-D66).
+        auto epicGetsParentEdit = editFrom(epicA);
+        epicGetsParentEdit.parentIssueKey = epicB.key;
+        require(throwsInvalidArgument([&] { tickets.editIssue(epicA.key, epicGetsParentEdit, demo); }),
+               "an epic still cannot have a parent after edit-time re-parenting");
+
+        auto taskForSubtask = tickets.createIssue(makeRequest("task", "Reparent: task parent for a sub-task"), demo);
+        auto subTaskRequest = makeRequest("sub-task", "Reparent: sub-task needing a parent");
+        subTaskRequest.parentIssueKey = taskForSubtask.key;
+        const auto subTask = tickets.createIssue(subTaskRequest, demo);
+        auto subTaskLosesParentEdit = editFrom(subTask);
+        subTaskLosesParentEdit.parentIssueKey = std::nullopt;
+        require(throwsInvalidArgument([&] { tickets.editIssue(subTask.key, subTaskLosesParentEdit, demo); }),
+               "a sub-task still cannot lose its parent via edit");
+
+        // Self-parenting is rejected.
+        auto selfParentEdit = editFrom(taskForSubtask);
+        selfParentEdit.parentIssueKey = taskForSubtask.key;
+        require(throwsInvalidArgument([&] { tickets.editIssue(taskForSubtask.key, selfParentEdit, demo); }),
+               "an issue cannot become its own parent via edit");
+
+        // Cross-project parent is rejected at edit time too.
+        auto webTask = tickets.createIssue([&] {
+            auto request = makeRequest("task", "Reparent: WEB task");
+            request.projectKey = "WEB";
+            return request;
+        }(),
+                                           demo);
+        auto crossProjectEdit = editFrom(webTask);
+        crossProjectEdit.parentIssueKey = epicA.key; // epicA is in TH
+        require(throwsInvalidArgument([&] { tickets.editIssue(webTask.key, crossProjectEdit, demo); }),
+               "a parent issue must be in the same project, enforced at edit time too");
+
+        // Retyping across hierarchy levels succeeds when the issue currently
+        // has neither a parent nor children -- clearing/setting the parent
+        // in the very same edit, exactly as create-time does.
+        const auto childlessEpic = tickets.createIssue(makeRequest("epic", "Retype: childless epic"), demo);
+        auto epicToTaskEdit = editFrom(childlessEpic);
+        epicToTaskEdit.issueTypeKey = "task"; // level 1 -> level 0, parentIssueKey already nullopt
+        const auto epicBecameTask = tickets.editIssue(childlessEpic.key, epicToTaskEdit, demo);
+        require(epicBecameTask.has_value() && epicBecameTask->type.key == "task",
+               "a childless epic can be retyped across hierarchy levels");
+
+        auto taskToSubTaskEdit = editFrom(*epicBecameTask);
+        taskToSubTaskEdit.issueTypeKey = "sub-task"; // level 0 -> level -1
+        taskToSubTaskEdit.parentIssueKey = taskForSubtask.key; // must supply a parent in the same edit
+        const auto taskBecameSubTask = tickets.editIssue(epicBecameTask->key, taskToSubTaskEdit, demo);
+        require(taskBecameSubTask.has_value() && taskBecameSubTask->type.key == "sub-task"
+                    && taskBecameSubTask->parentIssueKey.has_value() && *taskBecameSubTask->parentIssueKey == taskForSubtask.key,
+               "retyping to sub-task succeeds when a valid parent is supplied in the same edit");
+
+        // Retyping across hierarchy levels is rejected while the issue has
+        // children -- the exact scenario a naive implementation would
+        // silently orphan/invalidate.
+        const auto epicWithChild = tickets.createIssue(makeRequest("epic", "Retype: epic with a child"), demo);
+        auto storyUnderChildEpic = makeRequest("story", "Retype: child of the epic-with-child");
+        storyUnderChildEpic.parentIssueKey = epicWithChild.key;
+        tickets.createIssue(storyUnderChildEpic, demo);
+        auto epicWithChildEdit = editFrom(epicWithChild);
+        epicWithChildEdit.issueTypeKey = "task";
+        require(throwsInvalidArgument([&] { tickets.editIssue(epicWithChild.key, epicWithChildEdit, demo); }),
+               "retyping across hierarchy levels is rejected while the issue has child issues");
+        // Same-level retyping is still unaffected by having children.
+        auto epicWithChildSameLevelEdit = editFrom(epicWithChild);
+        epicWithChildSameLevelEdit.issueTypeKey = "epic"; // no-op level, but exercises the "has children" path
+        require(tickets.editIssue(epicWithChild.key, epicWithChildSameLevelEdit, demo).has_value(),
+               "same-level retyping succeeds even when the issue has children");
     }
 
     // --- Fixed workflow rules: resolution required/cleared, sub-task gate (D68-D70) ---

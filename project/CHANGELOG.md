@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — Re-typing and re-parenting an issue after creation (post-V1)
+
+- **Full-replacement issue edit now covers `issueTypeKey`/`parentIssueKey`**: closes the one remaining
+  gap left open since Phase 3. Re-typing/re-parenting re-validates the fixed hierarchy shape (Epic/
+  Sub-task/same-project/parent-level, D5/D29/D64-D66) exactly like at creation, plus rejects self-
+  parenting. Retyping across hierarchy levels (Epic <-> Story/Task/Bug <-> Sub-task) is rejected
+  transactionally while the issue has child issues (same "has children" precedent as `moveIssue`);
+  same-level retyping (e.g. Task -> Bug) is always allowed. New `issue_type`/`parent` `issue_history`
+  rows on change.
+- New Type/Parent controls in the issue drawer's edit form, mirroring the create modal's picker.
+- Live-verified end-to-end including against a real PostgreSQL instance (not just SQLite, since both
+  database adapters changed) and browser-verified with Playwright/Chromium.
+- The second item of optional, non-roadmap follow-up, again started only after being asked which to pick.
+
 ## Unreleased — Account settings web UI: personal access tokens and active sessions (post-V1)
 
 - **New "Account" page**, visible to every authenticated user: manage personal access tokens (create,

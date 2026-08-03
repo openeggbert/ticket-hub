@@ -1,5 +1,89 @@
 # Verification record
 
+## 2026-08-02 — Re-typing and re-parenting an issue after creation (post-V1, user-requested)
+
+The second batch of optional, non-roadmap follow-up (see the account-settings entry below for the first),
+again started only after the user was asked to pick one. Closes the one deliberate gap that had persisted
+since Phase 3: `TicketService::editIssue` previously never touched `issueTypeKey`/`parentIssueKey`, and
+`moveIssue` (D37) still deliberately does not re-parent/un-parent as part of a project move.
+
+### What changed
+
+- `Domain::EditIssueRequest` gained `issueTypeKey` (required, like `CreateIssueRequest`'s) and
+  `parentIssueKey` (optional, same semantics as at creation).
+- `TicketService::requireValidHierarchy` (create-only) was refactored into a shared
+  `validateHierarchyShape(issueTypeKey, parentIssueKey, projectKey, excludeSelfKey)` used by both
+  `createIssue` and the new `editIssue` hierarchy check -- same fixed rules (D5/D29/D64-D66): an Epic
+  cannot have a parent, a Sub-task must have one, a parent must exist in the same project, a Sub-task's
+  parent must be a Story/Task/Bug, a Story/Task/Bug's optional parent must be an Epic. The edit path adds
+  one rule create-time doesn't need: an issue cannot become its own parent (`excludeSelfKey`).
+- The one rule that depends on *concurrent database state* rather than pure input shape -- whether
+  retyping across hierarchy levels (Epic <-> Story/Task/Bug <-> Sub-task) would leave existing children
+  invalid -- is checked transactionally inside `IDatabase::editIssue` in both adapters, not in
+  `TicketService`, for the same race-safety reason `moveIssue`'s existing "has children" check already
+  lives in the database adapter rather than the application layer: a child inserted concurrently between
+  a TicketService-side check and the update would otherwise slip past it. Same-level retyping (e.g.
+  Task -> Bug, both hierarchy level 0) is always allowed regardless of children, since it never changes
+  what any parent/child relationship requires from this issue.
+- Both `SqliteDatabase::editIssue` and `PostgresDatabase::editIssue` extended: the current-state read now
+  also fetches the old type key and old parent key (for hierarchy-level comparison and history), the
+  child-count check (`SELECT COUNT(*) FROM issues WHERE parent_issue_id = ? AND deleted_at IS NULL`,
+  identical query `moveIssue` already used) runs only when the hierarchy level is actually changing, the
+  `UPDATE` statement now also sets `issue_type_id`/`parent_issue_id`, and two new `issue_history` rows
+  (`issue_type`, `parent`) are recorded exactly like every other edited field, only when the value
+  actually changed.
+- `TicketService::editRequestFrom` (the internal helper that carries every current field forward unchanged
+  for the bulk-assign/bulk-label single-field actions, since `editIssue` is a full-replacement PUT) now
+  also carries `issueTypeKey`/`parentIssueKey` forward, so bulk actions continue to leave type/parent
+  untouched exactly as before this change.
+- `PUT /api/v1/issues/{key}` (the PATCH-named route implementing the full-replacement edit) now parses
+  `issueTypeKey`/`parentIssueKey` from the request body.
+- `web/app.js`: the issue drawer's edit form gained a Type select and a Parent/Epic picker (`refreshEditParentOptions`,
+  mirroring the existing create-modal's `refreshCreateParentOptions` -- same label text switching
+  ("Epic (optional)" vs "Parent (required)"), same server-side-filtered candidate list, adapted for a
+  fixed project and excluding the issue itself from its own candidate-parent list), wired into the save
+  payload.
+- `Domain::validateEditIssue` gained an `issueTypeKey is required` check, matching `validateCreateIssue`.
+  **Deliberately not defaulted** to `"task"` the way `CreateIssueRequest::issueTypeKey` defaults for
+  convenience -- silently defaulting an *edit* request's missing type would risk silently retyping any
+  non-Task issue to Task for any caller that forgot to set the field, which is a far worse failure mode
+  than an explicit 400.
+
+### Verification
+
+- New test block in `tests/workflow_integration_tests.cpp` (SQLite, via `TicketService`): same-level
+  retyping (Story -> Bug) always succeeds; re-parenting alone (type unchanged) moves a story between
+  epics and can clear the parent entirely; an epic still cannot gain a parent via edit; a sub-task still
+  cannot lose its parent via edit; self-parenting is rejected; a cross-project parent is rejected at edit
+  time; retyping across hierarchy levels succeeds for a childless issue (simultaneously setting/clearing
+  the parent in the same edit, exactly as create-time requires); retyping across hierarchy levels is
+  rejected while the issue has children; same-level retyping is unaffected by having children. All new
+  assertions pass.
+- Three existing direct `EditIssueRequest` construction sites (`tests/authorization_integration_tests.cpp`
+  x4, `tests/sqlite_integration_tests.cpp` x1) needed `issueTypeKey` added once the field became required
+  -- each set to the actual current type of the issue being edited, confirming the tests still exercise
+  real, valid edits rather than being loosened to compensate.
+- Live-verified end-to-end over the real HTTP API against **live PostgreSQL** (not just SQLite, since this
+  touches both database adapters): started the server against a fresh local PostgreSQL 16 instance,
+  created an Epic, retyped it to Task with no children (succeeded, `200`), created a second Epic with a
+  Story child and confirmed retyping it across levels was rejected (`400`, the exact "has child issues"
+  message), then re-parented the story to a third Epic (succeeded, `200`) and confirmed both an
+  `issue_type` and a `parent` row landed in `issue_history` with the correct old/new values via a direct
+  `psql` query.
+- Browser-verified with Playwright/Chromium: the edit form's Type select and Parent/Epic picker render
+  correctly and react to type changes (parent field hides for Epic, shows "Epic (optional)" for Story/
+  Task/Bug, shows "Parent (required)" and a populated candidate list for Sub-task); saving a valid
+  cross-level retype (childless Epic -> Task) succeeds and the drawer's type badge updates; saving a
+  retype that the server rejects (an Epic with a child, retyped to Task) shows the server's exact error
+  message in the edit form's error banner without silently reverting or losing the in-progress edit.
+  Screenshots reviewed for both the Task-type and Sub-task-type edit form states.
+- Re-ran both existing browser regression scripts (`login_browser_test.mjs`,
+  `reorder_move_bulk_test.mjs`) unchanged -- both passed, including the bulk-label action (which now
+  routes through the updated `editRequestFrom`), confirming no regression.
+- `ctest --output-on-failure`: 8/8 green. Full three-configuration build matrix (default SQLite+
+  PostgreSQL+server, `-DTICKETHUB_WITH_POSTGRES=OFF` SQLite-only, `-DTICKETHUB_WITH_SQLITE=OFF`
+  PostgreSQL-only) reconfirmed to compile clean (transient build directories, removed after verification).
+
 ## 2026-08-02 — Account settings web UI: personal access tokens and active sessions (post-V1, user-requested)
 
 The reduced-scope V1 roadmap (`docs/REDUCED_SCOPE_ROADMAP.md`) closed with the prior entry below. This is

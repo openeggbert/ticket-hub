@@ -12,9 +12,10 @@ original full Jira-like plan in `SPECIFICATION.md`, which remains only as a long
 reference. **The entire reduced-scope V1 roadmap is now complete** (`docs/REDUCED_SCOPE_ROADMAP.md`,
 Milestones 1-4 / Phases 1-8), including Docker/Compose packaging, light/dark theme, an accessibility
 baseline pass, and a threat-model/security self-review (`docs/THREAT_MODEL.md`) that found and fixed a
-real access-control bug. See `NEXT.md`'s "The roadmap is now complete" section for the exact closing
-detail, `docs/VERIFICATION.md` for exactly what was tested and how, and the one deliberate scope
-exception (re-typing/re-parenting an issue after creation is not implemented) plus a short list of
+real access-control bug. Two batches of optional, non-roadmap follow-up have been added since: a web UI
+for managing personal access tokens/active sessions, and re-typing/re-parenting an issue after creation
+(the one gap left open since Phase 3). See `NEXT.md`'s "The roadmap is now complete" section for the exact
+closing detail, `docs/VERIFICATION.md` for exactly what was tested and how, and a short list of remaining
 optional, non-roadmap follow-up items.
 
 Implemented now:
@@ -380,10 +381,15 @@ single status code — since each key is authorized and processed independently 
 the keys that already succeeded.
 
 `PATCH /api/v1/issues/{key}` is a full-replacement edit, not a JSON-merge-patch: `{summary, description?,
-priorityKey, assigneeEmail?, storyPoints?, dueDate?, labels?, expectedVersion?}`. Every editable field
-is always the caller's intended final value (e.g. omitting `assigneeEmail` unassigns the issue, it does
-not leave the current assignee alone) -- the caller is expected to pre-populate the request from the
-current issue. It does not change `issueTypeKey` or `parentIssueKey`; neither is editable yet.
+priorityKey, issueTypeKey, parentIssueKey?, assigneeEmail?, storyPoints?, dueDate?, labels?,
+expectedVersion?}`. Every editable field is always the caller's intended final value (e.g. omitting
+`assigneeEmail` unassigns the issue, it does not leave the current assignee alone) -- the caller is
+expected to pre-populate the request from the current issue. `issueTypeKey`/`parentIssueKey` re-typing/
+re-parenting (post-V1 follow-up) re-validates the fixed hierarchy shape exactly like `POST /api/v1/issues`
+does at creation, plus rejects self-parenting; retyping across hierarchy levels (Epic <-> Story/Task/Bug
+<-> Sub-task) is additionally rejected while the issue currently has child issues (checked transactionally
+inside the database layer, since it depends on concurrent state) -- same-level retyping (e.g. Task -> Bug)
+is always allowed.
 
 Issue responses include `version` and `resolution`. A stale `expectedVersion` returns HTTP 409. A
 missing/insufficient project role or global-admin requirement returns HTTP 403. An anonymous read while
@@ -1043,6 +1049,23 @@ existed and were already tested. Browser-verified end-to-end with Playwright/Chr
 genuine two-cookie-jar test confirming "sign out everywhere else" actually invalidates the other session
 server-side (the second browser context is bounced to the login screen on its next request) while leaving
 the caller's own session intact; both existing regression scripts re-run clean.
+
+A second post-V1 batch closed the one gap left open since Phase 3: **re-typing and re-parenting an issue
+after creation**. `Domain::EditIssueRequest` gained `issueTypeKey`/`parentIssueKey`;
+`TicketService::requireValidHierarchy` was refactored into a shared `validateHierarchyShape` used by both
+`createIssue` and `editIssue` -- the same fixed hierarchy rules (D5/D29/D64-D66) apply either way, plus a
+new self-parent guard the edit path needs and creation doesn't. Whether a hierarchy-level retype (Epic <->
+Story/Task/Bug <-> Sub-task) would leave existing children invalid depends on concurrent database state,
+so that one check runs transactionally inside `IDatabase::editIssue` in both adapters -- the same "has
+children" precedent `moveIssue` already established -- rejecting a level-crossing retype only when the
+issue currently has children; same-level retyping (e.g. Task -> Bug) is always allowed regardless. New
+`issue_type`/`parent` `issue_history` rows on change. The issue drawer's edit form gained a Type select and
+a Parent/Epic picker mirroring the create modal's. Verified end-to-end over the real HTTP API against
+**live PostgreSQL** (both database adapters changed) -- retyped a childless Epic to Task successfully,
+confirmed a cross-level retype was rejected for an Epic with a child, re-parented that child to a different
+Epic, and confirmed both changes landed correctly in `issue_history` via `psql`. Browser-verified with
+Playwright/Chromium, including the server-rejection path (the exact error message surfaces in the edit
+form without losing the in-progress edit).
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

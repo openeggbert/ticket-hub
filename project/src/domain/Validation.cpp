@@ -110,6 +110,9 @@ std::vector<std::string> validateCreateIssue(const CreateIssueRequest& request) 
 
 std::vector<std::string> validateEditIssue(const EditIssueRequest& request) {
     std::vector<std::string> errors;
+    if (request.issueTypeKey.empty()) {
+        errors.emplace_back("issueTypeKey is required");
+    }
     appendIssueContentErrors(errors, request.summary, request.description, request.priorityKey,
                              request.storyPoints, request.labels);
     return errors;

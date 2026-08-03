@@ -67,6 +67,8 @@ Domain::EditIssueRequest editRequestFrom(const Domain::Issue& issue) {
     request.labels = issue.labels;
     request.storyPoints = issue.storyPoints;
     request.dueDate = issue.dueDate;
+    request.issueTypeKey = issue.type.key;
+    request.parentIssueKey = issue.parentIssueKey;
     return request;
 }
 } // namespace
@@ -107,8 +109,15 @@ void TicketService::requireReadAccess(const std::optional<Domain::Principal>& ac
 }
 
 void TicketService::requireValidHierarchy(Domain::CreateIssueRequest& request) {
-    const int level = Domain::issueTypeHierarchyLevel(request.issueTypeKey);
-    const bool hasParent = request.parentIssueKey.has_value() && !request.parentIssueKey->empty();
+    validateHierarchyShape(request.issueTypeKey, request.parentIssueKey, request.projectKey, std::nullopt);
+}
+
+void TicketService::validateHierarchyShape(const std::string& issueTypeKey,
+                                           std::optional<std::string>& parentIssueKey,
+                                           const std::string& projectKey,
+                                           const std::optional<std::string>& excludeSelfKey) {
+    const int level = Domain::issueTypeHierarchyLevel(issueTypeKey);
+    const bool hasParent = parentIssueKey.has_value() && !parentIssueKey->empty();
 
     if (level == 1 && hasParent) {
         throw std::invalid_argument("An Epic cannot have a parent issue");
@@ -117,16 +126,19 @@ void TicketService::requireValidHierarchy(Domain::CreateIssueRequest& request) {
         throw std::invalid_argument("A sub-task must have a parent issue");
     }
     if (!hasParent) {
-        request.parentIssueKey = std::nullopt;
+        parentIssueKey = std::nullopt;
         return;
     }
 
-    const std::string parentKey = Domain::normalizeIssueKey(*request.parentIssueKey);
+    const std::string parentKey = Domain::normalizeIssueKey(*parentIssueKey);
+    if (excludeSelfKey && parentKey == *excludeSelfKey) {
+        throw std::invalid_argument("An issue cannot be its own parent");
+    }
     const auto parent = database_->findIssueByKey(parentKey);
     if (!parent) {
         throw std::invalid_argument("Unknown parent issue: " + parentKey);
     }
-    if (parent->projectKey != request.projectKey) {
+    if (parent->projectKey != projectKey) {
         throw std::invalid_argument("A parent issue must be in the same project");
     }
     const int parentLevel = Domain::issueTypeHierarchyLevel(parent->type.key);
@@ -136,7 +148,7 @@ void TicketService::requireValidHierarchy(Domain::CreateIssueRequest& request) {
     if (level == 0 && parentLevel != 1) {
         throw std::invalid_argument("A Story/Task/Bug's parent must be an Epic");
     }
-    request.parentIssueKey = parentKey;
+    parentIssueKey = parentKey;
 }
 
 std::string TicketService::backendName() const {
@@ -270,6 +282,15 @@ std::optional<Domain::Issue> TicketService::editIssue(const std::string& issueKe
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
     }
+    // Re-typing (issueTypeKey) and re-parenting (parentIssueKey) an issue
+    // after creation (previously unimplemented -- see NEXT.md history).
+    // Shape validation (Epic/Sub-task/same-project/parent-level) happens
+    // here, same as at creation; whether the issue currently has *children*
+    // that a hierarchy-level change would orphan/invalidate depends on
+    // concurrent database state and is therefore checked transactionally
+    // inside IDatabase::editIssue, the same split changeIssueStatus and
+    // moveIssue already use for their own database-state-dependent rules.
+    validateHierarchyShape(request.issueTypeKey, request.parentIssueKey, issue->projectKey, issue->key);
     const auto assigneeBefore = issue->assignee;
     const auto edited = database_->editIssue(normalizedKey, request, actor.userId, expectedVersion);
     if (edited) {

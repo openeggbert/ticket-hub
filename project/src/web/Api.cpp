@@ -1411,6 +1411,8 @@ void registerApiRoutes(crow::SimpleApp& app,
             edit.priorityKey = requiredString(body, "priorityKey");
             edit.assigneeEmail = optionalString(body, "assigneeEmail");
             edit.dueDate = optionalString(body, "dueDate");
+            edit.issueTypeKey = requiredString(body, "issueTypeKey");
+            edit.parentIssueKey = optionalString(body, "parentIssueKey");
             if (body.has("storyPoints") && body["storyPoints"].t() != crow::json::type::Null) {
                 edit.storyPoints = body["storyPoints"].d();
             }
