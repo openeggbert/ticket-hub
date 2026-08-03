@@ -12,11 +12,12 @@ original full Jira-like plan in `SPECIFICATION.md`, which remains only as a long
 reference. **The entire reduced-scope V1 roadmap is now complete** (`docs/REDUCED_SCOPE_ROADMAP.md`,
 Milestones 1-4 / Phases 1-8), including Docker/Compose packaging, light/dark theme, an accessibility
 baseline pass, and a threat-model/security self-review (`docs/THREAT_MODEL.md`) that found and fixed a
-real access-control bug. Three batches of optional, non-roadmap follow-up have been added since: a web UI
+real access-control bug. Four batches of optional, non-roadmap follow-up have been added since -- a web UI
 for managing personal access tokens/active sessions, re-typing/re-parenting an issue after creation (the
-one gap left open since Phase 3), and Kanban board drag-and-drop. See `NEXT.md`'s "The roadmap is now
-complete" section for the exact closing detail, `docs/VERIFICATION.md` for exactly what was tested and
-how, and a short list of remaining optional, non-roadmap follow-up items.
+one gap left open since Phase 3), Kanban board drag-and-drop, and a bulk Done-status picker plus keyboard
+multi-select -- which closes out the entire optional-follow-up list identified when the roadmap closed.
+See `NEXT.md`'s "The roadmap is now complete" section for the exact closing detail and `docs/VERIFICATION.md`
+for exactly what was tested and how.
 
 Implemented now:
 
@@ -1082,6 +1083,25 @@ mouse simulation, which reliably reproduced every scenario -- direct move, same-
 Done-column resolution prompt (shown, cancelable without side effects, confirmable) -- in both light and
 dark mode. Native HTML5 drag-and-drop has no keyboard equivalent; the drawer's status dropdown remains the
 keyboard-operable path verified as part of the earlier D47 accessibility baseline pass.
+
+A fourth and final post-V1 batch closed out the two remaining optional items together: the **bulk
+Done-status picker** and **keyboard-driven multi-select**. `POST /api/v1/issues/bulk/status` already
+accepted and forwarded a shared `resolution` to every issue in the batch (unchanged since the original
+bulk-actions implementation); the UI simply excluded Done-category statuses from the bulk picker, so there
+was no way to reach it. Fixed by including every status again and adding a resolution picker that appears
+exactly when a Done-category status is selected, mirroring the drawer's own reveal-on-selection pattern.
+The issues table's checkboxes already supported basic keyboard toggling for free (native
+`<input type="checkbox">` semantics), but had no way to select a *range* without the mouse: added a
+"select all" checkbox in the table header (synced to a checked/indeterminate/unchecked tri-state), Shift
++click range selection between the last-clicked checkbox and the current one, and Shift+ArrowDown/ArrowUp
+on a focused checkbox to extend a range one row at a time with focus moving along -- the genuinely
+keyboard-only path the shift-click convention alone doesn't provide. Both changes are entirely
+`web/app.js`, no backend/schema/API changes. Browser-verified with Playwright/Chromium in both light and
+dark mode, including a direct API read confirming a bulk Done transition applies the identical resolution
+to every selected issue, and confirming the pre-existing "checkbox click never opens the drawer" guard
+still holds. Both existing browser regression scripts re-run clean. **This was the last item on the
+optional, non-roadmap follow-up list identified when the reduced-scope V1 roadmap closed -- there is
+currently no further queued work.**
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

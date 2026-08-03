@@ -1,5 +1,77 @@
 # Verification record
 
+## 2026-08-03 — Bulk Done-status picker and keyboard multi-select (post-V1, user-requested)
+
+The fourth batch of optional, non-roadmap follow-up, and the last two items on the remaining-work list --
+picked together when the user was asked which to do next. Both are `web/`-only UI polish; neither touches
+the backend.
+
+### What changed
+
+**Bulk Done-status picker.** `GET`/bulk `POST /api/v1/issues/bulk/status` already accepted an optional
+`resolution` field and forwarded it per-issue to the same `changeStatus` call the single-issue path uses
+(`TicketService::bulkChangeStatus` -> `changeStatus(key, statusKey, actor, resolution)` per key) -- the
+backend has supported this since Phase 4/D68-D70's original implementation. The UI, however, filtered
+Done-category statuses out of the bulk status picker entirely (`bulkStatusOptions` excluded
+`status.category === 'done'`), so there was no way to reach it. Fixed by:
+- Including every status in `bulkStatusOptions` again.
+- A new `#bulk-resolution-select` next to the status picker, hidden by default, populated from the
+  existing `RESOLUTIONS` constant (the same one the drawer/board resolution pickers already use).
+- A `change` listener on the status picker toggles the resolution picker's visibility based on whether the
+  newly-selected status is Done-category (`refreshBulkResolutionVisibility`), mirroring the exact same
+  reveal-on-selection pattern the drawer's `#drawer-status`/`#drawer-resolution-row` already uses.
+- The bulk-apply handler includes `resolution` in the request payload only when the selected status is
+  Done-category. The bulk semantics are unchanged: `succeeded`/`failed` per issue, no rollback on partial
+  failure (e.g. an issue with an unfinished sub-task still fails that one row, per D68, while the rest of
+  the batch succeeds).
+
+**Keyboard-driven multi-select.** The issue table's row checkboxes (`.issue-select`) already supported
+basic single-checkbox keyboard toggling for free (native `<input type="checkbox">` semantics: Tab to
+focus, Space to toggle) -- what was actually missing was a way to select a *range* without the mouse, and
+a quick way to select every visible row. Added:
+- A "select all" checkbox in the table header (`#select-all-issues`), toggling every visible row's
+  checkbox and syncing to a checked/unchecked/indeterminate tri-state based on the current selection (all
+  selected -> checked; some selected -> indeterminate; none -> unchecked) -- itself already fully keyboard
+  -operable natively (Tab, Space), no custom keyboard handling needed.
+- Shift+click range select on a row checkbox: checks (or unchecks, matching the clicked box's new state)
+  every row between the last-clicked checkbox and the current one -- the common "range select" convention
+  from file managers/email clients. Tracked via a `lastCheckedIndex` closure variable, reset whenever the
+  bulk bar's "Clear" button runs or the header checkbox is used.
+- Shift+ArrowDown/ArrowUp on a focused checkbox: checks the next/previous row and moves focus to it,
+  extending a range one row at a time without the mouse at all -- the genuinely keyboard-only path the
+  shift-click convention above doesn't provide by itself.
+- `aria-label`s added to both the header and per-row checkboxes (`"Select all issues"`, `"Select TH-1"`
+  etc.) -- they had no accessible name before beyond their position in the row.
+
+### Verification
+
+- Browser-verified with Playwright/Chromium:
+  - Selecting two non-Done issues, choosing "Done" in the bulk status picker, confirming the resolution
+    picker appears, picking a resolution, and applying: both issues moved to Done with the exact same
+    resolution value, confirmed via a direct API read after the UI action (`psql`-equivalent for SQLite --
+    `GET /api/v1/issues`).
+  - The resolution picker correctly hides again when switching the bulk status picker back to a non-Done
+    status, and starts hidden by default.
+  - The header select-all checkbox checks/unchecks all six visible rows and toggles the bulk bar's
+    visibility correctly both ways.
+  - Shift-click from one row's checkbox to another (skipping the ones in between) correctly checks every
+    row in between, not just the two endpoints.
+  - Keyboard-only path: focused the first checkbox, pressed Space (native toggle) to check it, then two
+    consecutive Shift+ArrowDown presses -- confirmed the selection count grew by one per press and that
+    keyboard focus moved along with each extension (not left behind on the first checkbox).
+  - Confirmed the pre-existing regression guard still holds: clicking a checkbox never opens the issue
+    drawer (the existing `stopPropagation` on checkbox clicks, now shared with the new shift-click range
+    logic, is unaffected).
+  - Screenshotted the bulk resolution picker in dark mode and a mid-range-select state in light mode --
+    both render correctly with no unstyled elements (the new markup reuses `.bulk-bar select`/`.issue-
+    select` styling verbatim, no new CSS was needed).
+- Re-ran both existing browser regression scripts (`login_browser_test.mjs`, `reorder_move_bulk_test.mjs`)
+  unchanged -- both passed.
+- `ctest --output-on-failure`: 8/8 green (no C++ source touched, only `web/app.js`).
+
+This closes out the full list of optional, non-roadmap follow-up items that were identified when the
+reduced-scope V1 roadmap closed.
+
 ## 2026-08-03 — Kanban board drag-and-drop (post-V1, user-requested)
 
 The third batch of optional, non-roadmap follow-up. The board was already usable end-to-end via the issue

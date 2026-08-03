@@ -216,7 +216,12 @@ remain as the long-term aspirational baseline only — do not build against them
   instead of only via the drawer's status dropdown, which remains the keyboard-operable path (native HTML5
   drag-and-drop has none). A Done-category drop without an existing resolution opens a small prompt first,
   same D68-D70 rule as the dropdown. No backend/schema/API changes. See `docs/VERIFICATION.md` for detail.
-- Remaining optional items, not yet started: a friendlier bulk Done-status picker, keyboard multi-select.
+- **Batch 4 (done): bulk Done-status picker and keyboard multi-select** -- the bulk status picker now
+  includes Done-category statuses with a shared-resolution prompt (the backend already supported this; only
+  the UI was missing); the issues table gained a header "select all" checkbox, Shift+click range select,
+  and Shift+ArrowDown/ArrowUp keyboard range extension. Both `web/`-only. See `docs/VERIFICATION.md` for
+  detail.
+- **No further optional items remain** -- every item on the post-V1 follow-up list is done.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
