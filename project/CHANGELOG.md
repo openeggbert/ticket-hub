@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Rename the "Selected" workflow status to "Confirmed"
+
+- The `selected` status's display name is now "Confirmed" (the internal `status_key` is unchanged, so
+  filters/URLs/API calls referencing `selected` are unaffected). Updated in the demo seed
+  (`migrations/sqlite/002_seed_demo.sql` and `migrations/postgresql/002_seed_demo.sql` -- an idempotent,
+  explicitly re-runnable seed script, not a checksummed schema migration, so it's edited directly rather
+  than requiring a new migration) and in `web/app.js`'s client-side `STATUSES` label list. Verified against
+  a fresh SQLite seed and a fresh live PostgreSQL seed; the board column header, issue status chips, and
+  every status dropdown/filter now show "Confirmed".
+
 ## Unreleased — Bulk Done-status picker and keyboard multi-select (post-V1)
 
 - **Bulk status changes now support Done-category statuses**: the bulk status picker no longer excludes

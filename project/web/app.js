@@ -2,7 +2,7 @@
 
 const STATUSES = [
   { key: 'backlog', name: 'Backlog', category: 'todo' },
-  { key: 'selected', name: 'Selected', category: 'todo' },
+  { key: 'selected', name: 'Confirmed', category: 'todo' },
   { key: 'in-progress', name: 'In Progress', category: 'in_progress' },
   { key: 'review', name: 'In Review', category: 'in_progress' },
   { key: 'done', name: 'Done', category: 'done' }

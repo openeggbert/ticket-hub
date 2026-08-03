@@ -25,7 +25,7 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO issue_statuses(id, status_key, name, category, sort_order) VALUES
 ('20000000-0000-4000-8000-000000000001', 'backlog', 'Backlog', 'todo', 10),
-('20000000-0000-4000-8000-000000000002', 'selected', 'Selected', 'todo', 20),
+('20000000-0000-4000-8000-000000000002', 'selected', 'Confirmed', 'todo', 20),
 ('20000000-0000-4000-8000-000000000003', 'in-progress', 'In Progress', 'in_progress', 30),
 ('20000000-0000-4000-8000-000000000004', 'review', 'In Review', 'in_progress', 40),
 ('20000000-0000-4000-8000-000000000005', 'done', 'Done', 'done', 50)
