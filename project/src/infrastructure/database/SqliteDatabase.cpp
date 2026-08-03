@@ -643,6 +643,17 @@ std::optional<std::string> SqliteDatabase::findPasswordHash(const std::string& u
     return text(statement.get(), 0);
 }
 
+void SqliteDatabase::updateUserPreferences(const std::string& userId, const Domain::UpdatePreferencesRequest& request) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE users SET time_zone = ?, clock_format = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+)SQL");
+    statement.bind(1, request.timeZone);
+    statement.bind(2, request.clockFormat);
+    statement.bind(3, userId);
+    expectDone(database_, statement, "Update user preferences");
+}
+
 void SqliteDatabase::recordFailedLogin(const std::string& userId) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(
@@ -933,6 +944,99 @@ WHERE project_key = ? AND deleted_at IS NULL
     statement.bind(3, projectKey);
     statement.step();
     return sqlite3_changes(database_) > 0;
+}
+
+std::optional<Domain::Project> SqliteDatabase::changeProjectKey(const std::string& oldKey, const std::string& newKey) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        Statement projectRow(database_, "SELECT id FROM projects WHERE project_key = ? AND deleted_at IS NULL");
+        projectRow.bind(1, oldKey);
+        if (projectRow.step() != SQLITE_ROW) {
+            executeScript("ROLLBACK;");
+            return std::nullopt;
+        }
+        const std::string projectId = text(projectRow.get(), 0);
+
+        Statement collision(database_, R"SQL(
+SELECT 1 FROM projects WHERE project_key = ? AND deleted_at IS NULL
+UNION ALL
+SELECT 1 FROM project_key_aliases WHERE alias_key = ?
+)SQL");
+        collision.bind(1, newKey);
+        collision.bind(2, newKey);
+        if (collision.step() == SQLITE_ROW) {
+            throw std::invalid_argument("Project key is already in use: " + newKey);
+        }
+
+        // The old key becomes a permanent alias -- same mechanism moveTicket
+        // already established for ticket_key_aliases (D38); safe because
+        // project_key_aliases.alias_key is itself a PRIMARY KEY.
+        Statement projectAlias(database_, "INSERT INTO project_key_aliases(alias_key, project_id) VALUES (?, ?)");
+        projectAlias.bind(1, oldKey);
+        projectAlias.bind(2, projectId);
+        expectDone(database_, projectAlias, "Project key alias insert");
+
+        Statement updateProject(database_, "UPDATE projects SET project_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+        updateProject.bind(1, newKey);
+        updateProject.bind(2, projectId);
+        expectDone(database_, updateProject, "Project key update");
+
+        // Every ticket ever created under this project -- including
+        // soft-deleted ones, since a key must stay permanently resolvable
+        // regardless of the ticket's own lifecycle state -- is renamed to
+        // the new prefix with the same numeric suffix; its own old key
+        // becomes a ticket_key_aliases entry, mirroring moveTicket's
+        // single-ticket case.
+        struct TicketKeyRow {
+            std::string ticketId;
+            std::int64_t ticketNumber;
+            std::string oldTicketKey;
+        };
+        std::vector<TicketKeyRow> ticketRows;
+        Statement tickets(database_, "SELECT id, ticket_number, ticket_key FROM tickets WHERE project_id = ?");
+        tickets.bind(1, projectId);
+        for (int result = tickets.step(); result == SQLITE_ROW; result = tickets.step()) {
+            ticketRows.push_back({text(tickets.get(), 0), sqlite3_column_int64(tickets.get(), 1), text(tickets.get(), 2)});
+        }
+        for (const auto& row : ticketRows) {
+            const std::string newTicketKey = newKey + "-" + std::to_string(row.ticketNumber);
+            Statement ticketAlias(database_, "INSERT INTO ticket_key_aliases(alias_key, ticket_id) VALUES (?, ?)");
+            ticketAlias.bind(1, row.oldTicketKey);
+            ticketAlias.bind(2, row.ticketId);
+            expectDone(database_, ticketAlias, "Ticket key alias insert");
+
+            Statement updateTicket(database_, "UPDATE tickets SET ticket_key = ? WHERE id = ?");
+            updateTicket.bind(1, newTicketKey);
+            updateTicket.bind(2, row.ticketId);
+            expectDone(database_, updateTicket, "Ticket key rename");
+        }
+
+        executeScript("COMMIT;");
+        Statement read(database_, std::string(ProjectSelectSql) + " WHERE p.id = ? GROUP BY p.id");
+        read.bind(1, projectId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Renamed project could not be read back");
+        }
+        Domain::Project project;
+        project.id = text(read.get(), 0);
+        project.key = text(read.get(), 1);
+        project.name = text(read.get(), 2);
+        project.description = text(read.get(), 3);
+        if (sqlite3_column_type(read.get(), 4) != SQLITE_NULL) {
+            project.lead = readUserSummary(read.get(), 4);
+        }
+        project.ticketCount = sqlite3_column_int64(read.get(), 7);
+        project.openTicketCount = sqlite3_column_int64(read.get(), 8);
+        project.archived = boolColumn(read.get(), 9);
+        return project;
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
 }
 
 bool SqliteDatabase::softDeleteProject(const std::string& projectKey, const std::string& actorUserId) {

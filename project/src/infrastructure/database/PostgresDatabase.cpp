@@ -616,6 +616,14 @@ std::optional<std::string> PostgresDatabase::findPasswordHash(const std::string&
     return value(result.get(), 0, 0);
 }
 
+void PostgresDatabase::updateUserPreferences(const std::string& userId, const Domain::UpdatePreferencesRequest& request) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), R"SQL(
+UPDATE users SET time_zone = $1, clock_format = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3
+)SQL",
+               {request.timeZone, request.clockFormat, userId}, "Update user preferences");
+}
+
 void PostgresDatabase::recordFailedLogin(const std::string& userId) {
     auto connection = connect(connectionString_);
     execParams(connection.get(), R"SQL(
@@ -893,6 +901,73 @@ WHERE project_key = $2 AND deleted_at IS NULL
                              {archived ? std::string("true") : std::string("false"), projectKey},
                              "Set project archived");
     return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+std::optional<Domain::Project> PostgresDatabase::changeProjectKey(const std::string& oldKey, const std::string& newKey) {
+    auto connection = connect(connectionString_);
+    exec(connection.get(), "BEGIN", "Begin change project key transaction");
+    try {
+        auto projectRow = execParams(connection.get(), "SELECT id FROM projects WHERE project_key = $1 AND deleted_at IS NULL",
+                                     {oldKey}, "Find project by key");
+        if (PQntuples(projectRow.get()) != 1) {
+            exec(connection.get(), "ROLLBACK", "Rollback missing project transaction");
+            return std::nullopt;
+        }
+        const std::string projectId = value(projectRow.get(), 0, 0);
+
+        auto collision = execParams(connection.get(), R"SQL(
+SELECT 1 FROM projects WHERE project_key = $1 AND deleted_at IS NULL
+UNION ALL
+SELECT 1 FROM project_key_aliases WHERE alias_key = $1
+)SQL",
+                                    {newKey}, "Check new project key collision");
+        if (PQntuples(collision.get()) != 0) {
+            throw std::invalid_argument("Project key is already in use: " + newKey);
+        }
+
+        // The old key becomes a permanent alias -- same mechanism moveTicket
+        // already established for ticket_key_aliases (D38).
+        execParams(connection.get(), "INSERT INTO project_key_aliases(alias_key, project_id) VALUES ($1, $2)",
+                  {oldKey, projectId}, "Insert project key alias");
+
+        execParams(connection.get(), "UPDATE projects SET project_key = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+                  {newKey, projectId}, "Update project key");
+
+        // Every ticket ever created under this project -- including
+        // soft-deleted ones, since a key must stay permanently resolvable
+        // regardless of the ticket's own lifecycle state -- is renamed to
+        // the new prefix with the same numeric suffix; its own old key
+        // becomes a ticket_key_aliases entry, mirroring moveTicket's
+        // single-ticket case.
+        auto tickets = execParams(connection.get(), "SELECT id, ticket_number, ticket_key FROM tickets WHERE project_id = $1",
+                                  {projectId}, "List tickets for key rename");
+        for (int row = 0; row < PQntuples(tickets.get()); ++row) {
+            const std::string ticketId = value(tickets.get(), row, 0);
+            const std::string ticketNumber = value(tickets.get(), row, 1);
+            const std::string oldTicketKey = value(tickets.get(), row, 2);
+            const std::string newTicketKey = newKey + "-" + ticketNumber;
+
+            execParams(connection.get(), "INSERT INTO ticket_key_aliases(alias_key, ticket_id) VALUES ($1, $2)",
+                      {oldTicketKey, ticketId}, "Insert ticket key alias");
+            execParams(connection.get(), "UPDATE tickets SET ticket_key = $1 WHERE id = $2",
+                      {newTicketKey, ticketId}, "Rename ticket key");
+        }
+
+        exec(connection.get(), "COMMIT", "Commit change project key transaction");
+
+        auto result = execParams(connection.get(), std::string(ProjectSelectSql) + " WHERE p.id = $1",
+                                 {projectId}, "Read renamed project");
+        if (PQntuples(result.get()) != 1) {
+            throw std::runtime_error("Renamed project could not be read back");
+        }
+        return readProject(result.get(), 0);
+    } catch (...) {
+        try {
+            exec(connection.get(), "ROLLBACK", "Rollback change project key transaction");
+        } catch (...) {
+        }
+        throw;
+    }
 }
 
 bool PostgresDatabase::softDeleteProject(const std::string& projectKey, const std::string& actorUserId) {

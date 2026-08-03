@@ -188,6 +188,23 @@ std::vector<std::string> validateCreateUser(const CreateUserRequest& request) {
     return errors;
 }
 
+bool isValidClockFormat(const std::string& value) {
+    return value == "12h" || value == "24h";
+}
+
+std::vector<std::string> validateUpdatePreferences(const UpdatePreferencesRequest& request) {
+    std::vector<std::string> errors;
+    if (trim(request.timeZone).empty()) {
+        errors.emplace_back("timeZone is required");
+    } else if (request.timeZone.size() > 80) {
+        errors.emplace_back("timeZone must not exceed 80 characters");
+    }
+    if (!isValidClockFormat(request.clockFormat)) {
+        errors.emplace_back("clockFormat must be \"12h\" or \"24h\"");
+    }
+    return errors;
+}
+
 std::vector<std::string> validateCreateProject(const CreateProjectRequest& request) {
     std::vector<std::string> errors;
     if (!isValidProjectKey(normalizeProjectKey(request.key))) {

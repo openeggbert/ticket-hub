@@ -86,6 +86,23 @@ int main() {
     invalidUser.password = "short";
     require(validateCreateUser(invalidUser).size() == 3, "invalid create-user request reports all expected errors");
 
+    UpdatePreferencesRequest validPreferences;
+    validPreferences.timeZone = "Europe/Prague";
+    validPreferences.clockFormat = "24h";
+    require(validateUpdatePreferences(validPreferences).empty(), "valid preferences request");
+
+    UpdatePreferencesRequest validPreferences12h;
+    validPreferences12h.timeZone = "UTC";
+    validPreferences12h.clockFormat = "12h";
+    require(validateUpdatePreferences(validPreferences12h).empty(), "12h clock format is valid");
+
+    UpdatePreferencesRequest invalidPreferences;
+    invalidPreferences.timeZone = "";
+    invalidPreferences.clockFormat = "30h";
+    require(validateUpdatePreferences(invalidPreferences).size() == 2, "invalid preferences request reports all expected errors");
+    require(!isValidClockFormat("30h"), "clock format must be 12h or 24h");
+    require(isValidClockFormat("12h") && isValidClockFormat("24h"), "12h and 24h are the only valid clock formats");
+
     std::cout << "All domain validation tests passed\n";
     return 0;
 }

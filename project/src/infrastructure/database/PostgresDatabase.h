@@ -23,6 +23,7 @@ public:
     std::optional<Domain::User> findUserByHandle(const std::string& handle) override;
     std::vector<Domain::User> listUsers() override;
     std::optional<std::string> findPasswordHash(const std::string& userId) override;
+    void updateUserPreferences(const std::string& userId, const Domain::UpdatePreferencesRequest& request) override;
     void recordFailedLogin(const std::string& userId) override;
     void resetFailedLogin(const std::string& userId) override;
     bool isLoginLocked(const std::string& userId) override;
@@ -50,6 +51,7 @@ public:
     Domain::Project createProject(const Domain::CreateProjectRequest& request,
                                   const std::string& creatorUserId) override;
     bool setProjectArchived(const std::string& projectKey, bool archived) override;
+    std::optional<Domain::Project> changeProjectKey(const std::string& oldKey, const std::string& newKey) override;
     bool softDeleteProject(const std::string& projectKey, const std::string& actorUserId) override;
     bool restoreProject(const std::string& projectKey) override;
     std::vector<Domain::Project> listDeletedProjects() override;

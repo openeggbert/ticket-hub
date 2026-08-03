@@ -47,6 +47,10 @@ public:
     // Returns nullopt if the user has no local credentials at all (should not
     // happen in V1 -- there is no OIDC -- but keeps the port honest).
     virtual std::optional<std::string> findPasswordHash(const std::string& userId) = 0;
+    // Self-service timezone/clock-format preferences (D45). The caller
+    // (TicketService) always passes the authenticated actor's own userId --
+    // there is no cross-user preference management.
+    virtual void updateUserPreferences(const std::string& userId, const Domain::UpdatePreferencesRequest& request) = 0;
 
     // Minimal login-attempt tracking (Phase 1). The full configurable
     // lockout policy rides along with REST rate limiting in Phase 6; see
@@ -100,6 +104,16 @@ public:
     virtual Domain::Project createProject(const Domain::CreateProjectRequest& request,
                                           const std::string& creatorUserId) = 0;
     virtual bool setProjectArchived(const std::string& projectKey, bool archived) = 0;
+    // Changing an active project's key (D91): the old key becomes a
+    // permanent alias (project_key_aliases, mirroring ticket_key_aliases'
+    // role for moveTicket/D38) and every ticket in the project -- including
+    // soft-deleted ones, since a key must stay resolvable forever -- is
+    // renamed to the new prefix with the same numeric suffix, its own old
+    // key becoming a ticket_key_aliases entry. Throws std::invalid_argument
+    // if newKey is already in use by another active project or reserved by
+    // an existing project_key_aliases entry. Returns nullopt if oldKey does
+    // not resolve to a live project.
+    virtual std::optional<Domain::Project> changeProjectKey(const std::string& oldKey, const std::string& newKey) = 0;
     // Recycle bin: soft delete / restore / list (which purges anything past
     // the fixed 90-day retention on access -- there is no background job to
     // do this proactively, D89) / permanent delete.

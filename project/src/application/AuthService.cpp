@@ -20,7 +20,7 @@ namespace {
 constexpr long long SessionLifetimeSeconds = 30LL * 24 * 60 * 60;
 
 Domain::Principal toPrincipal(const Domain::User& user) {
-    return Domain::Principal{user.id, user.email, user.displayName, user.isAdmin};
+    return Domain::Principal{user.id, user.email, user.displayName, user.isAdmin, user.timeZone, user.clockFormat};
 }
 
 // Argon2id verification is deliberately slow; only running it on the

@@ -254,7 +254,12 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .project-card-actions { display: flex; gap: 8px; margin-top: 14px; }
 .project-card-actions .secondary-button { padding: 6px 10px; font-size: 12px; }
 
-.modal-backdrop, .drawer-backdrop { position: fixed; inset: 0; z-index: 80; background: var(--overlay); }
+.drawer-backdrop { position: fixed; inset: 0; z-index: 80; background: var(--overlay); }
+/* Above the ticket drawer (z-index 90, e.g. D129's conflict dialog can be
+   triggered by a failed save while the drawer is still open) -- a modal
+   dialog must always be the topmost layer regardless of what else is open
+   behind it. */
+.modal-backdrop { position: fixed; inset: 0; z-index: 100; background: var(--overlay); }
 .modal { position: absolute; top: 50%; left: 50%; width: min(720px, calc(100vw - 28px)); max-height: calc(100vh - 40px); overflow-y: auto; transform: translate(-50%, -50%); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
 .modal-header, .modal-footer { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; }
 .modal-header { border-bottom: 1px solid var(--border); }
@@ -348,6 +353,8 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .markdown-body p { margin: 8px 0; }
 .markdown-body ul, .markdown-body ol { margin: 8px 0; padding-left: 22px; }
 .markdown-body li { margin: 2px 0; }
+.markdown-body li.checklist-item { list-style: none; margin-left: -20px; }
+.markdown-body li.checklist-item input { margin-right: 4px; vertical-align: middle; }
 .markdown-body blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid var(--border); color: var(--muted); }
 .markdown-body blockquote p { margin: 0; }
 .markdown-body code { background: var(--surface-soft); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.92em; }

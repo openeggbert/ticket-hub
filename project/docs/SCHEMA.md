@@ -82,6 +82,15 @@ Current schema migrations:
 to change it afterward. Always stored lowercase (`Domain::normalizeHandle`), same normalization style as
 email.
 
+`time_zone` (default `UTC`) and `clock_format` (default `24h`) are self-service (D45): `PATCH
+/api/v1/account/preferences` (`IDatabase::updateUserPreferences`) lets a logged-in user set both directly,
+validated by `Domain::validateUpdatePreferences` (non-empty IANA-style zone name up to 80 characters,
+`clockFormat` exactly `12h` or `24h`). They flow into `Domain::Principal` (via `AuthService::toPrincipal`)
+so every response that returns the caller's principal reflects the current values. The web client tracks
+"has this browser's user ever touched this" in `localStorage` (not a server column, deliberately -- see
+`Models.h`) and only auto-fills from `Intl.DateTimeFormat().resolvedOptions().timeZone` on first login,
+never overwriting a value the user set themselves, including a deliberate `UTC`.
+
 The prototype's temporary `username` column was removed in `004_identity.sql`. There is no `handle` column yet — it is added in a later phase together with @mentions, the first feature that actually needs one (`docs/REMOVED_AND_DEFERRED_FEATURES.md`).
 
 ### `local_credentials`
@@ -126,6 +135,16 @@ column keeps its `UNIQUE` constraint across soft-deleted rows) until `permanentl
 ### `project_key_aliases`
 
 `alias_key` PK, `project_id` nullable, `created_at`. A null project ID can preserve key reservation after a future permanent deletion.
+
+Populated by `IDatabase::changeProjectKey` (D91, `PATCH /api/v1/projects/<key>/key`, project-Admin-or-above):
+the vacated key becomes a permanent row here (so it can never be reused by another project, mirroring
+D90's "reserved while in the recycle bin" rule), and every ticket that belonged to the project -- including
+soft-deleted ones -- is renamed to the new prefix with the same numeric suffix, its own vacated key becoming
+a `ticket_key_aliases` row exactly like `moveTicket` (D38) already does for a single ticket. Ticket lookups
+already resolve `ticket_key_aliases` universally, so old ticket URLs/bookmarks keep working after a project
+rename; `project_key_aliases` itself is a reservation record, not a lookup index -- there is no route that
+resolves a project by its old key (the API has no single-project-by-key GET route at all; every project
+reference from the web client goes through `listProjects`, which only returns live keys).
 
 ### `project_members`
 

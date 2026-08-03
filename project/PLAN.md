@@ -109,6 +109,25 @@ remains only as optional, non-roadmap follow-up.
   table filter. Verified end-to-end against fresh live PostgreSQL and SQLite databases (including the `ON
   DELETE SET NULL` behavior through the real HTTP API), new unit/integration/authorization test coverage,
   and a full Playwright/Chromium pass (which found and fixed one real layout bug in the components list).
+- **Post-V1, batch 8.** The user asked for a full gap analysis between the V1 decision register and the
+  actual codebase, then asked to implement everything found. All 142 decisions in
+  `docs/REDUCED_SCOPE_DECISIONS.md` were re-checked against the real code; five `KEEP_FOR_V1`/
+  `ALREADY_IMPLEMENTED_AND_KEEP` features turned out to be gaps (D101's attachment sortable list, initially
+  suspected, was confirmed correctly implemented -- a false alarm). Implemented all five: Markdown
+  checklist rendering (D62, real checkboxes instead of literal bracket text), a client-side-only "No Epic"
+  ticket filter (D66), a conflict dialog on a stale optimistic-lock save (D129, new `error.status` plumbing
+  through `api()`), self-service timezone/clock-format preferences (D45, new `PATCH
+  /api/v1/account/preferences` / `IDatabase::updateUserPreferences`, a `localStorage`-based "has the user
+  set this" signal to make auto-detect safe, date-only values rendered in UTC with no shift), and changing
+  an active project's key (D91, new `PATCH /api/v1/projects/{key}/key` / `IDatabase::changeProjectKey`,
+  reusing the exact alias-and-bulk-rename pattern `moveTicket`/D38 already established, extended to every
+  ticket in the project at once). Found and fixed two real bugs during this batch's own browser
+  verification: a stale `state.selectedProject` after renaming the currently-selected project (silently
+  emptied the Tickets/Board views), and `.modal-backdrop` sharing a lower `z-index` than `.ticket-drawer`
+  (any modal opened over the drawer, most importantly the new conflict dialog, was rendered behind it and
+  unclickable). New unit/integration/authorization test coverage; verified end-to-end against fresh live
+  PostgreSQL and SQLite databases over real HTTP, and a full Playwright/Chromium browser pass (13/13
+  checks).
   **There is currently no further queued work.**
 
 ## Implementation rules
