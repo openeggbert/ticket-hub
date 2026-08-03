@@ -1297,9 +1297,11 @@ std::optional<Domain::Issue> PostgresDatabase::editIssue(const std::string& issu
     try {
         auto current = execParams(connection.get(), R"SQL(
 SELECT i.id, i.summary, i.description, pr.priority_key, assignee.email,
-       i.story_points, i.due_date::text, i.version
+       i.story_points, i.due_date::text, i.version, it.type_key,
+       (SELECT issue_key FROM issues WHERE id = i.parent_issue_id)
 FROM issues i
 JOIN priorities pr ON pr.id = i.priority_id
+JOIN issue_types it ON it.id = i.issue_type_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
 WHERE i.deleted_at IS NULL
   AND (i.issue_key = $1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = $1))
@@ -1322,8 +1324,23 @@ FOR UPDATE OF i
         }
         const std::optional<std::string> oldDueDate = optionalValue(current.get(), 0, 6);
         const std::int64_t currentVersion = int64Value(current.get(), 0, 7);
+        const std::string oldTypeKey = value(current.get(), 0, 8);
+        const std::optional<std::string> oldParentKey = optionalValue(current.get(), 0, 9);
         if (expectedVersion && *expectedVersion != currentVersion) {
             throw Domain::ConcurrencyConflict("Issue was modified by another user");
+        }
+
+        // See the SQLite adapter's editIssue for why this must be checked
+        // transactionally rather than in TicketService.
+        if (Domain::issueTypeHierarchyLevel(oldTypeKey) != Domain::issueTypeHierarchyLevel(request.issueTypeKey)) {
+            auto childCheck = execParams(connection.get(),
+                                         "SELECT COUNT(*) FROM issues WHERE parent_issue_id = $1 AND deleted_at IS NULL",
+                                         {issueId},
+                                         "Count child issues");
+            if (int64Value(childCheck.get(), 0, 0) > 0) {
+                throw std::invalid_argument(
+                    "Cannot change an issue's type across hierarchy levels while it has child issues");
+            }
         }
 
         const std::string priorityId = lookupId(connection.get(), "priorities", "priority_key", request.priorityKey);
@@ -1331,18 +1348,26 @@ FOR UPDATE OF i
         if (request.assigneeEmail && !request.assigneeEmail->empty()) {
             assigneeId = lookupId(connection.get(), "users", "email", *request.assigneeEmail);
         }
+        const std::string issueTypeId = lookupId(connection.get(), "issue_types", "type_key", request.issueTypeKey);
+        std::optional<std::string> parentId;
+        if (request.parentIssueKey && !request.parentIssueKey->empty()) {
+            parentId = lookupIssueId(connection.get(), *request.parentIssueKey);
+        }
         const std::string actorId = requireUserId(connection.get(), actorUserId);
 
         execParams(connection.get(), R"SQL(
 UPDATE issues
 SET summary = $1, description = $2, priority_id = $3, assignee_user_id = $4,
-    story_points = $5::double precision, due_date = $6::date, version = version + 1, updated_at = CURRENT_TIMESTAMP
-WHERE id = $7
+    issue_type_id = $5, parent_issue_id = $6,
+    story_points = $7::double precision, due_date = $8::date, version = version + 1, updated_at = CURRENT_TIMESTAMP
+WHERE id = $9
 )SQL",
                    {request.summary,
                     request.description,
                     priorityId,
                     assigneeId,
+                    issueTypeId,
+                    parentId,
                     request.storyPoints ? std::optional<std::string>(std::to_string(*request.storyPoints)) : std::nullopt,
                     request.dueDate,
                     issueId},
@@ -1382,6 +1407,8 @@ VALUES ($1, $2, $3, $4, $5, $6)
         recordHistory("assignee", historyText(oldAssigneeEmail), historyText(request.assigneeEmail));
         recordHistory("story_points", historyText(oldStoryPoints), historyText(request.storyPoints));
         recordHistory("due_date", historyText(oldDueDate), historyText(request.dueDate));
+        recordHistory("issue_type", oldTypeKey, request.issueTypeKey);
+        recordHistory("parent", historyText(oldParentKey), historyText(request.parentIssueKey));
 
         exec(connection.get(), "COMMIT", "Commit edit issue transaction");
         auto result = execParams(connection.get(), std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = $1",

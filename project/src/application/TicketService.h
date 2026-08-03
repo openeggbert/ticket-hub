@@ -314,6 +314,16 @@ private:
     void requireGlobalAdmin(const Domain::Principal& actor) const;
     void requireReadAccess(const std::optional<Domain::Principal>& actor);
     void requireValidHierarchy(Domain::CreateIssueRequest& request);
+    // Shared by requireValidHierarchy (create) and editIssue (re-typing/
+    // re-parenting, D5/D29/D64-D66): validates and normalizes a type/parent
+    // combination against the fixed hierarchy rules for a project.
+    // `excludeSelfKey` is the issue's own key during an edit (rejects
+    // self-parenting) and nullopt during create (the issue doesn't exist
+    // yet, so it cannot already be a candidate parent).
+    void validateHierarchyShape(const std::string& issueTypeKey,
+                                std::optional<std::string>& parentIssueKey,
+                                const std::string& projectKey,
+                                const std::optional<std::string>& excludeSelfKey);
 
     // Notifies a newly-set assignee (D14 "assigned to me"), skipping a
     // self-assignment and a no-op re-save with the same assignee.

@@ -117,6 +117,7 @@ int main() {
         webEdit.summary = "Should be rejected";
         webEdit.description = "Sam is not a WEB project member.";
         webEdit.priorityKey = "medium";
+        webEdit.issueTypeKey = "task";
         require(throwsForbidden([&] { tickets.editIssue("WEB-1", webEdit, sam); }),
                "non-member cannot edit another project's issue");
 
@@ -124,12 +125,14 @@ int main() {
         thEdit.summary = "Edited by a TH member";
         thEdit.description = "Alex is a member of TH.";
         thEdit.priorityKey = "high";
+        thEdit.issueTypeKey = created.type.key;
         const auto edited = tickets.editIssue(created.key, thEdit, alex);
         require(edited.has_value() && edited->summary == thEdit.summary, "a TH member can edit a TH issue");
 
         EditIssueRequest missingEdit;
         missingEdit.summary = "n/a";
         missingEdit.priorityKey = "medium";
+        missingEdit.issueTypeKey = "task";
         require(!tickets.editIssue("TH-9999", missingEdit, demo).has_value(),
                "editing an unknown issue returns nullopt rather than throwing");
     }
@@ -307,6 +310,7 @@ int main() {
         reassign.summary = assignedIssue.summary;
         reassign.description = assignedIssue.description;
         reassign.priorityKey = assignedIssue.priority.key;
+        reassign.issueTypeKey = assignedIssue.type.key;
         reassign.assigneeEmail = "alex@ticket-hub.local"; // unchanged
         tickets.editIssue(assignedIssue.key, reassign, demo);
         require(tickets.countUnreadNotifications(alex) == 1,

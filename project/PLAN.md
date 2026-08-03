@@ -15,8 +15,9 @@ the hardening pass). See "The roadmap is now complete" in `NEXT.md` for the exac
 remains only as optional, non-roadmap follow-up.
 
 - **Milestone 1** (Phases 1-3: identity/sessions, authorization/projects, issue core/fixed workflow) --
-  **complete** at the core/CLI/test/server/UI layer, with one deliberate exception: re-typing
-  (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after creation is not implemented.
+  **fully complete** at the core/CLI/test/server/UI layer. Re-typing (`issueTypeKey`)/re-parenting
+  (`parentIssueKey`) an issue after creation, the one item left open since Phase 3, was added post-V1 as
+  optional follow-up batch 2 (see below).
 - **Milestone 2** (Phase 4: Collaboration; Phase 5: Attachments and Kanban board) -- **complete**. Comment
   editing/tombstone delete, fixed emoji reactions, @mention handles and in-app notifications, the
   Markdown editor (toolbar/live preview/full attachment upload+drag-drop+paste), simplified worklogs, the
@@ -54,11 +55,18 @@ remains only as optional, non-roadmap follow-up.
   worklog/attachment mutation routes, plus four lower-severity issues (a session-derived CSRF cookie, a
   login timing side channel, a missing CSRF check on logout, and CSV formula injection). **This closes
   Phase 8, Milestone 4, and the entire roadmap.**
-- **Post-V1, optional follow-up.** The user was asked to pick the first item and chose a web UI for
-  managing personal access tokens and active sessions -- both already had a complete REST API since
+- **Post-V1, optional follow-up (batch 1).** The user was asked to pick the first item and chose a web UI
+  for managing personal access tokens and active sessions -- both already had a complete REST API since
   Phase 6; only the `web/` surface was missing. Done: a new "Account" page (create/list/revoke tokens with
   the raw value shown exactly once, list/sign-out active sessions), no backend or schema changes,
   browser-verified end-to-end including a genuine two-session sign-out-others test.
+- **Post-V1, optional follow-up (batch 2).** The user was asked to pick the next item and chose re-typing/
+  re-parenting an issue after creation -- the one item left open since Phase 3. `editIssue` now edits
+  `issueTypeKey`/`parentIssueKey`, reusing the same fixed hierarchy-shape rules as `createIssue` plus a new
+  self-parent guard, and rejecting a hierarchy-level retype while the issue has children (checked
+  transactionally in `IDatabase::editIssue`, the same precedent `moveIssue`'s own "has children" rule
+  already established). New Type/Parent picker in the issue drawer's edit form. Verified end-to-end
+  including against live PostgreSQL (both database adapters changed) and browser-verified with Playwright.
 
 ## Implementation rules
 

@@ -159,9 +159,14 @@ Core columns:
 Ordinary list, detail and dashboard queries exclude deleted issues. Status changes increment `version`; an expected stale version raises a concurrency conflict.
 
 `IDatabase::editIssue` (Phase 3, D129) is a full-replacement edit of `summary`/`description`/
-`priority_id`/`assignee_user_id`/`story_points`/`due_date`/labels, sharing the same optimistic-locking
-contract as `changeIssueStatus`. It does not touch `issue_type_id` or `parent_issue_id` -- re-typing or
-re-parenting an issue after creation is not yet implemented.
+`priority_id`/`assignee_user_id`/`story_points`/`due_date`/labels/`issue_type_id`/`parent_issue_id`,
+sharing the same optimistic-locking contract as `changeIssueStatus`. Re-typing and re-parenting an issue
+after creation (post-V1 follow-up) re-validates the fixed hierarchy shape (Epic/Sub-task/same-project/
+parent-level, same rules as `createIssue`) and, transactionally inside `editIssue` itself (not
+`TicketService`, since it depends on concurrent database state exactly like `moveIssue`'s own "has
+children" rule), rejects retyping across hierarchy levels (Epic <-> Story/Task/Bug <-> Sub-task) whenever
+the issue currently has child issues -- same-level retyping (e.g. Task -> Bug) is always allowed since it
+never changes what any existing parent/child relationship requires.
 
 `deleted_at`/`deleted_by_user_id` are now a real recycle bin, not just schema foundations (Phase 3, D22):
 `IDatabase::softDeleteIssue`/`restoreIssue`/`listDeletedIssues`/`permanentlyDeleteIssue` mirror the
@@ -205,8 +210,9 @@ needed -- every project shares the same fixed types/workflow/fields (D4/D9) -- s
 counter/locking mechanism as `createIssue`, plus an append-at-end `rank_order` in the target project. It
 is rejected with `std::invalid_argument` if the issue has a parent, has any (non-deleted) children, is
 already in the target project, or the target project is unknown/archived/deleted -- hierarchy (D64-D66)
-requires a parent and its children to share a project, and re-parenting/un-parenting on move is not
-implemented. The vacated key is written into `issue_key_aliases` as a permanent alias (D38) -- the first
+requires a parent and its children to share a project, and `moveIssue` itself does not re-parent/un-parent
+as part of the move (an issue with a parent or children must be edited via `editIssue` first to clear
+them). The vacated key is written into `issue_key_aliases` as a permanent alias (D38) -- the first
 code path that actually writes to that table -- and the move records one `issue_history` row
 (`field_name = 'project'`). `TicketService::moveIssue` requires project-Member-or-above on **both** the
 source and target projects, mirroring `createIssueLink`'s two-project-role-check pattern.
@@ -442,7 +448,8 @@ layer (identity and sessions; authorization and project lifecycle; the fixed wor
 issue edit, links, cloning, watching/voting, the issue recycle bin, bulk actions, and manual
 ordering/moving; comment editing, reactions, mentions/notifications, Markdown rendering, worklogs, and the
 admin/security audit log; ad-hoc issue filtering, the personal dashboard, Kanban board WIP limits, and
-attachments), with one deliberate exception: re-typing (`issueTypeKey`) or re-parenting
-(`parentIssueKey`) an issue after creation is not implemented (see `NEXT.md`). Permission schemes,
+attachments). Re-typing (`issueTypeKey`) and re-parenting (`parentIssueKey`) an issue after creation --
+long the one remaining gap in the roadmap's own scope -- was added as the first piece of optional,
+non-roadmap follow-up after the reduced-scope V1 roadmap itself closed (see `NEXT.md`). Permission schemes,
 workflow versions/drafts, custom fields, saved filters, sprints, notifications schemes, jobs, event log,
 and webhooks are not part of the V1 plan at all -- see `docs/REMOVED_AND_DEFERRED_FEATURES.md`.

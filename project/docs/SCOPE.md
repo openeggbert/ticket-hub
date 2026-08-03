@@ -204,12 +204,21 @@ remain as the long-term aspirational baseline only — do not build against them
   the export route. New regression tests cover the IDOR fix; every fix reproduced and confirmed live over
   HTTP. **This closes Phase 8, Milestone 4, and the entire reduced-scope V1 roadmap.**
 
+## Post-V1 (optional, non-roadmap follow-up, picked one at a time by explicit user choice)
+
+- **Batch 1 (done): account settings web UI** -- personal access tokens and active sessions management,
+  both already had a complete REST API since Phase 6, only the `web/` surface was missing.
+- **Batch 2 (done): re-typing and re-parenting an issue after creation** -- the one item left open since
+  Phase 3. `editIssue` now edits `issueTypeKey`/`parentIssueKey` too, re-validating the fixed hierarchy
+  shape and rejecting a hierarchy-level retype while the issue has children (checked transactionally,
+  same precedent as `moveIssue`'s own "has children" rule). See `docs/VERIFICATION.md` for detail.
+- Remaining optional items, not yet started: drag-and-drop board reordering, a friendlier bulk Done-status
+  picker, keyboard multi-select.
+
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
-- Rest of Phase 3: re-typing or re-parenting an issue after creation (`editIssue` does not touch
-  `issueTypeKey`/`parentIssueKey`).
-- Phases 4 and 5 are both complete. Drag-and-drop *board* reordering is optional UX polish, not required
-  by any decision.
+- Phases 1-8 (the entire reduced-scope V1 roadmap) are complete -- nothing remains in this category.
+  Everything below this point is either post-V1 optional follow-up (above) or permanently out of scope.
 - **Milestone 3 (Phases 6 and 7) is fully complete.** Pagination (D126) covers `GET /api/v1/issues` only
   so far -- every other list endpoint (projects, comments, worklogs, attachments, notifications,
   sessions, tokens, audit events, watchers, voters, board-columns, issue-links, comment-reactions)

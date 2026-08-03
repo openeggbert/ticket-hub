@@ -1460,7 +1460,13 @@ async function applyStatusChange(issueKey, statusKey, resolution, expectedVersio
 }
 
 function editFieldsMarkup(issue) {
+  const typeOptions = [['task', 'Task'], ['story', 'Story'], ['bug', 'Bug'], ['epic', 'Epic'], ['sub-task', 'Sub-task']];
   return `
+    <label>Type<select id="edit-type">${typeOptions.map(([key, label]) => `<option value="${key}" ${key === issue.type.key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    <label class="wide" id="edit-parent-label">
+      <span id="edit-parent-label-text">Epic (optional)</span>
+      <select id="edit-parent"><option value="">None</option></select>
+    </label>
     <label class="wide">Summary<input id="edit-summary" value="${escapeHtml(issue.summary)}" maxlength="255" required></label>
     <label class="wide">Description<textarea id="edit-description" rows="6">${escapeHtml(issue.description)}</textarea></label>
     <label>Priority<select id="edit-priority">${['highest', 'high', 'medium', 'low', 'lowest'].map(key => `<option value="${key}" ${key === issue.priority.key ? 'selected' : ''}>${key[0].toUpperCase()}${key.slice(1)}</option>`).join('')}</select></label>
@@ -1896,6 +1902,8 @@ async function openIssue(issueKey) {
 
       if (editing) {
         attachMarkdownToolbar(document.querySelector('#edit-description'), issue.key);
+        refreshEditParentOptions(issue).catch(() => {});
+        document.querySelector('#edit-type').addEventListener('change', () => refreshEditParentOptions(issue).catch(() => {}));
         document.querySelector('#edit-cancel').addEventListener('click', () => render(false));
         document.querySelector('#edit-save').addEventListener('click', async () => {
           const errorElement = document.querySelector('#edit-error');
@@ -1908,6 +1916,8 @@ async function openIssue(issueKey) {
             storyPoints: storyPointsValue ? Number(storyPointsValue) : null,
             dueDate: document.querySelector('#edit-due-date').value || null,
             labels: document.querySelector('#edit-labels').value.split(',').map(value => value.trim()).filter(Boolean),
+            issueTypeKey: document.querySelector('#edit-type').value,
+            parentIssueKey: document.querySelector('#edit-parent').value || null,
             expectedVersion: issue.version
           };
           try {
@@ -1973,6 +1983,45 @@ async function refreshCreateParentOptions() {
   } catch {
     // Leave just the "None" option if the project's issues can't be loaded;
     // the create submit itself will surface a clearer error if needed.
+  }
+}
+
+// Same purpose as refreshCreateParentOptions, adapted for the issue drawer's
+// edit form (re-typing/re-parenting an existing issue): the project is
+// fixed (moving an issue between projects is a separate action, D37), and
+// the issue itself is excluded from its own candidate-parent list. The
+// server (TicketService::validateHierarchyShape / IDatabase::editIssue) is
+// the actual source of truth, including the "no children" rule for
+// retyping across hierarchy levels that this picker doesn't attempt to
+// predict client-side.
+let editParentRequestId = 0;
+async function refreshEditParentOptions(issue) {
+  const requestId = ++editParentRequestId;
+  const issueTypeKey = document.querySelector('#edit-type').value;
+  const label = document.querySelector('#edit-parent-label');
+  const select = document.querySelector('#edit-parent');
+  const level = issueTypeHierarchyLevel(issueTypeKey);
+
+  if (level === 1) {
+    label.classList.add('hidden');
+    select.value = '';
+    return;
+  }
+  label.classList.remove('hidden');
+  document.querySelector('#edit-parent-label-text').textContent = level === -1 ? 'Parent (required)' : 'Epic (optional)';
+  const preselect = level === issueTypeHierarchyLevel(issue.type.key) ? issue.parentIssueKey : null;
+  select.innerHTML = '<option value="">None</option>';
+
+  const wantedLevel = level === -1 ? 0 : 1;
+  try {
+    const result = await api(`/api/v1/issues?project=${encodeURIComponent(issue.projectKey)}`);
+    if (requestId !== editParentRequestId) return; // a newer call already superseded this one
+    const candidates = result.items.filter(candidate =>
+      issueTypeHierarchyLevel(candidate.type.key) === wantedLevel && candidate.key !== issue.key);
+    select.innerHTML += candidates.map(candidate =>
+      `<option value="${escapeHtml(candidate.key)}" ${candidate.key === preselect ? 'selected' : ''}>${escapeHtml(candidate.key)} — ${escapeHtml(candidate.summary)}</option>`).join('');
+  } catch {
+    // Leave just the "None" option if the project's issues can't be loaded.
   }
 }
 
