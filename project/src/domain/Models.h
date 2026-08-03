@@ -19,9 +19,15 @@ struct User {
     std::string email;
     std::string displayName;
     // Optional, unique, lowercase (D56); the @mention target (D80). No
-    // self-service profile editing exists yet -- an admin sets it via
+    // self-service editing exists for this field -- an admin sets it via
     // `ticket-hub-cli create-user ... --handle=<handle>` at creation time.
     std::optional<std::string> handle;
+    // Self-service via TicketService::updatePreferences (D45): an IANA zone
+    // name (e.g. "America/New_York") and "12h"/"24h". "Browser auto-detect"
+    // is a client-only concern (web/app.js tracks, per browser via
+    // localStorage, whether this browser has already auto-detected or the
+    // user has manually overridden) -- the server has no "unset" sentinel
+    // and treats every value the same regardless of how it got there.
     std::string timeZone{"UTC"};
     std::string clockFormat{"24h"};
     bool active{true};
@@ -29,14 +35,31 @@ struct User {
     std::string createdAt;
 };
 
+// D45: self-service, full-replacement update of the caller's own
+// timeZone/clockFormat, the same PUT-style contract every other edit
+// request in this codebase uses.
+struct UpdatePreferencesRequest {
+    std::string timeZone;
+    std::string clockFormat;
+};
+
 // The actor context threaded through every application write use case,
 // replacing the prototype's hardcoded demo-user assumption. Built from a
 // validated session (web) or, in a later phase, a validated PAT (API).
+// timeZone/clockFormat (D45) ride along on every Principal purely so
+// `/api/v1/auth/me` can hand them back to the client without a second
+// lookup -- they carry no authorization meaning. Default member
+// initializers mean the many existing `Principal{id, email, name, isAdmin}`
+// call sites (tests, AuthService before this decision) keep compiling
+// unchanged; only AuthService::toPrincipal actually populates them from the
+// stored user row.
 struct Principal {
     std::string userId;
     std::string email;
     std::string displayName;
     bool isAdmin{false};
+    std::string timeZone{"UTC"};
+    std::string clockFormat{"24h"};
 };
 
 // Administrator-only account creation. There is no public registration and

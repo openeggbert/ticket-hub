@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Five V1-decided gaps found by a full decision-register audit (D62/D66/D129/D45/D91)
+
+- Re-audited all 142 decisions in `docs/REDUCED_SCOPE_DECISIONS.md` against the actual codebase and found
+  five `KEEP_FOR_V1`/`ALREADY_IMPLEMENTED_AND_KEEP` features that were never actually implemented; all five
+  implemented, tested, and verified in this batch.
+- **D62**: Markdown checklist syntax (`- [ ]`/`- [x]`) now renders as real, disabled checkboxes instead of
+  literal bracket text.
+- **D66**: a new client-side-only "No Epic" filter on the Tickets view.
+- **D129**: a stale ticket save (HTTP 409, optimistic-lock version mismatch) now shows a conflict dialog
+  with a "Reload latest version" action instead of a generic error toast.
+- **D45**: self-service timezone/clock-format preferences via new `PATCH /api/v1/account/preferences`
+  (`IDatabase::updateUserPreferences`), exposed as a new Preferences panel on the Account view with a
+  "Detect from browser" button; date-only values (due dates, worklog dates) always render in UTC with no
+  time-of-day, never shifted by the viewer's timezone.
+- **D91**: changing an active project's key via new `PATCH /api/v1/projects/{key}/key`
+  (`IDatabase::changeProjectKey`, project-Admin-or-above): the vacated key and every renamed ticket's
+  vacated key become permanent aliases in one transaction, reusing the same alias mechanism `moveTicket`
+  (D38) already established.
+- Fixed two bugs found during this batch's own browser verification: the web client's selected project
+  was not updated when the currently-selected project was renamed (silently emptying the Tickets/Board
+  views), and `.modal-backdrop` shared a lower `z-index` than `.ticket-drawer`, so a modal opened while the
+  ticket drawer is showing (most importantly the new D129 conflict dialog) rendered behind it and was
+  unclickable.
+- Verified: full rebuild and `ctest` clean in all three build configurations; live-verified against fresh
+  PostgreSQL and SQLite databases over real HTTP; full Playwright/Chromium browser pass (13/13 checks).
+
 ## Unreleased — Project components (D19, `KEEP_FOR_V1`)
 
 - Implemented project components, decided `KEEP_FOR_V1` in the original scope review but never actually

@@ -29,6 +29,13 @@ std::vector<std::string> validatePassword(const std::string& password,
                                           const std::string& displayName);
 std::vector<std::string> validateCreateUser(const CreateUserRequest& request);
 
+// D45: clockFormat must be exactly "12h"/"24h" (matches the users.clock_format
+// CHECK constraint); timeZone is only checked for presence -- validating
+// against the full IANA tz database is not worth the cost for a value the
+// browser's own Intl API supplies.
+bool isValidClockFormat(const std::string& value);
+std::vector<std::string> validateUpdatePreferences(const UpdatePreferencesRequest& request);
+
 std::vector<std::string> validateCreateProject(const CreateProjectRequest& request);
 
 // D19: name is required (per-project uniqueness is enforced at the database

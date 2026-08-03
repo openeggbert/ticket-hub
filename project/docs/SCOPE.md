@@ -241,6 +241,53 @@ remain as the long-term aspirational baseline only — do not build against them
   one; deleting a component clears it from any ticket via `ON DELETE SET NULL`. `web/` gained a
   project-card "Components" management dialog and a Component picker/filter/display in the ticket
   create/edit/drawer/table surfaces. See `docs/VERIFICATION.md`.
+- **Batch 8 (done): five V1-decided features that were never actually implemented**, found by re-auditing
+  every `KEEP_FOR_V1`/`ALREADY_IMPLEMENTED_AND_KEEP` decision in `docs/REDUCED_SCOPE_DECISIONS.md` against
+  the real codebase:
+  - **D62 (Markdown checklist syntax)**: `- [ ] foo` / `- [x] bar` list items now render as real, disabled
+    `<input type="checkbox">` elements (checked state preserved) instead of literal bracket text, in
+    `renderMarkdown` (`web/app.js`). No backend change -- Markdown rendering is entirely client-side.
+  - **D66 ("No Epic" ticket filter)**: a client-side-only `#ticket-epic-filter` on the Tickets view (`Any
+    hierarchy` / `No Epic`), matching D10's "ad-hoc, in-UI-only filters" convention -- filters the
+    already-fetched ticket list to top-level tickets with no parent, no new backend field/query-param.
+  - **D129 (stale-write conflict dialog)**: an HTTP 409 from a ticket edit (optimistic-lock version
+    mismatch) now surfaces a `showConflictDialog` modal ("Someone else changed this ticket... Reload
+    latest version") instead of a generic error toast; reloading re-opens the ticket in edit mode with
+    fresh server data. `api()` now attaches `error.status` to thrown errors so call sites can branch on it.
+  - **D45 (per-user timezone/clock-format preferences)**: `time_zone`/`clock_format` on `users` (already
+    present in the schema) are now self-service via `PATCH /api/v1/account/preferences`
+    (`IDatabase::updateUserPreferences`, `Domain::validateUpdatePreferences`), exposed as a new
+    "Preferences" panel on the Account view with a "Detect from browser" button
+    (`Intl.DateTimeFormat().resolvedOptions().timeZone`). `Domain::Principal` gained `timeZone`/
+    `clockFormat` fields (defaulted so every pre-existing 4-argument brace-init call site still compiles).
+    The web client tracks "has this browser's user manually set this" in `localStorage` (not a server
+    column) so auto-detect only fires once per browser and never clobbers a deliberate choice (including a
+    deliberate UTC). `formatDate` now sniffs date-only values (`YYYY-MM-DD`, e.g. due dates, worklog dates)
+    and renders them in UTC with no time-of-day and no timezone shift, per D45's own text; timestamps
+    render in the viewer's stored timezone/clock format.
+  - **D91 (changing an active project's key)**: `PATCH /api/v1/projects/{key}/key` (project-Admin-or-above,
+    `IDatabase::changeProjectKey`) renames a project's key inside one transaction: the vacated key becomes
+    a permanent `project_key_aliases` row (previously a dead/unused table, now populated), and every ticket
+    in the project -- including soft-deleted ones -- is renamed to the new prefix with the same numeric
+    suffix, its own vacated key becoming a `ticket_key_aliases` row exactly like `moveTicket` (D38) does for
+    a single ticket. Rejects a `newKey` already live or already reserved by another project's alias. New
+    "Rename key" button/modal on each project card in `web/app.js`. Two bugs were caught and fixed during
+    browser verification of this batch, not scoped to D91 alone: (1) the client's `state.selectedProject`
+    was not updated when the currently-selected project was renamed, silently emptying the Tickets/Board
+    views until a manual reselect; (2) `.modal-backdrop` had the same `z-index` as `.drawer-backdrop` (80),
+    lower than `.ticket-drawer` (90), so any modal opened while the ticket drawer is showing -- most
+    importantly D129's conflict dialog, triggered by a failed save from inside the drawer's edit form --
+    rendered behind the drawer and was unclickable; `.modal-backdrop` now has its own `z-index: 100`.
+
+  New tests: `tests/domain_validation_tests.cpp` (`validateUpdatePreferences`/`isValidClockFormat`),
+  `tests/sqlite_integration_tests.cpp` (`updateUserPreferences`/`findUserById` round-trip;
+  `changeProjectKey` success, alias creation, ticket bulk-rename, both collision cases, unknown-key
+  no-op), `tests/authorization_integration_tests.cpp` (`changeProjectKey` project-Admin-or-above gate,
+  self-rename/collision/unknown-key rejections). All three build configurations (default, SQLite-only,
+  PostgreSQL-only) compile clean; live-verified against a fresh PostgreSQL database and a fresh SQLite
+  database via `curl` (preferences round-trip, project/ticket key rename and alias resolution, 409
+  conflict response); browser-verified end-to-end with Playwright/Chromium against a fresh SQLite database
+  (all 5 behaviors, 13/13 checks). See `docs/VERIFICATION.md`.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 

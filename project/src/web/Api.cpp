@@ -68,6 +68,8 @@ crow::json::wvalue principalJson(const Domain::Principal& principal) {
     json["email"] = principal.email;
     json["displayName"] = principal.displayName;
     json["isAdmin"] = principal.isAdmin;
+    json["timeZone"] = principal.timeZone;
+    json["clockFormat"] = principal.clockFormat;
     return json;
 }
 
@@ -703,6 +705,40 @@ void registerApiRoutes(crow::SimpleApp& app,
         return jsonResponse(200, principalJson(*principal));
     });
 
+    // Self-service timezone/clock-format preferences (D45). Own-account-only
+    // by construction: TicketService::updatePreferences always targets
+    // `actor.userId`, never a caller-supplied id.
+    CROW_ROUTE(app, "/api/v1/account/preferences")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::UpdatePreferencesRequest update;
+            update.timeZone = requiredString(body, "timeZone");
+            update.clockFormat = requiredString(body, "clockFormat");
+            return jsonResponse(200, principalJson(service->updatePreferences(update, *principal)));
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
     // Personal access tokens (Phase 6, D39/D40): self-service, no admin-
     // managed tokens -- every route here operates only on the caller's own
     // tokens. Managing tokens is a web-UI action (session-cookie-
@@ -914,6 +950,43 @@ void registerApiRoutes(crow::SimpleApp& app,
             return jsonResponse(200, std::move(responseBody));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Changing an active project's key (D91): the old key becomes a
+    // permanent alias (project_key_aliases) and every ticket in the
+    // project is renamed to the new prefix with its own old key becoming a
+    // ticket_key_aliases entry -- see IDatabase::changeProjectKey for the
+    // full contract.
+    CROW_ROUTE(app, "/api/v1/projects/<string>/key")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& projectKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            const auto newKey = requiredString(body, "newKey");
+            const auto renamed = service->changeProjectKey(projectKey, newKey, *principal);
+            return renamed ? jsonResponse(200, projectJson(*renamed)) : errorResponse(404, "Project not found");
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

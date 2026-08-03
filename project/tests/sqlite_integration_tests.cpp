@@ -732,6 +732,63 @@ int main() {
         }
         require(moveTicketWithParentRejected, "moving a ticket that has a parent is rejected");
 
+        // --- Per-user timezone/clock-format preferences (D45) ---
+        {
+            const auto beforeUpdate = database.findUserById(demoUserId);
+            require(beforeUpdate.has_value() && beforeUpdate->timeZone == "UTC" && beforeUpdate->clockFormat == "24h",
+                   "a freshly-seeded user defaults to UTC/24h");
+
+            TicketHub::Domain::UpdatePreferencesRequest preferences;
+            preferences.timeZone = "Europe/Prague";
+            preferences.clockFormat = "12h";
+            database.updateUserPreferences(demoUserId, preferences);
+
+            const auto afterUpdate = database.findUserById(demoUserId);
+            require(afterUpdate.has_value() && afterUpdate->timeZone == "Europe/Prague" && afterUpdate->clockFormat == "12h",
+                   "updateUserPreferences persists both fields and findUserById reads them back");
+        }
+
+        // --- Changing an active project's key (D91) ---
+        {
+            const auto renamed = database.changeProjectKey("WEB", "SITE");
+            require(renamed.has_value() && renamed->key == "SITE", "changeProjectKey returns the project under its new key");
+
+            require(scalarInt(databasePath, "SELECT COUNT(*) FROM project_key_aliases WHERE alias_key = 'WEB'") == 1,
+                   "the vacated project key is recorded as a permanent alias");
+
+            const auto renamedTicket = database.findTicketByKey("SITE-3");
+            require(renamedTicket.has_value(), "a ticket that belonged to WEB now resolves under the SITE prefix "
+                   "with the same numeric suffix");
+            require(renamedTicket->key == "SITE-3" && renamedTicket->projectKey == "SITE",
+                   "the renamed ticket's key and projectKey both reflect the new prefix");
+
+            const auto viaOldTicketKey = database.findTicketByKey("WEB-3");
+            require(viaOldTicketKey.has_value() && viaOldTicketKey->key == "SITE-3",
+                   "the ticket's old key (under the vacated project prefix) permanently resolves via ticket_key_aliases");
+            require(scalarInt(databasePath, "SELECT COUNT(*) FROM ticket_key_aliases WHERE alias_key = 'WEB-3'") == 1,
+                   "the renamed ticket's old key is recorded as a permanent alias");
+
+            bool renameToCollidingProjectKeyRejected = false;
+            try {
+                database.changeProjectKey("TH", "SITE");
+            } catch (const std::invalid_argument&) {
+                renameToCollidingProjectKeyRejected = true;
+            }
+            require(renameToCollidingProjectKeyRejected, "renaming to a key already used by another active project is rejected");
+
+            bool renameToAliasedProjectKeyRejected = false;
+            try {
+                database.changeProjectKey("TH", "WEB");
+            } catch (const std::invalid_argument&) {
+                renameToAliasedProjectKeyRejected = true;
+            }
+            require(renameToAliasedProjectKeyRejected,
+                   "renaming to a key reserved by an existing project_key_aliases entry is rejected");
+
+            const auto unknownProjectRename = database.changeProjectKey("NOPE", "NEWKEY");
+            require(!unknownProjectRename.has_value(), "renaming an unknown project key returns nullopt");
+        }
+
         require(database.softDeleteTicket(created.key, demoUserId), "a ticket can be soft-deleted");
         require(!database.findTicketByKey(created.key).has_value(),
                "a soft-deleted ticket is not found by ordinary lookup");

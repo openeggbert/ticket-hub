@@ -295,6 +295,13 @@ public:
     // Archiving and moving to the recycle bin are project-management actions:
     // project admin (or global admin) suffices.
     bool setProjectArchived(const std::string& projectKey, bool archived, const Domain::Principal& actor);
+    // Changing an active project's key (D91): project-Admin-or-above, the
+    // same level as archiving/deleting a project. Returns nullopt if
+    // projectKey does not resolve to a live project; throws
+    // std::invalid_argument for an invalid newKey, a no-op rename (new key
+    // identical to the current one), or a newKey already in use.
+    std::optional<Domain::Project> changeProjectKey(const std::string& projectKey, const std::string& newKey,
+                                                     const Domain::Principal& actor);
     bool deleteProject(const std::string& projectKey, const Domain::Principal& actor);
     // Restoring, listing, and permanently deleting from the recycle bin are
     // global-administrator-only, per D88 ("admin restore or permanent delete").
@@ -308,6 +315,13 @@ public:
     // installation-wide anonymous-read toggle is on), since the user
     // directory is more sensitive than ticket data.
     std::vector<Domain::User> listUsers(const Domain::Principal& actor);
+
+    // --- Timezone/clock-format preferences (D45) ---
+    // Self-service, own-account-only; no admin management of another user's
+    // preference. `updatePreferences` returns the updated Principal (same
+    // shape `/api/v1/auth/me` returns) so the caller can refresh its cached
+    // copy without a second round trip.
+    Domain::Principal updatePreferences(const Domain::UpdatePreferencesRequest& request, const Domain::Principal& actor);
 
     // --- Fixed in-app notifications (Phase 4, D14) ---
     // Exactly three types, created as a side effect of assigning a ticket,

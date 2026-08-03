@@ -742,6 +742,57 @@ INSERT INTO project_members(project_id, user_id, role_key)
 SELECT id, '00000000-0000-4000-8000-000000000002', 'admin' FROM projects WHERE project_key = 'QA';
 )SQL");
 
+        // --- Changing an active project's key (D91): project-Admin-or-above,
+        // same level as archiving/deleting a project. Uses its own
+        // throwaway project (not QA) since a vacated key is permanently
+        // reserved (D90) -- renaming QA itself here would make "QA"
+        // unusable for the rest of this block's assertions below.
+        {
+            const auto rk = tickets.createProject(CreateProjectRequest{"RK", "Rename-key test", ""}, demo);
+            require(rk.key == "RK", "throwaway project for the rename-key test is created");
+            executeSql(databasePath, R"SQL(
+INSERT INTO project_members(project_id, user_id, role_key)
+SELECT id, '00000000-0000-4000-8000-000000000002', 'admin' FROM projects WHERE project_key = 'RK';
+)SQL");
+
+            require(throwsForbidden([&] { tickets.changeProjectKey("RK", "RK2", sam); }),
+                   "a non-member cannot rename a project's key");
+
+            const auto renamed = tickets.changeProjectKey("RK", "RK2", alex);
+            require(renamed.has_value() && renamed->key == "RK2",
+                   "a project admin (not global admin) can rename their own project's key");
+
+            bool renameToSelfRejected = false;
+            try {
+                tickets.changeProjectKey("RK2", "RK2", alex);
+            } catch (const std::invalid_argument&) {
+                renameToSelfRejected = true;
+            }
+            require(renameToSelfRejected, "renaming a project key to its own current key is rejected");
+
+            bool renameToCollidingKeyRejected = false;
+            try {
+                tickets.changeProjectKey("TH", "RK2", demo);
+            } catch (const std::invalid_argument&) {
+                renameToCollidingKeyRejected = true;
+            }
+            require(renameToCollidingKeyRejected, "renaming to a key already used by another active project is rejected");
+
+            bool renameToAliasedKeyRejected = false;
+            try {
+                tickets.changeProjectKey("TH", "RK", demo);
+            } catch (const std::invalid_argument&) {
+                renameToAliasedKeyRejected = true;
+            }
+            require(renameToAliasedKeyRejected,
+                   "renaming to a key reserved by an existing project_key_aliases entry is rejected");
+
+            require(!tickets.changeProjectKey("NOPE", "RK3", demo).has_value(),
+                   "renaming an unknown project key returns nullopt rather than throwing");
+
+            require(tickets.deleteProject("RK2", demo), "the throwaway rename-key project is cleaned up");
+        }
+
         require(tickets.deleteProject("QA", alex), "a project admin (not global admin) can soft-delete their project");
 
         require(throwsForbidden([&] { tickets.listDeletedProjects(alex); }),

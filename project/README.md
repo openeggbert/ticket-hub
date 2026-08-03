@@ -16,9 +16,13 @@ real access-control bug. Four batches of optional, non-roadmap follow-up have be
 for managing personal access tokens/active sessions, re-typing/re-parenting a ticket after creation (the
 one gap left open since Phase 3), Kanban board drag-and-drop, and a bulk Done-status picker plus keyboard
 multi-select -- which closed out the entire optional-follow-up list identified when the roadmap closed.
-Since then, one further user-requested addition: Jira-style `/browse/{key}` direct ticket links with full
-browser history support. See `NEXT.md`'s "The roadmap is now complete" section for the exact closing
-detail and `docs/VERIFICATION.md` for exactly what was tested and how.
+Since then: Jira-style `/browse/{key}` direct ticket links with full browser history support; a full
+"issue" → "ticket" terminology rename across schema/API/code/UI; project components (D19); and, most
+recently, five V1-decided features a full decision-register audit found were never actually implemented —
+Markdown checklist rendering (D62), a "No Epic" ticket filter (D66), a conflict dialog on a stale
+optimistic-lock save (D129), self-service timezone/clock-format preferences (D45), and changing an active
+project's key (D91). See `NEXT.md`'s "The roadmap is now complete" section for the exact closing detail
+and `docs/VERIFICATION.md` for exactly what was tested and how.
 
 Implemented now:
 
@@ -51,6 +55,17 @@ Implemented now:
 - **project components** (D19, `KEEP_FOR_V1`): name, description, lead, default assignee; at most one per
   ticket. Project-Admin-or-above manages a project's components; any ticket in that project may reference
   one by name,
+- **self-service timezone/clock-format preferences** (D45): `PATCH /api/v1/account/preferences`; a
+  full timestamp renders in the caller's stored timezone/12h-or-24h format, a date-only value (due date,
+  worklog date) always renders in UTC with no time-of-day and is never shifted; the web client auto-detects
+  once per browser via `Intl` and never overwrites a value the user set themselves,
+- **changing an active project's key** (D91): `PATCH /api/v1/projects/{key}/key`, project-Admin-or-above;
+  the vacated key and every renamed ticket's vacated key become permanent aliases in the same transaction,
+  exactly like `moveTicket` (D38) already does for a single ticket,
+- **Markdown checklist rendering** (D62): `- [ ]`/`- [x]` list items render as real, disabled checkboxes,
+- **a "No Epic" ticket filter** (D66): client-side-only, matching D10's ad-hoc-filter convention,
+- **a conflict dialog on a stale save** (D129): a 409 from a ticket edit now offers "Reload latest
+  version" instead of a generic error toast,
 - **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
   both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
@@ -313,6 +328,7 @@ trip; there is no admin configuration for either limit.
 | `POST` | `/api/v1/auth/login` | no | `{email,password}` → sets session + CSRF cookies |
 | `POST` | `/api/v1/auth/logout` | no | clears session (safe to call unauthenticated) |
 | `GET` | `/api/v1/auth/me` | session or PAT | current principal, or 401 |
+| `PATCH` | `/api/v1/account/preferences` | session + CSRF | `{timeZone, clockFormat}` -> updated principal (D45) |
 | `GET` | `/api/v1/tokens` | session | list the caller's own personal access tokens (D39/D40) |
 | `POST` | `/api/v1/tokens` | session + CSRF | `{name, expiresInDays}` → `{token, ...}`; raw token shown only once |
 | `DELETE` | `/api/v1/tokens/{id}` | session + CSRF | revoke one of the caller's own tokens |
@@ -330,6 +346,7 @@ trip; there is no admin configuration for either limit.
 | `GET` | `/api/v1/projects` | session, or anon if enabled | active project summaries |
 | `POST` | `/api/v1/projects` | session + CSRF, global admin | create project |
 | `PATCH` | `/api/v1/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |
+| `PATCH` | `/api/v1/projects/{key}/key` | session + CSRF, project admin | `{newKey}` -> renames the project's key; old key and every ticket's old key become permanent aliases (D91) |
 | `DELETE` | `/api/v1/projects/{key}` | session + CSRF, project admin | move to recycle bin |
 | `GET` | `/api/v1/projects/deleted` | session, global admin | list recycle bin |
 | `POST` | `/api/v1/projects/{key}/restore` | session + CSRF, global admin | restore from recycle bin |

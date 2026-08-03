@@ -57,6 +57,11 @@ function initialState() {
     filterAssignee: '',
     filterLabel: '',
     filterComponent: '',
+    // D66: a client-side-only filter (not sent to the server, unlike the
+    // filters above) -- "No Epic" means a Story/Task/Bug ticket with no
+    // parent; there is no dedicated `TicketFilter` field for it since it's
+    // derivable from data already on hand once tickets are fetched.
+    filterEpic: '',
     filterDueBefore: '',
     currentTicket: null,
     principal: null,
@@ -174,7 +179,18 @@ function renderMarkdown(raw) {
     if (/^[-*]\s+/.test(line)) {
       const items = [];
       while (index < lines.length && /^[-*]\s+/.test(lines[index])) {
-        items.push(`<li>${renderMarkdownInline(lines[index].replace(/^[-*]\s+/, ''))}</li>`);
+        const itemText = lines[index].replace(/^[-*]\s+/, '');
+        // GitHub-style checklist syntax (D62): "- [ ] foo" / "- [x] foo"
+        // renders as a disabled checkbox, not an editable one -- toggling
+        // it would require rewriting the underlying Markdown source, which
+        // is out of scope for "Markdown checklist syntax only."
+        const checklist = itemText.match(/^\[([ xX])\]\s+(.*)$/);
+        if (checklist) {
+          const checked = checklist[1] !== ' ';
+          items.push(`<li class="checklist-item"><input type="checkbox" disabled ${checked ? 'checked' : ''}> ${renderMarkdownInline(checklist[2])}</li>`);
+        } else {
+          items.push(`<li>${renderMarkdownInline(itemText)}</li>`);
+        }
         index++;
       }
       blocks.push(`<ul>${items.join('')}</ul>`);
@@ -323,15 +339,47 @@ function attachMarkdownToolbar(textarea, ticketKey = null) {
   }));
 }
 
+// D45: `Intl.supportedValuesOf` gives every IANA zone name the browser
+// itself knows about, for free -- no curated/bundled zone list to keep in
+// sync. Falls back to no suggestions (still a plain free-text input) on a
+// browser old enough not to support it.
+function timezoneDatalistOptions() {
+  try {
+    return Intl.supportedValuesOf('timeZone').map(zone => `<option value="${escapeHtml(zone)}">`).join('');
+  } catch {
+    return '';
+  }
+}
+
 function initials(name) {
   return String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
 }
 
+// D45: a bare "YYYY-MM-DD" value (a ticket due date, a worklog work date)
+// is a calendar date, not an instant in time -- it must never shift across
+// a timezone boundary ("date-only stays date-only"), so it's always
+// formatted in UTC regardless of the viewer's own timeZone preference.
+// Anything else is a real timestamp (createdAt/updatedAt/expiresAt/...)
+// and is rendered in the signed-in user's stored timeZone/clockFormat,
+// defaulting to UTC/24h for an anonymous viewer or before login resolves.
+function isDateOnly(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 function formatDate(value) {
   if (!value) return '—';
+  if (isDateOnly(value)) {
+    const date = new Date(`${value}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
+  }
   const date = new Date(value.replace(' ', 'T'));
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    hour12: (state.principal?.clockFormat || '24h') === '12h',
+    timeZone: state.principal?.timeZone || 'UTC'
+  }).format(date);
 }
 
 function relativeDate(value) {
@@ -438,7 +486,14 @@ async function api(path, options = {}) {
     throw new Error('Your session expired. Please sign in again.');
   }
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(payload.error || `Request failed (${response.status})`);
+    // D129: lets call sites special-case a 409 optimistic-lock conflict
+    // (stale expectedVersion) with a reload/reapply dialog instead of the
+    // generic error toast every other failure gets.
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -480,11 +535,55 @@ function renderCurrentUser() {
   document.querySelector('#nav-attachment-bin').classList.toggle('hidden', !principal.isAdmin);
 }
 
+// D45's "browser auto-detect" is a per-browser concern, not a per-account
+// one: the server has no "this value was never explicitly chosen" sentinel
+// (see the comment on Domain::User::timeZone), so this flag is tracked
+// client-side instead, in this browser's localStorage. Once set (by saving
+// the preferences form, even with the same values auto-detect would have
+// picked), auto-detect never silently overwrites the account's timezone in
+// this browser again -- a deliberate "I want UTC" choice is respected.
+const PreferencesManualFlag = 'th-preferences-manual';
+
+function markPreferencesManuallySet() {
+  try {
+    localStorage.setItem(PreferencesManualFlag, '1');
+  } catch {
+    // Private browsing / storage disabled: auto-detect may re-run on a
+    // later visit, which is a harmless degrade, not a broken feature.
+  }
+}
+
+async function autoDetectPreferencesIfNeeded() {
+  if (!state.principal) return;
+  try {
+    if (localStorage.getItem(PreferencesManualFlag) === '1') return;
+  } catch {
+    // Treat inaccessible storage as "never manually set" and proceed.
+  }
+  let detected;
+  try {
+    detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return;
+  }
+  if (!detected || detected === state.principal.timeZone) return;
+  try {
+    state.principal = await api('/api/v1/account/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({ timeZone: detected, clockFormat: state.principal.clockFormat })
+    });
+  } catch {
+    // Best-effort: a failed auto-detect just leaves the account on
+    // whatever it already had (UTC/24h for a brand-new account).
+  }
+}
+
 // Checks the existing session cookie (if any) without ever showing the
 // generic "session expired" error -- this is the initial, silent probe.
 async function checkExistingSession() {
   try {
     state.principal = await api('/api/v1/auth/me');
+    await autoDetectPreferencesIfNeeded();
     return true;
   } catch {
     return false;
@@ -871,7 +970,27 @@ async function renderAccountView() {
   const reveal = revealedToken;
   revealedToken = null;
   content.innerHTML = `
-    ${pageHeader('Account', 'Manage your personal access tokens and active sessions.', 'Account')}
+    ${pageHeader('Account', 'Manage your preferences, personal access tokens, and active sessions.', 'Account')}
+    <div class="panel">
+      <div class="panel-header"><h2>Preferences</h2></div>
+      <form class="form-grid" id="preferences-form">
+        <label>Time zone
+          <input name="timeZone" value="${escapeHtml(state.principal?.timeZone || 'UTC')}" placeholder="e.g. Europe/Prague" list="timezone-options">
+          <datalist id="timezone-options">${timezoneDatalistOptions()}</datalist>
+        </label>
+        <label>Clock format
+          <select name="clockFormat">
+            <option value="24h" ${state.principal?.clockFormat !== '12h' ? 'selected' : ''}>24-hour</option>
+            <option value="12h" ${state.principal?.clockFormat === '12h' ? 'selected' : ''}>12-hour</option>
+          </select>
+        </label>
+        <div class="wide modal-footer" style="padding:0">
+          <button type="button" class="secondary-button" id="detect-timezone-button">Detect from browser</button>
+          <button type="submit" class="primary-button">Save preferences</button>
+        </div>
+      </form>
+      <div id="preferences-error" class="form-error hidden"></div>
+    </div>
     ${reveal ? `
     <div class="panel token-reveal-panel">
       <strong>Copy your new token now -- it will not be shown again.</strong>
@@ -917,6 +1036,34 @@ async function renderAccountView() {
       </div>
     </div>`;
 
+  document.querySelector('#detect-timezone-button').addEventListener('click', () => {
+    try {
+      document.querySelector('#preferences-form input[name="timeZone"]').value = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      // No Intl timezone support in this browser -- leave the field as-is.
+    }
+  });
+  document.querySelector('#preferences-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    const errorBox = document.querySelector('#preferences-error');
+    errorBox.classList.add('hidden');
+    try {
+      state.principal = await api('/api/v1/account/preferences', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          timeZone: form.elements.timeZone.value.trim(),
+          clockFormat: form.elements.clockFormat.value
+        })
+      });
+      markPreferencesManuallySet();
+      showToast('Preferences saved');
+      await renderAccountView();
+    } catch (error) {
+      errorBox.textContent = error.message;
+      errorBox.classList.remove('hidden');
+    }
+  });
   document.querySelector('#new-token-button').addEventListener('click', () => {
     document.querySelector('#token-form').classList.remove('hidden');
     document.querySelector('#token-form input[name="name"]').focus();
@@ -1019,6 +1166,9 @@ async function renderTicketsView(showingDeleted) {
     if (state.selectedProject) {
       tickets = [...tickets].sort((a, b) => a.rankOrder - b.rankOrder);
     }
+    if (state.filterEpic === 'no-epic') {
+      tickets = tickets.filter(ticket => ticketTypeHierarchyLevel(ticket.type.key) === 0 && !ticket.parentTicketKey);
+    }
   }
   const orderable = !showingDeleted && Boolean(state.selectedProject);
   const isAdmin = Boolean(state.principal?.isAdmin);
@@ -1067,6 +1217,10 @@ async function renderTicketsView(showingDeleted) {
         </select>
         <input id="ticket-label-filter" value="${escapeHtml(state.filterLabel)}" placeholder="Label" style="width:110px">
         <input id="ticket-component-filter" value="${escapeHtml(state.filterComponent)}" placeholder="Component" style="width:110px">
+        <select id="ticket-epic-filter">
+          <option value="">Any hierarchy</option>
+          <option value="no-epic" ${state.filterEpic === 'no-epic' ? 'selected' : ''}>No Epic</option>
+        </select>
         <input id="ticket-due-filter" type="date" value="${escapeHtml(state.filterDueBefore)}" title="Due on or before">
         <input id="ticket-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key, summary, or description">
         <button class="secondary-button" id="clear-filters">Clear</button>
@@ -1151,6 +1305,10 @@ async function renderTicketsView(showingDeleted) {
     state.filterComponent = event.target.value.trim();
     renderTickets().catch(showError);
   }, 300));
+  document.querySelector('#ticket-epic-filter').addEventListener('change', event => {
+    state.filterEpic = event.target.value;
+    renderTickets().catch(showError);
+  });
   document.querySelector('#ticket-due-filter').addEventListener('change', event => {
     state.filterDueBefore = event.target.value;
     renderTickets().catch(showError);
@@ -1167,6 +1325,7 @@ async function renderTicketsView(showingDeleted) {
     state.filterAssignee = '';
     state.filterLabel = '';
     state.filterComponent = '';
+    state.filterEpic = '';
     state.filterDueBefore = '';
     state.selectedProject = null;
     renderTickets().catch(showError);
@@ -1300,6 +1459,7 @@ async function renderBoard() {
   state.filterAssignee = '';
   state.filterLabel = '';
   state.filterComponent = '';
+  state.filterEpic = '';
   state.filterDueBefore = '';
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   const [, boardColumns] = await Promise.all([fetchTickets(), api('/api/v1/board-columns')]);
@@ -1475,6 +1635,50 @@ function promptBoardResolution(ticket, targetStatusKey) {
   backdrop.querySelector('#board-resolution-select').focus();
 }
 
+// D129: a stale write (expectedVersion mismatch) is rejected with HTTP 409
+// -- rather than a generic error toast, this makes the conflict explicit
+// and offers a concrete next step. "Reapply" is deliberately not automatic
+// (this app has no per-field diff/merge machinery, only full-replacement
+// edits): reloading re-opens the edit form pre-filled with the ticket's
+// current server state at its current version, so the user's own
+// in-progress edit is visibly discarded rather than silently lost, and
+// they can retype their intended change on top of the fresh data before
+// saving again.
+function showConflictDialog(ticketKey) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <div><span class="eyebrow">${escapeHtml(ticketKey)}</span><h2>Someone else changed this ticket</h2></div>
+        <button type="button" class="icon-button" id="conflict-close" aria-label="Close">×</button>
+      </div>
+      <p style="padding:22px;margin:0;color:var(--text-secondary)">This ticket was updated by someone else while
+      you were editing it, so your changes were not saved. Reload the current version and reapply your changes.</p>
+      <div class="modal-footer">
+        <button type="button" class="secondary-button" id="conflict-cancel">Cancel</button>
+        <button type="button" class="primary-button" id="conflict-reload">Reload latest version</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const onKeydown = event => { if (event.key === 'Escape') close(); };
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKeydown);
+  };
+  document.addEventListener('keydown', onKeydown);
+  backdrop.querySelector('#conflict-close').addEventListener('click', close);
+  backdrop.querySelector('#conflict-cancel').addEventListener('click', close);
+  backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+  backdrop.querySelector('#conflict-reload').addEventListener('click', async () => {
+    close();
+    await openTicket(ticketKey, true);
+  });
+  backdrop.querySelector('#conflict-reload').focus();
+}
+
 // Project components (D19, KEEP_FOR_V1): a dynamically-created dialog, same
 // pattern as promptBoardResolution above -- listing, adding, and deleting a
 // project's components. Create/edit/delete require project-Admin-or-above
@@ -1580,6 +1784,77 @@ async function openComponentsModal(projectKey) {
   await render();
 }
 
+// D91: permanently changing a project's key. This reuses the exact
+// transactional alias pattern the ticket-move flow (D38) already
+// established -- the project's old key keeps resolving forever via
+// project_key_aliases, and every ticket in the project also gets a new key
+// (project prefix changed) with its own ticket_key_aliases entry for the
+// old ticket key, so old bookmarks/links never 404. Requires project-Admin-
+// or-above server-side; a non-admin's attempt just surfaces the resulting
+// 403 as a toast, same pattern as every other write in this app.
+async function openRenameProjectKeyModal(projectKey) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.innerHTML = `
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <div><span class="eyebrow">${escapeHtml(projectKey)}</span><h2>Rename project key</h2></div>
+        <button type="button" class="icon-button" id="rename-key-close" aria-label="Close">×</button>
+      </div>
+      <p style="padding:22px;margin:0;color:var(--text-secondary)">Changing the project key also changes
+      every ticket key in this project (e.g. ${escapeHtml(projectKey)}-12 becomes NEWKEY-12). The old
+      project key and every old ticket key keep working and redirect to the new ones.</p>
+      <form class="form-grid" id="rename-key-form" style="padding:0 22px 22px">
+        <label class="wide">New key
+          <input name="newKey" maxlength="10" required placeholder="e.g. NEWKEY" autocomplete="off"
+            style="text-transform:uppercase">
+        </label>
+      </form>
+      <div id="rename-key-error" class="form-error hidden" style="margin:0 22px 16px"></div>
+      <div class="modal-footer">
+        <button type="button" class="secondary-button" id="rename-key-cancel">Cancel</button>
+        <button type="submit" form="rename-key-form" class="primary-button">Rename</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const onKeydown = event => { if (event.key === 'Escape') close(); };
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKeydown);
+  };
+  document.addEventListener('keydown', onKeydown);
+  backdrop.querySelector('#rename-key-close').addEventListener('click', close);
+  backdrop.querySelector('#rename-key-cancel').addEventListener('click', close);
+  backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+  backdrop.querySelector('#rename-key-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const newKey = new FormData(event.currentTarget).get('newKey').trim().toUpperCase();
+    const errorElement = backdrop.querySelector('#rename-key-error');
+    try {
+      await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/key`, {
+        method: 'PATCH',
+        body: JSON.stringify({ newKey }),
+      });
+      close();
+      showToast(`Project key changed to ${newKey}`);
+      // The old key no longer resolves to a live project (D91), so a
+      // Tickets/Board view still pointed at it would otherwise go silently
+      // empty -- follow the rename if it was the selected project.
+      if (state.selectedProject === projectKey) {
+        state.selectedProject = newKey;
+      }
+      await loadBaseData();
+      await renderProjectsView(false);
+    } catch (error) {
+      errorElement.textContent = error.message;
+      errorElement.classList.remove('hidden');
+    }
+  });
+  backdrop.querySelector('[name="newKey"]').focus();
+}
+
 async function renderProjects() {
   await renderProjectsView(false);
 }
@@ -1621,7 +1896,7 @@ async function renderProjectsView(showingDeleted) {
           <div class="project-card-stats"><div><strong>${project.ticketCount}</strong><span>Total tickets</span></div><div><strong>${project.openTicketCount}</strong><span>Open tickets</span></div><div><strong>${escapeHtml(project.lead?.displayName || '—')}</strong><span>Lead</span></div></div>
           <div class="project-card-actions">${showingDeleted
             ? `<button type="button" class="secondary-button" data-restore-project="${escapeHtml(project.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-project="${escapeHtml(project.key)}">Delete permanently</button>`
-            : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-components-project="${escapeHtml(project.key)}">Components</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
+            : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-components-project="${escapeHtml(project.key)}">Components</button><button type="button" class="secondary-button" data-rename-key-project="${escapeHtml(project.key)}">Rename key</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
         </article>`).join('') : `<div class="empty-state">${showingDeleted ? 'The recycle bin is empty.' : 'No projects yet.'}</div>`}
     </div>`;
 
@@ -1639,6 +1914,9 @@ async function renderProjectsView(showingDeleted) {
   const stopAnd = handler => event => { event.stopPropagation(); return handler(event); };
   document.querySelectorAll('[data-components-project]').forEach(button => button.addEventListener('click', stopAnd(() => {
     openComponentsModal(button.dataset.componentsProject);
+  })));
+  document.querySelectorAll('[data-rename-key-project]').forEach(button => button.addEventListener('click', stopAnd(() => {
+    openRenameProjectKeyModal(button.dataset.renameKeyProject);
   })));
   document.querySelectorAll('[data-archive-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
     const key = button.dataset.archiveProject;
@@ -1743,7 +2021,11 @@ async function applyStatusChange(ticketKey, statusKey, resolution, expectedVersi
     await renderCurrentView();
     await openTicket(ticketKey);
   } catch (error) {
-    showToast(error.message);
+    if (error.status === 409) {
+      showConflictDialog(ticketKey);
+    } else {
+      showToast(error.message);
+    }
   }
 }
 
@@ -1794,7 +2076,7 @@ async function openTicketFromUrlIfAny() {
   }
 }
 
-async function openTicket(ticketKey) {
+async function openTicket(ticketKey, editing = false) {
   if (ticketKeyFromLocation() !== ticketKey) {
     history.pushState({ ticketKey }, '', ticketUrlFor(ticketKey));
   }
@@ -2245,8 +2527,12 @@ async function openTicket(ticketKey) {
             await renderCurrentView();
             await openTicket(ticket.key);
           } catch (error) {
-            errorElement.textContent = error.message;
-            errorElement.classList.remove('hidden');
+            if (error.status === 409) {
+              showConflictDialog(ticket.key);
+            } else {
+              errorElement.textContent = error.message;
+              errorElement.classList.remove('hidden');
+            }
           }
         });
       } else {
@@ -2254,7 +2540,7 @@ async function openTicket(ticketKey) {
       }
     }
 
-    render(false);
+    render(editing);
   } catch (error) {
     ticketDrawer.innerHTML = `<div class="drawer-header"><span>Ticket</span><button class="icon-button" id="close-drawer">×</button></div><div class="drawer-content"><div class="error-banner">${escapeHtml(error.message)}</div></div>`;
     document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
@@ -2433,6 +2719,7 @@ document.querySelector('#global-search').addEventListener('input', debounce(even
     state.filterAssignee = '';
     state.filterLabel = '';
     state.filterComponent = '';
+    state.filterEpic = '';
     state.filterDueBefore = '';
     navigate('tickets');
   }
@@ -2507,6 +2794,7 @@ loginForm.addEventListener('submit', async event => {
     await api('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email: values.email.trim(), password: values.password }) });
     loginForm.reset();
     state.principal = await api('/api/v1/auth/me');
+    await autoDetectPreferencesIfNeeded();
     renderCurrentUser();
     showAppShell();
     await loadBaseData();

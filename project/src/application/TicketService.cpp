@@ -959,6 +959,21 @@ bool TicketService::setProjectArchived(const std::string& projectKey, const bool
     return database_->setProjectArchived(normalizedKey, archived);
 }
 
+std::optional<Domain::Project> TicketService::changeProjectKey(const std::string& projectKey,
+                                                                 const std::string& newKey,
+                                                                 const Domain::Principal& actor) {
+    const std::string normalizedKey = Domain::normalizeProjectKey(projectKey);
+    requireProjectRole(actor, normalizedKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
+    const std::string normalizedNewKey = Domain::normalizeProjectKey(newKey);
+    if (!Domain::isValidProjectKey(normalizedNewKey)) {
+        throw std::invalid_argument("newKey must contain 2-12 uppercase letters or digits and start with a letter");
+    }
+    if (normalizedNewKey == normalizedKey) {
+        throw std::invalid_argument("newKey must be different from the current key");
+    }
+    return database_->changeProjectKey(normalizedKey, normalizedNewKey);
+}
+
 bool TicketService::deleteProject(const std::string& projectKey, const Domain::Principal& actor) {
     const std::string normalizedKey = Domain::normalizeProjectKey(projectKey);
     requireProjectRole(actor, normalizedKey, Domain::projectRoleRank(Domain::ProjectRoleAdmin));
@@ -995,6 +1010,19 @@ bool TicketService::permanentlyDeleteProject(const std::string& projectKey, cons
 
 std::vector<Domain::User> TicketService::listUsers(const Domain::Principal& /*actor*/) {
     return database_->listUsers();
+}
+
+Domain::Principal TicketService::updatePreferences(const Domain::UpdatePreferencesRequest& request,
+                                                     const Domain::Principal& actor) {
+    const auto errors = Domain::validateUpdatePreferences(request);
+    if (!errors.empty()) {
+        throw std::invalid_argument(joinErrors(errors));
+    }
+    database_->updateUserPreferences(actor.userId, request);
+    Domain::Principal updated = actor;
+    updated.timeZone = request.timeZone;
+    updated.clockFormat = request.clockFormat;
+    return updated;
 }
 
 std::vector<Domain::Notification> TicketService::listNotifications(const Domain::Principal& actor, const bool unreadOnly) {

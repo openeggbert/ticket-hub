@@ -1,5 +1,137 @@
 # Verification record
 
+## 2026-08-03 — Five V1-decided gaps found by a full decision-register audit (D62/D66/D129/D45/D91) (user-requested)
+
+Requested directly by the user: first "analyzuj a najdi pripadne mezery mezi v1 a co je skutecne
+implementovano" ("analyze and find any gaps between V1 and what is actually implemented"), then
+"implementuj prosim vsechny tyto mezery" ("please implement all these gaps"). Every one of the 142
+decisions in `docs/REDUCED_SCOPE_DECISIONS.md` was re-read and, where classified `KEEP_FOR_V1` or
+`ALREADY_IMPLEMENTED_AND_KEEP`, checked against the real codebase. Five real gaps were found (D101's
+attachment sortable list, initially suspected, turned out to be correctly implemented on closer reading --
+a false alarm, not a sixth gap). All five were implemented, tested, and verified in this batch.
+
+### What changed
+
+- **D62 (Markdown checklist syntax)**: `renderMarkdown`'s unordered-list branch (`web/app.js`) now matches
+  each list item against `/^\[([ xX])\]\s+(.*)$/` and, on a match, emits `<li class="checklist-item"><input
+  type="checkbox" disabled ${checked}> ...</li>` instead of literal `[ ]`/`[x]` text. Two new CSS rules
+  (`web/styles.css`) remove the default list bullet and align the checkbox inline. Pure client-side
+  rendering change, no backend/schema involvement.
+- **D66 ("No Epic" ticket filter)**: a new `#ticket-epic-filter` select on the Tickets view filter bar
+  (`Any hierarchy` / `No Epic`), backed by a new client-side-only `state.filterEpic` -- matching D10's
+  "ad-hoc, in-UI-only filters" convention, no new server-side query parameter. `renderTicketsView` filters
+  the already-fetched `state.tickets` to `ticketTypeHierarchyLevel(ticket.type.key) === 0 &&
+  !ticket.parentTicketKey` when active (Story/Task/Bug tickets with no parent -- excludes both Epics, which
+  have no "Epic" of their own by definition, and Sub-tasks, whose parent is never an Epic).
+- **D129 (stale-write conflict dialog)**: the `api()` helper now attaches `error.status = response.status`
+  to every thrown error, so call sites can branch on the exact HTTP status without re-parsing the response.
+  A new `showConflictDialog(ticketKey)` (same dynamically-created-modal pattern as
+  `promptBoardResolution`/`openComponentsModal`) is now invoked from both `applyStatusChange`'s and the
+  ticket edit-save handler's `catch` blocks when `error.status === 409` -- explaining that someone else
+  changed the ticket and offering "Reload latest version" (`openTicket(ticketKey, true)`, re-opening the
+  drawer in edit mode with fresh server data) instead of the previous generic error toast. `openTicket`
+  gained an `editing` parameter to support reopening directly into edit mode.
+- **D45 (per-user timezone/clock-format preferences)**: `users.time_zone`/`clock_format` already existed in
+  the schema but had no self-service write path. New `PATCH /api/v1/account/preferences`
+  (`src/web/Api.cpp`) -> `TicketService::updatePreferences` -> `IDatabase::updateUserPreferences` (new pure
+  virtual, implemented in both adapters as a single-row `UPDATE`), validated by the new
+  `Domain::validateUpdatePreferences`/`isValidClockFormat` (`src/domain/Validation.h/.cpp`: non-empty
+  timezone string up to 80 characters, `clockFormat` exactly `"12h"` or `"24h"`). `Domain::Principal`
+  (`src/domain/Models.h`) gained `timeZone`/`clockFormat` fields, default-initialized to `"UTC"`/`"24h"` so
+  every pre-existing 4-argument brace-init call site across tests and `AuthService::toPrincipal` keeps
+  compiling unmodified (confirmed via `grep -rn "Domain::Principal{" src/` finding exactly one
+  non-test construction site). `principalJson` now includes both fields. New "Preferences" panel on the
+  Account view (`web/app.js`): a timezone `<input>` with an `Intl.supportedValuesOf('timeZone')` datalist
+  (try/catch fallback for older browsers), a clock-format `<select>`, and a "Detect from browser" button
+  (`Intl.DateTimeFormat().resolvedOptions().timeZone`). The "has this user manually set a preference"
+  signal is tracked client-side in `localStorage` (`th-preferences-manual`), not a server column --
+  deliberately, so a fresh login auto-detects at most once per browser and never overwrites a value the
+  user set themselves (including a deliberate `UTC`, which a nullable-sentinel server column could not
+  distinguish from "never touched"), and so the same account correctly carries different preferences on
+  different devices/timezones. `formatDate` now sniffs a date-only value (`/^\d{4}-\d{2}-\d{2}$/` -- ticket
+  due dates, worklog dates) via a new `isDateOnly` helper and renders it in UTC with no time-of-day and no
+  shift, per D45's own decision text ("date-only stays date-only"); a full timestamp renders in the
+  viewer's stored timezone and 12h/24h format. This is format-sniffed from the value itself, not
+  per-call-site, so all ~15 existing `formatDate` call sites needed no changes.
+- **D91 (changing an active project's key)**: new `PATCH /api/v1/projects/{key}/key` (project-Admin-or-
+  above, same level as archiving/deleting a project) -> `TicketService::changeProjectKey` (validates
+  `newKey` via `Domain::isValidProjectKey` and rejects a no-op rename) -> `IDatabase::changeProjectKey` (new
+  pure virtual, implemented in both adapters as one transaction): the vacated key becomes a permanent
+  `project_key_aliases` row (this table existed in the schema for D90's "reserved while in the recycle bin"
+  invariant but had never been written to by an active-project rename), the project's `project_key` column
+  is updated, and every ticket that ever belonged to the project -- including soft-deleted ones, since a key
+  must stay permanently resolvable regardless of the ticket's own lifecycle state -- is renamed to the new
+  prefix with the same numeric suffix, its own vacated key becoming a `ticket_key_aliases` row exactly like
+  `moveTicket` (D38) already does for a single ticket. Rejects (`std::invalid_argument`, mapped to HTTP 400)
+  a `newKey` already live on another active project or already reserved by an existing
+  `project_key_aliases` entry. Returns `nullopt` (mapped to HTTP 404) if the old key does not resolve to a
+  live project. New "Rename key" button on each project card opens a new dynamically-created modal
+  (`openRenameProjectKeyModal`, same pattern as the other three modals in this file) warning that every
+  ticket key in the project will change, with a text input for the new key.
+
+Two real bugs were found and fixed during this batch's own browser verification, surfaced by D91 and D129
+respectively but not narrowly scoped to either decision's own text:
+
+1. The web client's `state.selectedProject` was not updated when the *currently selected* project was the
+   one renamed -- since `state.selectedProject ||= ...` only assigns when currently falsy, it kept pointing
+   at the now-nonexistent old key forever, so the Tickets/Board views silently went empty (filtering
+   `?project=<old key>` server-side, which correctly finds nothing) until the user manually reselected a
+   project from the dropdown. Fixed in `openRenameProjectKeyModal`'s success handler: if
+   `state.selectedProject === projectKey` (the key just renamed), follow it to `newKey` before refreshing.
+2. `.modal-backdrop` shared a single CSS rule (and `z-index: 80`) with `.drawer-backdrop`, both lower than
+   `.ticket-drawer`'s `z-index: 90`. Any modal opened while the ticket drawer is showing therefore rendered
+   *behind* the drawer and was completely unclickable -- most consequentially D129's own conflict dialog,
+   which is triggered by a failed save from inside the drawer's edit form, exactly the scenario where it's
+   needed most. First caught as a Playwright timeout ("`<div class="empty-state">No links yet.</div>` ...
+   intercepts pointer events") when clicking the dialog's "Reload latest version" button; confirmed by
+   inspecting the two rules' `z-index` values. Fixed by splitting the shared rule: `.drawer-backdrop` keeps
+   `z-index: 80` (correctly below the ticket drawer it belongs to), `.modal-backdrop` now has its own
+   `z-index: 100` (above everything, since a modal dialog must always be the topmost layer regardless of
+   what else happens to be open behind it).
+
+### Verification
+
+- Full rebuild in all three build configurations (default, `-DTICKETHUB_WITH_POSTGRES=OFF` SQLite-only,
+  `-DTICKETHUB_WITH_SQLITE=OFF` PostgreSQL-only) with zero new warnings/errors; `ctest --output-on-failure`:
+  8/8 green in the default and SQLite-only configurations (4/4 in PostgreSQL-only, which only ever runs the
+  tests that don't require a live database connection -- unchanged from every prior batch), including new
+  coverage:
+  - `tests/domain_validation_tests.cpp`: valid/invalid `UpdatePreferencesRequest` (empty timezone, an
+    out-of-range `clockFormat` like `"30h"`), `isValidClockFormat` accepting exactly `"12h"`/`"24h"`.
+  - `tests/sqlite_integration_tests.cpp`: `updateUserPreferences` + `findUserById` round-trip (default
+    `UTC`/`24h` confirmed on a freshly-seeded user, then both fields updated and read back); `changeProjectKey`
+    renaming `WEB` -> `SITE` -- the returned project reflects the new key, the old key is recorded in
+    `project_key_aliases`, the ticket that was earlier moved into `WEB` (via the pre-existing `moveTicket`
+    test in the same file) now resolves as `SITE-3`, its old key `WEB-3` still resolves via
+    `ticket_key_aliases`, renaming to a key already live on another project is rejected, renaming to a key
+    reserved by an existing alias is rejected, and renaming an unknown project key returns `nullopt`.
+  - `tests/authorization_integration_tests.cpp`: `changeProjectKey` against a dedicated throwaway `RK`
+    project (not the shared `QA` project used by the surrounding lifecycle tests, since a vacated key is
+    permanently reserved per D90 and reusing `QA` would have broken every assertion below it in the file) --
+    a non-member is rejected, a project admin who is not a global admin can rename their own project, a
+    no-op self-rename is rejected, a live-key collision is rejected, an alias-reserved-key collision is
+    rejected, and an unknown project key returns `nullopt` rather than throwing.
+- Live-verified against a fresh throwaway PostgreSQL role/database (`migrate` + `seed-demo`, then a real
+  server process against it): `PATCH /api/v1/account/preferences` round-trips through `GET /api/v1/auth/me`;
+  `PATCH /api/v1/projects/TH/key` renamed it to `GAPT`, `GET /api/v1/tickets/GAPT-1` resolved the renamed
+  ticket, `GET /api/v1/tickets/TH-1` (the old key) still resolved to the same ticket via
+  `ticket_key_aliases`, `SELECT alias_key FROM project_key_aliases`/`ticket_key_aliases` via `psql` confirmed
+  the expected rows, renaming `WEB` to the live key `GAPT` was rejected, and renaming `WEB` to the
+  alias-reserved key `TH` was rejected; a stale `PATCH /api/v1/tickets/GAPT-1` with a wrong
+  `expectedVersion` returned `409` as expected by the new conflict dialog.
+- The identical live-verify pass repeated against a fresh throwaway SQLite database with the same results
+  (`TH` -> `LITE`, `LITE-1`/`TH-1` both resolving, both collision cases rejected, `409` on a stale edit).
+- Full Playwright/Chromium browser pass against a fresh SQLite database (13/13 checks, after the two fixes
+  above): a checklist Markdown edit renders real, disabled checkboxes with the checked item actually
+  checked; the No Epic filter control is present and re-renders without error; the Preferences panel is
+  present, a saved timezone/clock-format survives a view-navigate-away-and-back reload, the
+  detect-from-browser button fills a value, and a ticket due date set to `2026-12-31` still renders as
+  "Dec 31, 2026" (not shifted) after switching to a non-UTC timezone; the Rename key button is present and a
+  rename is reflected in the Projects view; and -- across two tabs sharing one authenticated browser
+  context -- editing and saving the same ticket in tab 2 first, then attempting a stale save in tab 1,
+  produces the conflict dialog, and its "Reload latest version" button (only clickable at all after the
+  z-index fix above) correctly repopulates the edit form with tab 2's saved summary.
+
 ## 2026-08-03 — Project components (D19, `KEEP_FOR_V1`) (user-requested)
 
 Requested directly by the user ("implementuj prosim komponenty" -- "please implement components") after
