@@ -2116,6 +2116,123 @@ async function openComponentsModal(projectKey) {
   await render();
 }
 
+const CUSTOM_FIELD_TYPES = [
+  { key: 'text', name: 'Text' },
+  { key: 'number', name: 'Number' },
+  { key: 'date', name: 'Date' },
+  { key: 'checkbox', name: 'Checkbox' },
+  { key: 'single_select', name: 'Single select' },
+  { key: 'multi_select', name: 'Multi select' },
+];
+
+function isCustomFieldSelectType(fieldType) {
+  return fieldType === 'single_select' || fieldType === 'multi_select';
+}
+
+// Custom fields (D9, deferred-after-V1, user-requested): admin-defined
+// fields scoped to one project. Mirrors openComponentsModal's structure
+// (a dynamically-built modal, list + add-form, re-rendered after every
+// mutation) since it's the closest existing analog -- a small per-project
+// catalog managed by project-Admin-or-above.
+async function openCustomFieldsModal(projectKey) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  document.body.appendChild(backdrop);
+
+  const onKeydown = event => { if (event.key === 'Escape') close(); };
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKeydown);
+  };
+  document.addEventListener('keydown', onKeydown);
+  backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+
+  async function render() {
+    let fields = [];
+    let loadError = null;
+    try {
+      fields = (await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/custom-fields`)).items;
+    } catch (error) {
+      loadError = error.message;
+    }
+    backdrop.innerHTML = `
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <div><span class="eyebrow">${escapeHtml(projectKey)}</span><h2>Custom fields</h2></div>
+          <button type="button" class="icon-button" id="custom-fields-close" aria-label="Close">×</button>
+        </div>
+        ${loadError ? `<div class="form-error">${escapeHtml(loadError)}</div>` : `
+        <div style="max-height:260px;overflow-y:auto">
+          ${fields.length ? fields.map(field => `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)" data-custom-field-row="${escapeHtml(field.id)}">
+              <span>${escapeHtml(field.name)} <span style="color:var(--muted)">(${escapeHtml(CUSTOM_FIELD_TYPES.find(t => t.key === field.fieldType)?.name || field.fieldType)}${field.required ? ', required' : ''})</span>${isCustomFieldSelectType(field.fieldType) ? `<br><span style="color:var(--muted);font-size:12px">${escapeHtml(field.options.join(', '))}</span>` : ''}</span>
+              <button type="button" class="secondary-button" data-delete-custom-field="${escapeHtml(field.id)}">Delete</button>
+            </div>`).join('') : '<div class="empty-state">No custom fields yet.</div>'}
+        </div>`}
+        <form class="form-grid" id="custom-field-add-form" style="margin-top:16px">
+          <label class="wide">Name<input name="name" maxlength="160" required placeholder="e.g. Environment"></label>
+          <label>Type
+            <select name="fieldType" id="custom-field-type-select">
+              ${CUSTOM_FIELD_TYPES.map(type => `<option value="${type.key}">${escapeHtml(type.name)}</option>`).join('')}
+            </select>
+          </label>
+          <label style="align-self:end"><input type="checkbox" name="required" style="width:auto;margin-right:6px">Required</label>
+          <label class="wide" id="custom-field-options-label" hidden>Options (comma-separated)
+            <input name="options" placeholder="e.g. Low, Medium, High">
+          </label>
+        </form>
+        <div id="custom-field-error" class="form-error hidden"></div>
+        <div class="modal-footer">
+          <button type="button" class="secondary-button" id="custom-fields-done">Close</button>
+          <button type="submit" form="custom-field-add-form" class="primary-button">Add field</button>
+        </div>
+      </div>`;
+
+    backdrop.querySelector('#custom-fields-close').addEventListener('click', close);
+    backdrop.querySelector('#custom-fields-done').addEventListener('click', close);
+    backdrop.querySelectorAll('[data-delete-custom-field]').forEach(button => button.addEventListener('click', async () => {
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/custom-fields/${encodeURIComponent(button.dataset.deleteCustomField)}`,
+          { method: 'DELETE' });
+        showToast('Custom field deleted');
+        await render();
+      } catch (error) { showToast(error.message); }
+    }));
+    const typeSelect = backdrop.querySelector('#custom-field-type-select');
+    const optionsLabel = backdrop.querySelector('#custom-field-options-label');
+    const refreshOptionsVisibility = () => { optionsLabel.hidden = !isCustomFieldSelectType(typeSelect.value); };
+    typeSelect.addEventListener('change', refreshOptionsVisibility);
+    refreshOptionsVisibility();
+    backdrop.querySelector('#custom-field-add-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+      const errorElement = backdrop.querySelector('#custom-field-error');
+      try {
+        await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/custom-fields`, {
+          method: 'POST',
+          body: JSON.stringify({
+            name: values.name.trim(),
+            fieldType: values.fieldType,
+            options: isCustomFieldSelectType(values.fieldType)
+              ? (values.options || '').split(',').map(option => option.trim()).filter(Boolean)
+              : [],
+            required: values.required === 'on',
+          }),
+        });
+        showToast('Custom field added');
+        await render();
+      } catch (error) {
+        errorElement.textContent = error.message;
+        errorElement.classList.remove('hidden');
+      }
+    });
+  }
+
+  await render();
+}
+
 // D91: permanently changing a project's key. This reuses the exact
 // transactional alias pattern the ticket-move flow (D38) already
 // established -- the project's old key keeps resolving forever via
@@ -2228,7 +2345,7 @@ async function renderProjectsView(showingDeleted) {
           <div class="project-card-stats"><div><strong>${project.ticketCount}</strong><span>Total tickets</span></div><div><strong>${project.openTicketCount}</strong><span>Open tickets</span></div><div><strong>${escapeHtml(project.lead?.displayName || '—')}</strong><span>Lead</span></div></div>
           <div class="project-card-actions">${showingDeleted
             ? `<button type="button" class="secondary-button" data-restore-project="${escapeHtml(project.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-project="${escapeHtml(project.key)}">Delete permanently</button>`
-            : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-components-project="${escapeHtml(project.key)}">Components</button><button type="button" class="secondary-button" data-rename-key-project="${escapeHtml(project.key)}">Rename key</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
+            : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-components-project="${escapeHtml(project.key)}">Components</button><button type="button" class="secondary-button" data-custom-fields-project="${escapeHtml(project.key)}">Custom fields</button><button type="button" class="secondary-button" data-rename-key-project="${escapeHtml(project.key)}">Rename key</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
         </article>`).join('') : `<div class="empty-state">${showingDeleted ? 'The recycle bin is empty.' : 'No projects yet.'}</div>`}
     </div>`;
 
@@ -2246,6 +2363,9 @@ async function renderProjectsView(showingDeleted) {
   const stopAnd = handler => event => { event.stopPropagation(); return handler(event); };
   document.querySelectorAll('[data-components-project]').forEach(button => button.addEventListener('click', stopAnd(() => {
     openComponentsModal(button.dataset.componentsProject);
+  })));
+  document.querySelectorAll('[data-custom-fields-project]').forEach(button => button.addEventListener('click', stopAnd(() => {
+    openCustomFieldsModal(button.dataset.customFieldsProject);
   })));
   document.querySelectorAll('[data-rename-key-project]').forEach(button => button.addEventListener('click', stopAnd(() => {
     openRenameProjectKeyModal(button.dataset.renameKeyProject);
@@ -2460,7 +2580,7 @@ async function openTicket(ticketKey, editing = false) {
   drawerBackdrop.classList.remove('hidden');
   ticketDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   try {
-    const [ticket, comments, links, watchers, voters, worklogs, attachments, history] = await Promise.all([
+    const [ticket, comments, links, watchers, voters, worklogs, attachments, history, customFieldValues] = await Promise.all([
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/comments`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/links`),
@@ -2468,10 +2588,29 @@ async function openTicket(ticketKey, editing = false) {
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/voters`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/worklogs`),
       api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/attachments`),
-      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/history`)
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/history`),
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/custom-fields`)
     ]);
     state.currentTicket = ticket;
     let attachmentSort = 'date';
+
+    // Custom fields (D9): the ticket-scoped fetch above returns
+    // {fieldId, name, fieldType, value} (enough to display), but not
+    // `options`/`required` -- the edit form needs those, so a second,
+    // project-scoped fetch gets the full field definitions and this merges
+    // in each one's current value by fieldId. One extra request per drawer
+    // open, only when the ticket's project actually has custom fields.
+    let customFields = [];
+    try {
+      const definitions = (await api(`/api/v1/projects/${encodeURIComponent(ticket.projectKey)}/custom-fields`)).items;
+      customFields = definitions.map(field => ({
+        ...field,
+        value: customFieldValues.items.find(entry => entry.fieldId === field.id)?.value ?? null
+      }));
+    } catch {
+      // Leave the ticket drawer working even if custom fields can't be
+      // loaded (e.g. transient network error) -- just show none.
+    }
 
     // Fixed emoji reactions (D84): one reactions list per comment, fetched
     // alongside everything else -- fine at demo scale, mirrors the
@@ -2657,6 +2796,13 @@ async function openTicket(ticketKey, editing = false) {
                   </div>
                 </div>`}
               </div>
+              ${customFields.length ? `
+              <div class="sidebar-panel" id="custom-fields-panel">
+                <h4>Custom fields</h4>
+                ${editing
+                  ? `<div class="form-grid" style="grid-template-columns:1fr">${customFields.map(field => customFieldInputMarkup(field, field.value)).join('')}</div>`
+                  : customFields.map(field => `<div class="meta-row"><span>${escapeHtml(field.name)}</span><strong>${field.value ? escapeHtml(field.value) : '—'}</strong></div>`).join('')}
+              </div>` : ''}
               <div class="sidebar-panel sidebar-panel--dates">
                 <div class="meta-row-compact"><span>Created</span><strong>${escapeHtml(formatDate(ticket.createdAt))}</strong></div>
                 <div class="meta-row-compact"><span>Updated</span><strong>${escapeHtml(relativeDate(ticket.updatedAt))}</strong></div>
@@ -2923,6 +3069,7 @@ async function openTicket(ticketKey, editing = false) {
             ticketTypeKey: document.querySelector('#edit-type').value,
             parentTicketKey: document.querySelector('#edit-parent').value || null,
             componentName: document.querySelector('#edit-component').value || null,
+            customFieldValues: collectCustomFieldValues(ticketDrawer, customFields),
             expectedVersion: ticket.version
           };
           try {
@@ -3073,12 +3220,86 @@ async function refreshEditComponentOptions(ticket) {
   }
 }
 
+// Custom fields (D9): shared between the create-ticket modal and the
+// drawer's edit form. Every value is a single string on the wire (see
+// migrations/*/018_custom_fields.sql), so multi_select is the one type
+// that needs special handling on both write (join selected options with
+// ", ") and read (split back into a Set for the <select multiple>).
+function customFieldInputMarkup(field, currentValue) {
+  const name = `cf_${field.id}`;
+  const value = currentValue || '';
+  const labelText = `${escapeHtml(field.name)}${field.required ? ' *' : ''}`;
+  if (field.fieldType === 'checkbox') {
+    return `<label><input type="checkbox" name="${name}" ${value === 'true' ? 'checked' : ''} style="width:auto;margin-right:6px">${labelText}</label>`;
+  }
+  if (field.fieldType === 'single_select') {
+    return `<label>${labelText}
+      <select name="${name}">
+        <option value="">None</option>
+        ${field.options.map(option => `<option value="${escapeHtml(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+      </select>
+    </label>`;
+  }
+  if (field.fieldType === 'multi_select') {
+    const selected = new Set(value.split(',').map(part => part.trim()).filter(Boolean));
+    return `<label>${labelText}
+      <select name="${name}" multiple size="${Math.max(2, Math.min(field.options.length, 4))}">
+        ${field.options.map(option => `<option value="${escapeHtml(option)}" ${selected.has(option) ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+      </select>
+    </label>`;
+  }
+  const inputType = field.fieldType === 'number' ? 'number' : field.fieldType === 'date' ? 'date' : 'text';
+  return `<label>${labelText}
+    <input type="${inputType}" name="${name}" value="${escapeHtml(value)}"${field.fieldType === 'number' ? ' step="any"' : ''}>
+  </label>`;
+}
+
+function collectCustomFieldValues(form, fields) {
+  const result = {};
+  for (const field of fields) {
+    const name = `cf_${field.id}`;
+    const element = form.querySelector(`[name="${CSS.escape(name)}"]`);
+    if (!element) continue;
+    if (field.fieldType === 'checkbox') {
+      result[field.id] = element.checked ? 'true' : '';
+    } else if (field.fieldType === 'multi_select') {
+      result[field.id] = [...element.selectedOptions].map(option => option.value).join(', ');
+    } else {
+      result[field.id] = element.value.trim();
+    }
+  }
+  return result;
+}
+
+// The create modal's currently-selected project's fields, refreshed by
+// refreshCreateCustomFieldOptions -- read back by the form's submit
+// handler (a top-level listener registered once, not per-render) to know
+// which cf_<id> inputs to collect and how.
+let createModalCustomFields = [];
+
+async function refreshCreateCustomFieldOptions() {
+  const projectKey = document.querySelector('#create-project').value;
+  const container = document.querySelector('#create-custom-fields');
+  if (!projectKey) {
+    container.innerHTML = '';
+    createModalCustomFields = [];
+    return;
+  }
+  try {
+    createModalCustomFields = (await api(`/api/v1/projects/${encodeURIComponent(projectKey)}/custom-fields`)).items;
+  } catch {
+    createModalCustomFields = [];
+  }
+  container.innerHTML = createModalCustomFields.map(field => customFieldInputMarkup(field, '')).join('');
+}
+
 function openCreateModal() {
   document.querySelector('#create-error').classList.add('hidden');
   if (state.selectedProject) document.querySelector('#create-project').value = state.selectedProject;
   createModal.classList.remove('hidden');
   refreshCreateParentOptions().catch(() => {});
   refreshCreateComponentOptions().catch(() => {});
+  refreshCreateCustomFieldOptions().catch(() => {});
   createModal.querySelector('input[name="summary"]').focus();
 }
 
@@ -3106,6 +3327,7 @@ document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('cl
 document.querySelector('#create-button').addEventListener('click', openCreateModal);
 document.querySelector('#create-project').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
 document.querySelector('#create-project').addEventListener('change', () => refreshCreateComponentOptions().catch(() => {}));
+document.querySelector('#create-project').addEventListener('change', () => refreshCreateCustomFieldOptions().catch(() => {}));
 document.querySelector('#create-ticket-type').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
 document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click', () => {
   button.closest('.modal-backdrop')?.classList.add('hidden');
@@ -3155,7 +3377,8 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
     componentName: values.componentName || null,
     storyPoints: values.storyPoints ? Number(values.storyPoints) : null,
     dueDate: values.dueDate || null,
-    labels: values.labels.split(',').map(value => value.trim()).filter(Boolean)
+    labels: values.labels.split(',').map(value => value.trim()).filter(Boolean),
+    customFieldValues: collectCustomFieldValues(form, createModalCustomFields)
   };
   const errorElement = document.querySelector('#create-error');
   try {

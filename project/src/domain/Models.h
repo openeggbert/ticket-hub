@@ -198,6 +198,66 @@ struct EditComponentRequest {
     std::optional<std::string> defaultAssigneeEmail;
 };
 
+// Custom fields (D9, deferred-after-V1, user-requested): admin-defined
+// fields scoped to a single project -- see migrations/*/018_custom_fields.sql
+// for the exact scoping decisions (one context per field, no per-stage
+// visibility flags, no default value). `fieldType` is one of "text",
+// "number", "date", "checkbox", "single_select", "multi_select";
+// `options` is only meaningful for the two select types. A field's value
+// is always a single string on the wire and in storage, even for
+// multi_select (comma-joined), matching the convention `labels` already
+// uses.
+struct CustomFieldDefinition {
+    std::string id;
+    std::string projectKey;
+    std::string name;
+    std::string fieldType;
+    std::vector<std::string> options;
+    bool required = false;
+    int sortOrder = 0;
+    std::string createdAt;
+};
+
+struct CreateCustomFieldRequest {
+    std::string projectKey;
+    std::string name;
+    std::string fieldType;
+    std::vector<std::string> options;
+    bool required = false;
+};
+
+// Full-replacement edit, matching every other edit request in this
+// codebase. `sortOrder` is settable directly here rather than through a
+// separate reorder endpoint (D31's renumbering machinery is overkill for a
+// project's typically-small field catalog).
+struct EditCustomFieldRequest {
+    std::string name;
+    std::vector<std::string> options;
+    bool required = false;
+    int sortOrder = 0;
+};
+
+// One ticket's value for one project custom field. `value` is nullopt when
+// the field has never been set on this ticket -- still returned (not
+// omitted) so the web client can render an empty input for it, matching
+// D9's "shown on ... view" even when unset.
+struct CustomFieldValue {
+    std::string fieldId;
+    std::string name;
+    std::string fieldType;
+    std::optional<std::string> value;
+};
+
+// One (fieldId, value) pair supplied on ticket create/edit. On edit
+// (full-replacement, matching EditTicketRequest), the complete set of
+// input pairs replaces every existing value for that ticket -- a field
+// with no pair present in the request becomes unset, exactly like an
+// omitted label is no longer applied.
+struct CustomFieldValueInput {
+    std::string fieldId;
+    std::string value;
+};
+
 // Fixed ticket types and the fixed hierarchy they imply (D5, D29, D64-D66):
 // Epic -> Story/Task/Bug -> Sub-task, with nothing above Epic and nothing
 // below Sub-task. There are no custom types in V1, so this is a hardcoded
@@ -512,6 +572,9 @@ struct CreateTicketRequest {
     std::optional<std::string> componentName;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
+    // Custom field values (D9), keyed by field id -- validated against the
+    // target project's own field catalog by TicketService.
+    std::vector<CustomFieldValueInput> customFieldValues;
 };
 
 // Full-replacement edit of a ticket's standard fields, applied with the same
@@ -535,6 +598,9 @@ struct EditTicketRequest {
     std::optional<std::string> dueDate;
     std::string ticketTypeKey;
     std::optional<std::string> parentTicketKey;
+    // Custom field values (D9): the complete replacement set, exactly like
+    // `labels` above -- a field with no pair here becomes unset.
+    std::vector<CustomFieldValueInput> customFieldValues;
 };
 
 struct AddCommentRequest {

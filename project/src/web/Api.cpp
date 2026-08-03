@@ -131,6 +131,56 @@ crow::json::wvalue componentJson(const Domain::ProjectComponent& component) {
     return json;
 }
 
+crow::json::wvalue customFieldJson(const Domain::CustomFieldDefinition& field) {
+    crow::json::wvalue json;
+    json["id"] = field.id;
+    json["projectKey"] = field.projectKey;
+    json["name"] = field.name;
+    json["fieldType"] = field.fieldType;
+    crow::json::wvalue::list options;
+    for (const auto& option : field.options) {
+        options.emplace_back(option);
+    }
+    json["options"] = std::move(options);
+    json["required"] = field.required;
+    json["sortOrder"] = field.sortOrder;
+    json["createdAt"] = field.createdAt;
+    return json;
+}
+
+crow::json::wvalue customFieldValueJson(const Domain::CustomFieldValue& value) {
+    crow::json::wvalue json;
+    json["fieldId"] = value.fieldId;
+    json["name"] = value.name;
+    json["fieldType"] = value.fieldType;
+    json["value"] = value.value ? crow::json::wvalue(*value.value) : crow::json::wvalue(nullptr);
+    return json;
+}
+
+// D9: every value on the wire is a single string (even for multi_select,
+// comma-joined -- see migrations/*/018_custom_fields.sql for why), so
+// parsing is uniform regardless of field type: `{"<fieldId>": "<value>"}`.
+// Absent/empty-string entries are simply omitted, matching how
+// createTicket/editTicket already treat a blank optional field.
+std::vector<Domain::CustomFieldValueInput> parseCustomFieldValues(const crow::json::rvalue& body) {
+    std::vector<Domain::CustomFieldValueInput> values;
+    if (!body.has("customFieldValues") || body["customFieldValues"].t() != crow::json::type::Object) {
+        return values;
+    }
+    for (const auto& fieldId : body["customFieldValues"].keys()) {
+        const auto& entry = body["customFieldValues"][fieldId];
+        if (entry.t() != crow::json::type::String) {
+            continue;
+        }
+        std::string fieldValue = entry.s();
+        if (fieldValue.empty()) {
+            continue;
+        }
+        values.push_back({fieldId, std::move(fieldValue)});
+    }
+    return values;
+}
+
 crow::json::wvalue ticketJson(const Domain::Ticket& ticket) {
     crow::json::wvalue json;
     json["id"] = ticket.id;
@@ -1123,6 +1173,144 @@ void registerApiRoutes(crow::SimpleApp& app,
         }
     });
 
+    // --- Custom fields (D9, deferred-after-V1, user-requested) ---
+    CROW_ROUTE(app, "/api/v1/projects/<string>/custom-fields")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& projectKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& field : service->listCustomFields(projectKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(customFieldJson(field));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/projects/<string>/custom-fields")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request, const std::string& projectKey) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::CreateCustomFieldRequest create;
+            create.projectKey = projectKey;
+            create.name = requiredString(body, "name");
+            create.fieldType = requiredString(body, "fieldType");
+            if (body.has("options") && body["options"].t() == crow::json::type::List) {
+                for (const auto& option : body["options"]) {
+                    if (option.t() == crow::json::type::String) {
+                        create.options.emplace_back(option.s());
+                    }
+                }
+            }
+            if (body.has("required") &&
+                (body["required"].t() == crow::json::type::True || body["required"].t() == crow::json::type::False)) {
+                create.required = body["required"].b();
+            }
+            return jsonResponse(201, customFieldJson(service->createCustomField(std::move(create), *principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/projects/<string>/custom-fields/<string>")
+    .methods(crow::HTTPMethod::Patch)([service, authService](const crow::request& request, const std::string& projectKey,
+                                                              const std::string& fieldId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::EditCustomFieldRequest edit;
+            edit.name = requiredString(body, "name");
+            if (body.has("options") && body["options"].t() == crow::json::type::List) {
+                for (const auto& option : body["options"]) {
+                    if (option.t() == crow::json::type::String) {
+                        edit.options.emplace_back(option.s());
+                    }
+                }
+            }
+            if (body.has("required") &&
+                (body["required"].t() == crow::json::type::True || body["required"].t() == crow::json::type::False)) {
+                edit.required = body["required"].b();
+            }
+            if (body.has("sortOrder") && body["sortOrder"].t() == crow::json::type::Number) {
+                edit.sortOrder = static_cast<int>(body["sortOrder"].i());
+            }
+            auto field = service->editCustomField(projectKey, fieldId, std::move(edit), *principal);
+            return field ? jsonResponse(200, customFieldJson(*field)) : errorResponse(404, "Custom field not found");
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/projects/<string>/custom-fields/<string>")
+    .methods(crow::HTTPMethod::Delete)([service, authService](const crow::request& request, const std::string& projectKey,
+                                                               const std::string& fieldId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (!service->deleteCustomField(projectKey, fieldId, *principal)) {
+                return errorResponse(404, "Custom field not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
     // Moves a project to the recycle bin (soft delete, D88/D89) -- not a
     // permanent delete. See DELETE /api/v1/projects/<key>/permanent below.
     CROW_ROUTE(app, "/api/v1/projects/<string>")
@@ -1490,6 +1678,7 @@ void registerApiRoutes(crow::SimpleApp& app,
                     }
                 }
             }
+            create.customFieldValues = parseCustomFieldValues(body);
             return jsonResponse(201, ticketJson(service->createTicket(std::move(create), *principal)));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
@@ -1651,6 +1840,7 @@ void registerApiRoutes(crow::SimpleApp& app,
                     }
                 }
             }
+            edit.customFieldValues = parseCustomFieldValues(body);
             std::optional<std::int64_t> expectedVersion;
             if (body.has("expectedVersion") && body["expectedVersion"].t() != crow::json::type::Null) {
                 expectedVersion = body["expectedVersion"].i();
@@ -1722,6 +1912,26 @@ void registerApiRoutes(crow::SimpleApp& app,
             crow::json::wvalue::list items;
             for (const auto& entry : service->listTicketHistory(ticketKey, resolvePrincipal(request, authService))) {
                 items.emplace_back(ticketHistoryEntryJson(entry));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // D9: one entry per field defined on the ticket's project, value null
+    // if never set -- so the client can render every field (including
+    // unset ones) on the ticket view, not just the ones with a value.
+    CROW_ROUTE(app, "/api/v1/tickets/<string>/custom-fields")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request, const std::string& ticketKey) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& value : service->listTicketCustomFieldValues(ticketKey, resolvePrincipal(request, authService))) {
+                items.emplace_back(customFieldValueJson(value));
             }
             crow::json::wvalue body;
             body["items"] = std::move(items);

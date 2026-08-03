@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — Custom fields (D9)
+
+- **Custom fields**: admin-defined fields (text/number/date/checkbox/single-select/multi-select) scoped to
+  a project, shown on ticket create/edit/view. A project's Admin-or-above manages the field catalog via a
+  new "Custom fields" modal on the Projects screen; a `required` field blocks a ticket create/edit that
+  omits it.
+- New `custom_fields`/`ticket_custom_field_values` tables (migration `018_custom_fields.sql`); new
+  `GET`/`POST`/`PATCH`/`DELETE /api/v1/projects/{key}/custom-fields[/{id}]` and
+  `GET /api/v1/tickets/{key}/custom-fields` routes; `customFieldValues` accepted on `POST /api/v1/tickets`
+  and `PATCH /api/v1/tickets/{key}` (full-replacement on edit, matching `labels`).
+- Deliberately scoped down from D9's full target: one context per field (its project only), no per-stage
+  visibility flags, no per-field default value.
+- Found and fixed two pre-existing bugs unrelated to custom fields: a nondeterministic SQLite integration
+  test (likely the real cause of previously-reported "transient" test failures) and a CSS overflow on the
+  Projects screen's action-button row.
+- Verified: full rebuild and `ctest` clean in all three build configurations (new SQLite integration test
+  coverage); live-verified against a fresh PostgreSQL database over real HTTP; full Playwright/Chromium
+  browser pass (11/11 checks).
+
 ## Unreleased — Quick filters, more keyboard shortcuts, pagination for notifications/audit log
 
 - **Quick filters (Board/Backlog)**: one-click "Only my tickets" / "No Epic" chip toggles, client-side,

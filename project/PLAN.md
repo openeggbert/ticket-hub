@@ -191,7 +191,26 @@ remains only as optional, non-roadmap follow-up.
   in `docs/SCOPE.md`'s "Deferred after V1, in progress" note; webhooks and email additionally need a
   durable outbox/delivery mechanism first (`CLAUDE.md`'s "no detached in-memory tasks for email/webhooks"
   rule).
-  **There is currently no further queued work in this batch; custom fields/webhooks/email continue next.**
+- **Post-V1, batch 13.** Custom fields (D9, deferred-after-V1) -- item 6 from batch 12's menu.
+  Admin-defined fields (text/number/date/checkbox/single-select/multi-select) scoped to a single project,
+  shown on ticket create/edit/view; scoped down from D9's full target (one context per field, no per-stage
+  visibility flags, no default value). New `custom_fields`/`ticket_custom_field_values` tables (migration
+  `018_custom_fields.sql`); `IDatabase::listCustomFields`/`createCustomField`/`editCustomField`/
+  `deleteCustomField`/`listTicketCustomFieldValues` on both adapters (mirroring the existing
+  `ProjectComponent` methods); values set only via `createTicket`/`editTicket`'s new `customFieldValues`
+  field (full-replacement on edit, like `labels`), applied through a private per-adapter free-function
+  helper rather than a public `IDatabase` method (an early draft got this wrong for Postgres -- see
+  `docs/VERIFICATION.md`'s "Two pre-existing bugs" / "Design correction" notes); new
+  `GET`/`POST`/`PATCH`/`DELETE /api/v1/projects/{key}/custom-fields[/{id}]` and
+  `GET /api/v1/tickets/{key}/custom-fields` routes; `TicketService::requireCustomFieldsSatisfied` for
+  `required` fields. `web/` gained a "Custom fields" admin modal (mirrors Components), dynamic inputs in
+  the create-ticket modal and the drawer's edit form, and a new sidebar panel showing values. Found and
+  fixed two pre-existing bugs unrelated to custom fields: a nondeterministic SQLite integration test
+  (likely the real cause of previously-reported "transient" failures) and a `.project-card-actions`
+  CSS overflow. New SQLite integration test coverage; verified end-to-end against a fresh live PostgreSQL
+  database over real HTTP and a full Playwright/Chromium browser pass (11/11 checks, re-run after an
+  earlier result was caught as untrustworthy due to a leftover server process).
+  **There is currently no further queued work in this batch; webhooks/email continue next.**
 
 ## Implementation rules
 

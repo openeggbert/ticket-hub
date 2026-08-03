@@ -96,6 +96,17 @@ since each needs its own migrations/tests/verification pass; webhooks and email 
 durable outbox/delivery mechanism first per `CLAUDE.md`'s "no detached in-memory tasks for email/webhooks"
 rule. See `docs/SCOPE.md`'s "Batch 12" entry and "The roadmap is now complete" below for full detail.
 
+**Post-V1, batch 13 (done, 2026-08-03):** custom fields (D9, deferred-after-V1) -- item 6 from the same
+user-picked menu as batch 12. Admin-defined fields (text/number/date/checkbox/single-select/multi-select)
+scoped to a single project, shown on ticket create/edit/view; a project's Admin-or-above manages the field
+catalog, and a `required` field blocks a ticket create/edit that omits it. Deliberately scoped down from
+D9's full target (one context per field, no per-stage visibility flags, no default value) -- see
+`docs/SCOPE.md`'s "Batch 13" entry for exactly what was cut and why. Found and fixed two real pre-existing
+bugs along the way, unrelated to custom fields themselves: a nondeterministic SQLite integration test
+(likely the actual cause of "transient" failures noted in earlier verification passes) and a CSS overflow
+on the Projects screen's action-button row. See `docs/SCOPE.md`'s "Batch 13" entry and "The roadmap is now
+complete" below for full detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -1205,6 +1216,73 @@ opens/closes on `?`/Escape, `/` focuses the global search box, both quick-filter
 on Board and Backlog, board card Left/Right keyboard navigation moves focus between columns, and the audit
 log's pagination bar renders with "Previous" correctly disabled on page 1). Full detail in
 `docs/VERIFICATION.md`.
+
+**Post-V1 batch 13 (done, 2026-08-03):** custom fields (D9, deferred-after-V1) -- item 6 from the same
+menu batch 12 came from. Admin-defined fields scoped to a single project, shown on ticket create/edit/view.
+
+- **Scope.** Deliberately cut from D9's full target ("fields support project/issue-type contexts, ordering,
+  required/hidden settings, defaults, and show-on-create/edit/view flags"): one context per field (its
+  project, not also its issue type -- D9 already rules out named screens/screen schemes, and per-issue-type
+  contexts on top of that would multiply this batch's scope well past what was asked for), a fixed
+  always-shown-everywhere visibility (no per-stage hidden/show-on flags), and no per-field default value.
+  Six field types: text, number, date, checkbox, single_select, multi_select. Every value is a single
+  string on the wire and in storage, even for multi_select (comma-joined) -- the same convention `labels`
+  already uses, chosen to avoid a second "value is sometimes an array" JSON shape only custom fields would
+  need.
+- **Backend.** New `custom_fields` (the field catalog, `UNIQUE(project_id, name)`) and
+  `ticket_custom_field_values` (`ON DELETE CASCADE` on both columns) tables (migration
+  `018_custom_fields.sql`). New `IDatabase::listCustomFields`/`createCustomField`/`findCustomFieldById`/
+  `editCustomField`/`deleteCustomField`/`listTicketCustomFieldValues` on both adapters, mirroring the
+  existing `ProjectComponent` (D19) methods almost exactly. Field values are deliberately **not** embedded
+  into the main `tickets` row/`TicketSelect` query the way `labels`/`component_id` are -- a project's
+  custom fields are dynamic and per-project, not a small fixed global catalog, so folding them into the
+  already-complex ticket read query would be high-risk for comparatively little benefit. Values are set
+  only as part of `createTicket`/`editTicket` (`Domain::CreateTicketRequest`/`EditTicketRequest::
+  customFieldValues`, full-replacement on edit, exactly like `labels`), applied transactionally via a
+  private per-adapter helper (`applyTicketCustomFieldValues`, internal-linkage free function taking the
+  live connection/database handle -- not part of `IDatabase`, since nothing outside `createTicket`/
+  `editTicket` ever needs to call it directly). New `GET`/`POST`/`PATCH`/`DELETE
+  /api/v1/projects/{key}/custom-fields[/{id}]` (project-Admin-or-above to write) and
+  `GET /api/v1/tickets/{key}/custom-fields` (standard read access, one entry per field defined on the
+  ticket's project, `value: null` if never set) routes. `TicketService::requireCustomFieldsSatisfied`
+  rejects a create/edit missing a value for a `required` field.
+- **Frontend.** A new "Custom fields" admin modal on the Projects screen (mirrors the existing Components
+  modal structure closely). Dynamic inputs in the create-ticket modal and the ticket drawer's edit form,
+  sharing `customFieldInputMarkup`/`collectCustomFieldValues` helpers (one function per direction: render
+  the right input type, and read whatever's in it back out -- multi_select needs special handling both
+  ways since a `<select multiple>` doesn't behave like every other input for `FormData`). A new "Custom
+  fields" sidebar panel in the ticket drawer, shown only when the ticket's project actually has fields
+  defined, displaying current values (view mode) or the same editable inputs (edit mode).
+
+Two real bugs were found and fixed during this batch's own verification, both pre-existing and unrelated
+to custom fields:
+
+1. **A nondeterministic SQLite integration test.** The existing History-tab test block searched for "the
+   assignee history entry" via a plain `find_if(fieldName == "assignee")`, but the test's own scenario
+   produces *two* `assignee`-field history rows (one editTicket sets it, a later one clears it) that can
+   tie on `created_at` (same wall-clock second) -- when they do, `ORDER BY created_at DESC, id DESC` breaks
+   the tie by comparing random UUIDs, so which row `find_if` lands on first is effectively a coin flip.
+   This is almost certainly the real cause of the "transient" `ticket-hub-sqlite-integration-tests`
+   failures noted in earlier verification passes (previously guessed to be a `/tmp` file race between
+   concurrent build configs) -- caught this time because it failed consistently within a single run rather
+   than intermittently across separate ones. Fixed by searching for the specific entry whose `newValue`
+   matches the assignment the test actually cares about, instead of "whichever sorts first."
+2. **A CSS overflow.** `.project-card-actions` had no `flex-wrap`, so a project card's action-button row
+   silently clipped its last button once a project had enough of them -- unnoticed until this batch's new
+   "Custom fields" button became the fifth, pushing "Delete" half off the card. Fixed with `flex-wrap: wrap`.
+
+New test coverage: `tests/sqlite_integration_tests.cpp` covers full custom-field-definition CRUD (creation,
+duplicate-name rejection, invalid-`fieldType` rejection via the `CHECK` constraint, JSON options
+round-tripping, sort-order assignment/editing), setting/reading/clearing ticket values through
+`createTicket`/`editTicket` (including full-replacement clearing an omitted field), rejecting an unknown
+field id, and cascade-delete of stored values when a field definition is deleted. Verified: full rebuild
+and `ctest` clean in all three build configurations; live-verified over real HTTP against a fresh
+PostgreSQL database (field CRUD, required-field-missing 400, ticket creation/edit with values, field
+deletion cascading away a ticket's stored value); a full Playwright/Chromium browser pass against a fresh
+SQLite database (11/11 checks) -- re-run against a genuinely fresh single server instance after an earlier
+run's result was caught as untrustworthy (a leftover server process from a prior verification attempt had
+kept accumulating state across supposedly-fresh database directories, since a later server start had
+silently failed to bind the already-in-use port). Full detail in `docs/VERIFICATION.md`.
 
 ## Verification status
 

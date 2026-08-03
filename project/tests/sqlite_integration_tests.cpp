@@ -288,9 +288,28 @@ int main() {
             require(statusEntry->actor.has_value() && statusEntry->actor->email == "demo@ticket-hub.local",
                    "the actor who made the change is resolved from the nullable actor_user_id FK");
 
+            // Two edits change `assignee` in this test (the earlier edit ->
+            // sam@ticket-hub.local, and the later `unassign` -> nullopt), so
+            // there are two "assignee" rows in history. Both share the exact
+            // same second-precision created_at as their respective sibling
+            // rows, and can even tie with EACH OTHER'S timestamp across the
+            // two separate editTicket calls if both land in the same wall-
+            // clock second -- when that happens, `ORDER BY created_at DESC,
+            // id DESC` breaks the tie by the random UUID primary key, so a
+            // plain "first assignee entry" search is not deterministic
+            // (this was almost certainly the real cause of the "transient"
+            // sqlite integration test failures noted in earlier verification
+            // passes, not a /tmp file race as originally guessed). Search
+            // for the specific entry whose newValue is the assignment this
+            // block actually cares about, rather than "whichever sorts
+            // first."
             const auto assigneeEntry = std::find_if(history.begin(), history.end(),
-                                                    [](const auto& entry) { return entry.fieldName == "assignee"; });
-            require(assigneeEntry != history.end() && assigneeEntry->newValue.has_value(),
+                                                    [](const auto& entry) {
+                                                        return entry.fieldName == "assignee" &&
+                                                               entry.newValue.has_value() &&
+                                                               *entry.newValue == "sam@ticket-hub.local";
+                                                    });
+            require(assigneeEntry != history.end(),
                    "the assignee field change from editTicket is recorded");
 
             const auto unknownTicketHistory = database.listTicketHistory("TH-9999");
@@ -374,6 +393,134 @@ int main() {
                    "cleanup: the component-test scratch ticket can be soft-deleted");
             require(database.permanentlyDeleteTicket(componentTicket.key),
                    "cleanup: the component-test scratch ticket can be permanently deleted");
+        }
+
+        // --- Custom fields (D9, deferred-after-V1, user-requested) --- also
+        // uses its own freshly created ticket, for the same reason as the
+        // component block above.
+        {
+            TicketHub::Domain::CreateCustomFieldRequest textFieldRequest;
+            textFieldRequest.projectKey = "TH";
+            textFieldRequest.name = "Environment";
+            textFieldRequest.fieldType = "text";
+            const auto textField = database.createCustomField(textFieldRequest);
+            require(!textField.id.empty(), "custom field is created with an id");
+            require(textField.fieldType == "text", "field type is stored");
+            require(textField.sortOrder == 0, "the first field in a project gets sort_order 0");
+
+            TicketHub::Domain::CreateCustomFieldRequest selectFieldRequest;
+            selectFieldRequest.projectKey = "TH";
+            selectFieldRequest.name = "Severity";
+            selectFieldRequest.fieldType = "single_select";
+            selectFieldRequest.options = {"Low", "Medium", "High"};
+            selectFieldRequest.required = true;
+            const auto selectField = database.createCustomField(selectFieldRequest);
+            require(selectField.options.size() == 3 && selectField.options[1] == "Medium",
+                   "select options round-trip through the JSON-encoded storage column");
+            require(selectField.required, "required is stored");
+            require(selectField.sortOrder == 1, "the second field in the same project gets sort_order 1");
+
+            bool duplicateFieldRejected = false;
+            try {
+                database.createCustomField(textFieldRequest);
+            } catch (const std::invalid_argument&) {
+                duplicateFieldRejected = true;
+            }
+            require(duplicateFieldRejected, "a duplicate custom field name in the same project is rejected");
+
+            bool badTypeRejected = false;
+            try {
+                TicketHub::Domain::CreateCustomFieldRequest badType;
+                badType.projectKey = "TH";
+                badType.name = "Bogus";
+                badType.fieldType = "not-a-real-type";
+                database.createCustomField(badType);
+            } catch (const std::invalid_argument&) {
+                badTypeRejected = true;
+            }
+            require(badTypeRejected, "an unrecognized fieldType is rejected by the CHECK constraint");
+
+            const auto fields = database.listCustomFields("TH");
+            require(fields.size() == 2, "listCustomFields returns both newly created fields, ordered by sort_order");
+            require(fields[0].name == "Environment" && fields[1].name == "Severity",
+                   "listCustomFields orders by sort_order, not by name");
+
+            CreateTicketRequest fieldTicketRequest;
+            fieldTicketRequest.projectKey = "TH";
+            fieldTicketRequest.summary = "Ticket carrying custom field values";
+            fieldTicketRequest.customFieldValues = {{textField.id, "staging"}, {selectField.id, "High"}};
+            const auto fieldTicket = database.createTicket(fieldTicketRequest, demoUserId);
+
+            auto valuesFor = [&](const std::string& ticketKey) { return database.listTicketCustomFieldValues(ticketKey); };
+            const auto valuesAfterCreate = valuesFor(fieldTicket.key);
+            require(valuesAfterCreate.size() == 2,
+                   "listTicketCustomFieldValues returns one entry per field defined on the ticket's project");
+            const auto envValue = std::find_if(valuesAfterCreate.begin(), valuesAfterCreate.end(),
+                                               [&](const auto& v) { return v.fieldId == textField.id; });
+            require(envValue != valuesAfterCreate.end() && envValue->value.has_value() && *envValue->value == "staging",
+                   "the text field value set on create is stored and read back");
+            const auto severityValue = std::find_if(valuesAfterCreate.begin(), valuesAfterCreate.end(),
+                                                    [&](const auto& v) { return v.fieldId == selectField.id; });
+            require(severityValue != valuesAfterCreate.end() && severityValue->value.has_value()
+                        && *severityValue->value == "High",
+                   "the select field value set on create is stored and read back");
+
+            bool unknownFieldRejected = false;
+            try {
+                CreateTicketRequest badFieldTicket;
+                badFieldTicket.projectKey = "TH";
+                badFieldTicket.summary = "Should be rejected";
+                badFieldTicket.customFieldValues = {{"00000000-0000-4000-8000-00000000dead", "x"}};
+                database.createTicket(badFieldTicket, demoUserId);
+            } catch (const std::invalid_argument&) {
+                unknownFieldRejected = true;
+            }
+            require(unknownFieldRejected, "an unknown custom field id on create is rejected");
+
+            TicketHub::Domain::EditTicketRequest fieldEdit;
+            fieldEdit.summary = fieldTicket.summary;
+            fieldEdit.description = fieldTicket.description;
+            fieldEdit.priorityKey = fieldTicket.priority.key;
+            fieldEdit.ticketTypeKey = fieldTicket.type.key;
+            fieldEdit.customFieldValues = {{selectField.id, "Low"}};
+            const auto fieldEdited = database.editTicket(fieldTicket.key, fieldEdit, demoUserId, std::nullopt);
+            require(fieldEdited.has_value(), "editing custom field values succeeds");
+            const auto valuesAfterEdit = valuesFor(fieldTicket.key);
+            const auto envAfterEdit = std::find_if(valuesAfterEdit.begin(), valuesAfterEdit.end(),
+                                                   [&](const auto& v) { return v.fieldId == textField.id; });
+            require(envAfterEdit != valuesAfterEdit.end() && !envAfterEdit->value.has_value(),
+                   "editTicket's customFieldValues is a full-replacement set -- a field with no pair in the "
+                   "edit request (Environment, here) becomes unset, exactly like an omitted label");
+            const auto severityAfterEdit = std::find_if(valuesAfterEdit.begin(), valuesAfterEdit.end(),
+                                                        [&](const auto& v) { return v.fieldId == selectField.id; });
+            require(severityAfterEdit != valuesAfterEdit.end() && severityAfterEdit->value.has_value()
+                        && *severityAfterEdit->value == "Low",
+                   "editTicket's customFieldValues replaces the value for a field that IS present in the request");
+
+            const auto renamedField = database.editCustomField(textField.id,
+                TicketHub::Domain::EditCustomFieldRequest{"Env", {}, false, 5});
+            require(renamedField.has_value() && renamedField->name == "Env" && renamedField->sortOrder == 5,
+                   "editCustomField renames the field and updates its sort order");
+
+            require(!database.editCustomField("unknown-field-id",
+                        TicketHub::Domain::EditCustomFieldRequest{"X", {}, false, 0}).has_value(),
+                   "editing an unknown custom field returns nullopt");
+            require(!database.findCustomFieldById("unknown-field-id").has_value(),
+                   "finding an unknown custom field returns nullopt");
+
+            require(database.deleteCustomField(textField.id), "deleteCustomField removes the field");
+            require(!database.deleteCustomField(textField.id), "deleting an already-deleted custom field returns false");
+            require(database.listCustomFields("TH").size() == 1,
+                   "the deleted field no longer appears in the project's field list");
+            require(valuesFor(fieldTicket.key).size() == 1,
+                   "deleting a field cascades away its stored ticket values (ON DELETE CASCADE), leaving "
+                   "only the remaining field's entry");
+
+            require(database.deleteCustomField(selectField.id), "cleanup: remove the second scratch field");
+            require(database.softDeleteTicket(fieldTicket.key, demoUserId),
+                   "cleanup: the custom-field-test scratch ticket can be soft-deleted");
+            require(database.permanentlyDeleteTicket(fieldTicket.key),
+                   "cleanup: the custom-field-test scratch ticket can be permanently deleted");
         }
 
         const auto link = database.createTicketLink(created.key, "TH-1", TicketHub::Domain::LinkTypeBlocks);

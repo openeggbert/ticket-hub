@@ -299,6 +299,56 @@ labels/component" list for cloning. `Domain::TicketFilter::componentName` filter
 way `label` does (case-insensitive match against the ticket's own component name, no cross-project
 ambiguity since a ticket's `component_id` already points at exactly one project's component).
 
+### `custom_fields` / `ticket_custom_field_values`
+
+`custom_fields`: `id`, `project_id`, `name`, `field_type` (`CHECK`-constrained to `text`/`number`/`date`/
+`checkbox`/`single_select`/`multi_select`), `options` (JSON-array-of-strings text column, meaningful only
+for the two select types), `required`, `sort_order`, `created_at`; `UNIQUE(project_id, name)` -- migration
+`018_custom_fields.sql` (D9, deferred-after-V1, user-requested: "napis mi seznam moznych novych
+funkcionalit a ja se rozhodnu" -> the user picked custom fields off that list). `ticket_custom_field_values`:
+`(ticket_id, field_id)` composite primary key, `value` (always a single string on the wire and in storage,
+even for `multi_select` -- comma-joined, the same convention `labels` already uses, chosen to avoid a
+second "value is sometimes an array" JSON shape only custom fields would need), both columns `ON DELETE
+CASCADE`.
+
+Deliberately scoped down from D9's full target ("fields support project/issue-type contexts, ordering,
+required/hidden settings, defaults, and show-on-create/edit/view flags"): one context per field (its
+project, not also its issue type), a fixed always-shown-everywhere visibility (no per-stage hidden/show-on
+flags), and no per-field default value. `sort_order` uses the same "small integer column, renumbered by
+the application layer" approach D31 already established for ticket manual ordering, rather than a
+fractional/string rank -- new fields are appended (`MAX(sort_order) + 1`), and `editCustomField` can set it
+directly (no separate reorder endpoint, since a project's field catalog is typically small).
+
+Field values are **not** embedded into the main `tickets` row/`TicketSelect` query the way `labels`/
+`component_id` are -- a project's custom fields are dynamic and per-project, not a small fixed global
+catalog, so folding them into the already-complex ticket read query would be high-risk for comparatively
+little benefit. Instead `IDatabase::listTicketCustomFieldValues` is its own per-ticket read (one row per
+field defined on the ticket's project, `value` `null` if never set, so the client can render every field --
+including unset ones -- matching D9's "shown on ... view"), exposed via `GET /api/v1/tickets/{key}/
+custom-fields`, fetched by the web client alongside comments/worklogs/links/watchers/voters/attachments/
+history when the ticket drawer opens.
+
+Values are only ever written as part of `createTicket`/`editTicket` (`Domain::CreateTicketRequest::
+customFieldValues` / `EditTicketRequest::customFieldValues`), applied transactionally alongside the rest of
+the ticket write via a private per-adapter helper (`applyTicketCustomFieldValues`, internal-linkage free
+function taking the live connection/database handle -- not part of `IDatabase`, since nothing outside
+`createTicket`/`editTicket` ever needs to call it directly). On edit this is a full-replacement set,
+exactly like `labels`: a field with no pair in the edit request becomes unset, not left alone. A `fieldId`
+that doesn't belong to the ticket's own project (or doesn't exist at all) is rejected with
+`std::invalid_argument`, the same IDOR-safe posture already used for `componentName`/worklog/attachment
+ids scoped by project.
+
+`TicketService::requireCustomFieldsSatisfied` rejects a create/edit whose `customFieldValues` omits a value
+for a field the project marked `required`, checked once per call against the project's current field list
+(not re-validated by `IDatabase::createTicket`/`editTicket` themselves, which only enforce that a supplied
+`fieldId` is valid, not that every required one was supplied -- the same split `Validation.cpp`'s content
+checks and the transactional adapter-level checks already use elsewhere in this codebase).
+`createCustomField`/`editCustomField`/`deleteCustomField` require project-Admin-or-above (matching
+components); `listCustomFields`/`listTicketCustomFieldValues` share the standard read-access rule (any
+authenticated user, or anonymous if the installation toggle is on). No recycle bin/soft-delete, matching
+components (D19) -- `deleteCustomField` is a plain hard delete, and `ticket_custom_field_values`' `ON
+DELETE CASCADE` on `field_id` removes every ticket's stored value for that field along with it.
+
 ### Comments
 
 `id`, `ticket_id`, `author_user_id`, `body`, `created_at`, `updated_at`, `version`, `deleted_at`,

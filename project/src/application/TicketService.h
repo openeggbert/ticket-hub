@@ -288,6 +288,22 @@ public:
                                                            const Domain::Principal& actor);
     bool deleteComponent(const std::string& projectKey, const std::string& componentId, const Domain::Principal& actor);
 
+    // --- Custom fields (D9, deferred-after-V1, user-requested) ---
+    // Same permission/IDOR-safety shape as components: read is project-
+    // Member-or-above (via requireProjectRole inside listCustomFields/
+    // listTicketCustomFields), write is project-Admin-or-above, and
+    // edit/delete are scoped to (projectKey, fieldId) together.
+    std::vector<Domain::CustomFieldDefinition> listCustomFields(const std::string& projectKey,
+                                                                  const std::optional<Domain::Principal>& actor);
+    Domain::CustomFieldDefinition createCustomField(Domain::CreateCustomFieldRequest request, const Domain::Principal& actor);
+    std::optional<Domain::CustomFieldDefinition> editCustomField(const std::string& projectKey,
+                                                                  const std::string& fieldId,
+                                                                  Domain::EditCustomFieldRequest request,
+                                                                  const Domain::Principal& actor);
+    bool deleteCustomField(const std::string& projectKey, const std::string& fieldId, const Domain::Principal& actor);
+    std::vector<Domain::CustomFieldValue> listTicketCustomFieldValues(const std::string& ticketKey,
+                                                                       const std::optional<Domain::Principal>& actor);
+
     // --- Project lifecycle (Phase 2, D3/D87/D88/D89) ---
     // Creation requires global administrator: there is no project to hold a
     // project-admin membership row over until it exists, matching the
@@ -368,6 +384,16 @@ private:
                                 std::optional<std::string>& parentTicketKey,
                                 const std::string& projectKey,
                                 const std::optional<std::string>& excludeSelfKey);
+
+    // Custom fields (D9): rejects a create/edit whose customFieldValues
+    // omits a value for a field the project marked required. Does not
+    // re-validate that every supplied fieldId belongs to this project --
+    // IDatabase::createTicket/editTicket already reject that transactionally
+    // (a fieldId from a different project matches no row and throws
+    // std::invalid_argument), so duplicating the check here would only add
+    // a redundant round trip for a case this already handles correctly.
+    void requireCustomFieldsSatisfied(const std::string& projectKey,
+                                      const std::vector<Domain::CustomFieldValueInput>& values);
 
     // Notifies a newly-set assignee (D14 "assigned to me"), skipping a
     // self-assignment and a no-op re-save with the same assignee.

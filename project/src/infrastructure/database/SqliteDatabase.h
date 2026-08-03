@@ -73,6 +73,14 @@ public:
                                                             const Domain::EditComponentRequest& request) override;
     bool deleteComponent(const std::string& componentId) override;
 
+    std::vector<Domain::CustomFieldDefinition> listCustomFields(const std::string& projectKey) override;
+    Domain::CustomFieldDefinition createCustomField(const Domain::CreateCustomFieldRequest& request) override;
+    std::optional<Domain::CustomFieldDefinition> findCustomFieldById(const std::string& fieldId) override;
+    std::optional<Domain::CustomFieldDefinition> editCustomField(const std::string& fieldId,
+                                                                  const Domain::EditCustomFieldRequest& request) override;
+    bool deleteCustomField(const std::string& fieldId) override;
+    std::vector<Domain::CustomFieldValue> listTicketCustomFieldValues(const std::string& ticketKey) override;
+
     std::vector<Domain::Project> listProjects() override;
     std::vector<Domain::Ticket> listTickets(const Domain::TicketFilter& filter) override;
     std::vector<Domain::Ticket> listTickets(const Domain::TicketFilter& filter, int limit, int offset) override;

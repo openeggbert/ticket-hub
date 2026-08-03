@@ -144,6 +144,80 @@ Domain::ProjectComponent readComponent(sqlite3_stmt* statement) {
     return component;
 }
 
+// Custom fields (D9). `options` is stored as a small self-contained JSON
+// array of strings -- a private encoding local to this adapter (not a
+// dependency on the web layer's crow::json), since the only structure ever
+// needed is "flat array of strings produced and consumed by this file."
+std::string encodeCustomFieldOptions(const std::vector<std::string>& options) {
+    std::string json = "[";
+    for (std::size_t i = 0; i < options.size(); ++i) {
+        if (i > 0) {
+            json += ",";
+        }
+        json += "\"";
+        for (const char c : options[i]) {
+            if (c == '"' || c == '\\') {
+                json += '\\';
+            }
+            json += c;
+        }
+        json += "\"";
+    }
+    json += "]";
+    return json;
+}
+
+std::vector<std::string> decodeCustomFieldOptions(const std::string& json) {
+    std::vector<std::string> options;
+    std::string current;
+    bool inString = false;
+    bool escape = false;
+    for (const char c : json) {
+        if (!inString) {
+            if (c == '"') {
+                inString = true;
+                current.clear();
+            }
+            continue;
+        }
+        if (escape) {
+            current += c;
+            escape = false;
+            continue;
+        }
+        if (c == '\\') {
+            escape = true;
+            continue;
+        }
+        if (c == '"') {
+            inString = false;
+            options.push_back(current);
+            continue;
+        }
+        current += c;
+    }
+    return options;
+}
+
+constexpr const char* CustomFieldSelect = R"SQL(
+SELECT f.id, p.project_key, f.name, f.field_type, f.options, f.required, f.sort_order, f.created_at
+FROM custom_fields f
+JOIN projects p ON p.id = f.project_id
+)SQL";
+
+Domain::CustomFieldDefinition readCustomFieldDefinition(sqlite3_stmt* statement) {
+    Domain::CustomFieldDefinition field;
+    field.id = text(statement, 0);
+    field.projectKey = text(statement, 1);
+    field.name = text(statement, 2);
+    field.fieldType = text(statement, 3);
+    field.options = decodeCustomFieldOptions(text(statement, 4));
+    field.required = boolColumn(statement, 5);
+    field.sortOrder = sqlite3_column_int(statement, 6);
+    field.createdAt = text(statement, 7);
+    return field;
+}
+
 Domain::Ticket readTicket(sqlite3_stmt* statement) {
     Domain::Ticket ticket;
     ticket.id = text(statement, 0);
@@ -1270,6 +1344,185 @@ bool SqliteDatabase::deleteComponent(const std::string& componentId) {
     return sqlite3_changes(database_) > 0;
 }
 
+std::vector<Domain::CustomFieldDefinition> SqliteDatabase::listCustomFields(const std::string& projectKey) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(CustomFieldSelect) + " WHERE p.project_key = ? ORDER BY f.sort_order, f.name");
+    statement.bind(1, projectKey);
+    std::vector<Domain::CustomFieldDefinition> fields;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        fields.push_back(readCustomFieldDefinition(statement.get()));
+    }
+    return fields;
+}
+
+Domain::CustomFieldDefinition SqliteDatabase::createCustomField(const Domain::CreateCustomFieldRequest& request) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        const std::string projectId = lookupId(database_, "projects", "project_key", request.projectKey);
+
+        Statement maxOrder(database_, "SELECT COALESCE(MAX(sort_order), -1) FROM custom_fields WHERE project_id = ?");
+        maxOrder.bind(1, projectId);
+        maxOrder.step();
+        const int nextOrder = sqlite3_column_int(maxOrder.get(), 0) + 1;
+
+        const std::string fieldId = Common::uuidV4();
+        Statement insert(database_, R"SQL(
+INSERT INTO custom_fields(id, project_id, name, field_type, options, required, sort_order, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+)SQL");
+        insert.bind(1, fieldId);
+        insert.bind(2, projectId);
+        insert.bind(3, request.name);
+        insert.bind(4, request.fieldType);
+        insert.bind(5, encodeCustomFieldOptions(request.options));
+        insert.bind(6, static_cast<std::int64_t>(request.required ? 1 : 0));
+        insert.bind(7, static_cast<std::int64_t>(nextOrder));
+        if (insert.step() != SQLITE_DONE) {
+            throw std::invalid_argument("Custom field name is already in use in this project: " + request.name);
+        }
+
+        executeScript("COMMIT;");
+        Statement read(database_, std::string(CustomFieldSelect) + " WHERE f.id = ?");
+        read.bind(1, fieldId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Created custom field could not be read back");
+        }
+        return readCustomFieldDefinition(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+std::optional<Domain::CustomFieldDefinition> SqliteDatabase::findCustomFieldById(const std::string& fieldId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(CustomFieldSelect) + " WHERE f.id = ?");
+    statement.bind(1, fieldId);
+    if (statement.step() != SQLITE_ROW) {
+        return std::nullopt;
+    }
+    return readCustomFieldDefinition(statement.get());
+}
+
+std::optional<Domain::CustomFieldDefinition> SqliteDatabase::editCustomField(const std::string& fieldId,
+                                                                              const Domain::EditCustomFieldRequest& request) {
+    std::scoped_lock lock(mutex_);
+    executeScript("BEGIN IMMEDIATE;");
+    try {
+        Statement exists(database_, "SELECT 1 FROM custom_fields WHERE id = ?");
+        exists.bind(1, fieldId);
+        if (exists.step() != SQLITE_ROW) {
+            executeScript("ROLLBACK;");
+            return std::nullopt;
+        }
+
+        Statement update(database_, R"SQL(
+UPDATE custom_fields SET name = ?, options = ?, required = ?, sort_order = ? WHERE id = ?
+)SQL");
+        update.bind(1, request.name);
+        update.bind(2, encodeCustomFieldOptions(request.options));
+        update.bind(3, static_cast<std::int64_t>(request.required ? 1 : 0));
+        update.bind(4, static_cast<std::int64_t>(request.sortOrder));
+        update.bind(5, fieldId);
+        if (update.step() != SQLITE_DONE) {
+            throw std::invalid_argument("Custom field name is already in use in this project: " + request.name);
+        }
+
+        executeScript("COMMIT;");
+        Statement read(database_, std::string(CustomFieldSelect) + " WHERE f.id = ?");
+        read.bind(1, fieldId);
+        if (read.step() != SQLITE_ROW) {
+            throw std::runtime_error("Edited custom field could not be read back");
+        }
+        return readCustomFieldDefinition(read.get());
+    } catch (...) {
+        try {
+            executeScript("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+}
+
+bool SqliteDatabase::deleteCustomField(const std::string& fieldId) {
+    std::scoped_lock lock(mutex_);
+    // No recycle bin (matches project components, D19) -- every stored
+    // value for this field is cascaded away via ticket_custom_field_values'
+    // ON DELETE CASCADE on field_id.
+    Statement statement(database_, "DELETE FROM custom_fields WHERE id = ?");
+    statement.bind(1, fieldId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+std::vector<Domain::CustomFieldValue> SqliteDatabase::listTicketCustomFieldValues(const std::string& ticketKey) {
+    std::scoped_lock lock(mutex_);
+    // One row per field defined on the ticket's project, whether or not a
+    // value has ever been stored for it (LEFT JOIN), so the caller can
+    // render every field -- including unset ones -- on the ticket view.
+    Statement statement(database_, R"SQL(
+SELECT f.id, f.name, f.field_type, v.value
+FROM custom_fields f
+JOIN tickets i ON i.project_id = f.project_id
+LEFT JOIN ticket_custom_field_values v ON v.field_id = f.id AND v.ticket_id = i.id
+WHERE i.deleted_at IS NULL
+  AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
+ORDER BY f.sort_order, f.name
+)SQL");
+    statement.bind(1, ticketKey);
+    std::vector<Domain::CustomFieldValue> values;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        Domain::CustomFieldValue value;
+        value.fieldId = text(statement.get(), 0);
+        value.name = text(statement.get(), 1);
+        value.fieldType = text(statement.get(), 2);
+        value.value = optionalText(statement.get(), 3);
+        values.push_back(std::move(value));
+    }
+    return values;
+}
+
+namespace {
+void applyTicketCustomFieldValues(sqlite3* database, const std::string& ticketId, const std::string& projectId,
+                                   const std::vector<Domain::CustomFieldValueInput>& values) {
+    // Called only from within an already-open transaction (createTicket/
+    // editTicket), so this does not itself BEGIN/COMMIT -- matching how
+    // those methods already handle labels/component inline. A free
+    // function taking the raw database handle, matching lookupId/
+    // lookupComponentId's existing pattern for this kind of internal helper.
+    // Anonymous-namespace-scoped (internal linkage) since PostgresDatabase.cpp
+    // defines its own same-named equivalent for its own PGconn type.
+    Statement clear(database, "DELETE FROM ticket_custom_field_values WHERE ticket_id = ?");
+    clear.bind(1, ticketId);
+    expectDone(database, clear, "Clear ticket custom field values");
+    for (const auto& input : values) {
+        if (input.value.empty()) {
+            continue;
+        }
+        // The SELECT scopes field_id to this ticket's own project -- a
+        // fieldId that exists but belongs to a different project matches
+        // no row, so nothing is inserted and the changes() check below
+        // rejects it the same way an entirely unknown id would.
+        Statement insert(database, R"SQL(
+INSERT INTO ticket_custom_field_values(ticket_id, field_id, value)
+SELECT ?, id, ? FROM custom_fields WHERE id = ? AND project_id = ?
+)SQL");
+        insert.bind(1, ticketId);
+        insert.bind(2, input.value);
+        insert.bind(3, input.fieldId);
+        insert.bind(4, projectId);
+        expectDone(database, insert, "Ticket custom field value insert");
+        if (sqlite3_changes(database) == 0) {
+            throw std::invalid_argument("Unknown custom field id for this project: " + input.fieldId);
+        }
+    }
+}
+} // namespace
+
 // --- Ticket tracker ---
 
 std::vector<Domain::Project> SqliteDatabase::listProjects() {
@@ -1534,6 +1787,8 @@ SELECT ?, id FROM labels WHERE name = ?
             expectDone(database_, link, "Ticket label insert");
         }
 
+        applyTicketCustomFieldValues(database_, ticketId, projectId, request.customFieldValues);
+
         executeScript("COMMIT;");
         const std::string sql = std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.ticket_key = ?1 GROUP BY i.id";
         Statement read(database_, sql);
@@ -1793,6 +2048,8 @@ WHERE id = ?
             link.bind(2, labelName);
             expectDone(database_, link, "Ticket label insert");
         }
+
+        applyTicketCustomFieldValues(database_, ticketId, projectId, request.customFieldValues);
 
         auto recordHistory = [&](const char* field, const std::string& oldValue, const std::string& newValue) {
             if (oldValue == newValue) {
