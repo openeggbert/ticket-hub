@@ -41,6 +41,10 @@ support (Back/Forward, deep links, reload-safe) -- a new user-requested addition
 optional-follow-up list (batches 1-4) had already been fully closed out; see "The roadmap is now complete"
 below for detail.
 
+**Post-V1, batch 6 (done):** a full "issue" -> "ticket" terminology rename across the database schema,
+REST API, C++ code, and UI, to match the product's own name (Ticket Hub) -- another new user-requested
+addition; see "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -833,6 +837,35 @@ every combination: logged-out direct navigation, clicking between issues, a full
 `/browse/{key}` URL, Back/Forward, an unknown key (shows the existing error banner, no crash), and
 confirming `history.length` doesn't grow across repeated mutations on an already-open issue. Both existing
 browser regression scripts re-run clean. Full detail in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 6 (done):** the user asked to rename "issue" to "ticket" everywhere, in both the UI and
+the database tables; asked to clarify the scope (REST API paths and internal C++ naming too, or UI/DB
+only), the user chose the fully comprehensive option. New migration `016_ticket_terminology.sql` (both
+backends) renames every `issue*` table/column/index; the PostgreSQL variant also renames the
+auto-generated constraint names a table/column `RENAME` doesn't touch on its own, for full consistency.
+Every C++ type, method, and identifier (`Domain::Issue` -> `Domain::Ticket`,
+`TicketService::createIssue` -> `TicketService::createTicket`, etc.), every REST route and JSON field
+(`/api/v1/issues` -> `/api/v1/tickets`, `issueKey` -> `ticketKey`, ...), every CSS class, and all
+user-facing UI text were renamed via a case-preserving substring pass (`Issue`->`Ticket`, `issue`->
+`ticket`), applied only to the fixed list of files known to reference the domain entity (not blindly
+repo-wide), followed by a manual grep-based fix-up pass for the one grammar artifact this kind of
+substitution predictably produces ("an issue" -> "an ticket", fixed to "a ticket" everywhere it appeared,
+across C++ comments/error strings, test descriptions, docs, and `web/app.js`'s user-visible text).
+`002_seed_demo.sql` (both backends) updated to match the renamed columns. Documentation split by nature,
+consistent with how this project has always treated its own written history: current-state documents
+(`docs/SCHEMA.md`, `docs/SCOPE.md`, and the non-narrative sections of `README.md` -- feature list,
+architecture, API reference) were renamed in place; the dated historical batch narratives in `README.md`'s
+"Server verification" section, this file, `CHANGELOG.md`, and `docs/VERIFICATION.md` were left exactly as
+written, since they describe what was literally true, and named, at the time -- a new dated entry was
+added to each instead. `PLAN.md`'s per-batch history was likewise left as written, with a new bullet added.
+Verified: full rebuild across the project's build configuration with zero new warnings/errors, `ctest`
+clean; a fresh `migrate` + `seed-demo` against a throwaway PostgreSQL database, followed by a direct
+`pg_constraint`/`pg_indexes` query confirming zero remaining "issue"-named tables, indexes, or constraints
+anywhere in the schema; the same fresh-migrate-and-seed check against a throwaway SQLite database via
+`sqlite_master`; a live HTTP smoke test against the PostgreSQL-backed server (login, `GET
+/api/v1/tickets`, `/browse/{key}`); and a full Playwright/Chromium browser pass confirming no leftover
+"Issue"/"Issues" text anywhere in the rendered UI (dashboard, nav, tickets table, ticket drawer) and that
+creating a new ticket through the UI still works end-to-end. Full detail in `docs/VERIFICATION.md`.
 
 ## Verification status
 

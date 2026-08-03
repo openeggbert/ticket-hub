@@ -35,9 +35,9 @@ const COMMENT_REACTIONS = [
 // Fixed Epic -> Story/Task/Bug -> Sub-task hierarchy (D5, D29, D64-D66):
 // 1 = Epic (no parent allowed), -1 = Sub-task (parent required, must be a
 // Story/Task/Bug), 0 = Story/Task/Bug (parent optional, must be an Epic).
-function issueTypeHierarchyLevel(issueTypeKey) {
-  if (issueTypeKey === 'epic') return 1;
-  if (issueTypeKey === 'sub-task') return -1;
+function ticketTypeHierarchyLevel(ticketTypeKey) {
+  if (ticketTypeKey === 'epic') return 1;
+  if (ticketTypeKey === 'sub-task') return -1;
   return 0;
 }
 
@@ -45,7 +45,7 @@ function initialState() {
   return {
     view: 'dashboard',
     projects: [],
-    issues: [],
+    tickets: [],
     dashboard: null,
     selectedProject: null,
     search: '',
@@ -57,7 +57,7 @@ function initialState() {
     filterAssignee: '',
     filterLabel: '',
     filterDueBefore: '',
-    currentIssue: null,
+    currentTicket: null,
     principal: null,
     // Cached user directory (D80) -- powers @mention autocomplete. Fetched
     // once per session in loadBaseData(); the demo app is small enough that
@@ -71,8 +71,8 @@ const state = initialState();
 const content = document.querySelector('#content');
 const createModal = document.querySelector('#create-modal');
 const projectModal = document.querySelector('#project-modal');
-const issueDrawer = document.querySelector('#issue-drawer');
-const drawerBackdrop = document.querySelector('#issue-drawer-backdrop');
+const ticketDrawer = document.querySelector('#ticket-drawer');
+const drawerBackdrop = document.querySelector('#ticket-drawer-backdrop');
 const toast = document.querySelector('#toast');
 const loginScreen = document.querySelector('#login-screen');
 const appShell = document.querySelector('#app-shell');
@@ -241,10 +241,10 @@ function insertAtCursor(textarea, text) {
 
 // Full upload + drag/drop + paste support in the Markdown editor (D100),
 // referencing `attachment://<id>` (resolved at render time by
-// renderMarkdown/renderMarkdownInline). Only wired up when `issueKey` is
-// known -- the create-issue form has no issue yet to attach files to, so
+// renderMarkdown/renderMarkdownInline). Only wired up when `ticketKey` is
+// known -- the create-ticket form has no ticket yet to attach files to, so
 // its description textarea gets the toolbar without this capability.
-function attachMarkdownToolbar(textarea, issueKey = null) {
+function attachMarkdownToolbar(textarea, ticketKey = null) {
   const toolbar = document.createElement('div');
   toolbar.className = 'markdown-toolbar';
   toolbar.innerHTML = `
@@ -255,13 +255,13 @@ function attachMarkdownToolbar(textarea, issueKey = null) {
     <button type="button" data-md="ul" title="Bulleted list">•</button>
     <button type="button" data-md="ol" title="Numbered list">1.</button>
     <button type="button" data-md="quote" title="Quote">❝</button>
-    ${issueKey ? '<button type="button" data-md="attach" title="Attach a file">📎</button>' : ''}
+    ${ticketKey ? '<button type="button" data-md="attach" title="Attach a file">📎</button>' : ''}
     <button type="button" class="markdown-preview-toggle" data-md="preview" title="Toggle preview">👁 Preview</button>`;
   textarea.insertAdjacentElement('beforebegin', toolbar);
 
   const insertAttachmentReference = async file => {
     try {
-      const attachment = await uploadAttachmentFile(issueKey, file);
+      const attachment = await uploadAttachmentFile(ticketKey, file);
       const isImage = attachment.contentType.startsWith('image/');
       insertAtCursor(textarea, `${isImage ? '!' : ''}[${attachment.fileName}](attachment://${attachment.id})`);
     } catch (error) {
@@ -269,7 +269,7 @@ function attachMarkdownToolbar(textarea, issueKey = null) {
     }
   };
 
-  if (issueKey) {
+  if (ticketKey) {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.hidden = true;
@@ -405,11 +405,11 @@ function sortAttachments(attachments, sortBy) {
 // Uploads via a real multipart/form-data POST, bypassing the shared api()
 // helper (which always forces a JSON Content-Type) so the browser can set
 // its own multipart boundary.
-async function uploadAttachmentFile(issueKey, file) {
+async function uploadAttachmentFile(ticketKey, file) {
   const formData = new FormData();
   formData.append('file', file);
   const csrfToken = getCookie('th_csrf');
-  const response = await fetch(`/api/v1/issues/${encodeURIComponent(issueKey)}/attachments`, {
+  const response = await fetch(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/attachments`, {
     method: 'POST',
     headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
     body: formData
@@ -474,7 +474,7 @@ function renderCurrentUser() {
   document.querySelector('#current-user-name').textContent = principal.displayName;
   document.querySelector('#current-user-email').textContent = principal.email;
   // The audit log (D23) and the attachment recycle bin (D101/D102) are both
-  // global-administrator-only, like the issue/project recycle bins.
+  // global-administrator-only, like the ticket/project recycle bins.
   document.querySelector('#nav-audit').classList.toggle('hidden', !principal.isAdmin);
   document.querySelector('#nav-attachment-bin').classList.toggle('hidden', !principal.isAdmin);
 }
@@ -494,17 +494,17 @@ function showError(error) {
   content.innerHTML = `<div class="error-banner"><strong>Ticket Hub could not load this view.</strong><br>${escapeHtml(error.message || error)}</div>`;
 }
 
-function statusChip(issue) {
-  return `<span class="status-chip ${escapeHtml(issue.status.category)}">${escapeHtml(issue.status.name)}</span>`;
+function statusChip(ticket) {
+  return `<span class="status-chip ${escapeHtml(ticket.status.category)}">${escapeHtml(ticket.status.name)}</span>`;
 }
 
-function priorityChip(issue) {
-  return `<span class="priority-chip"><span style="color:${escapeHtml(issue.priority.color)}">▲</span>${escapeHtml(issue.priority.name)}</span>`;
+function priorityChip(ticket) {
+  return `<span class="priority-chip"><span style="color:${escapeHtml(ticket.priority.color)}">▲</span>${escapeHtml(ticket.priority.name)}</span>`;
 }
 
-function assigneeMarkup(issue) {
-  if (!issue.assignee) return '<span class="assignee-cell">Unassigned</span>';
-  return `<span class="assignee-cell"><span class="small-avatar">${escapeHtml(initials(issue.assignee.displayName))}</span>${escapeHtml(issue.assignee.displayName)}</span>`;
+function assigneeMarkup(ticket) {
+  if (!ticket.assignee) return '<span class="assignee-cell">Unassigned</span>';
+  return `<span class="assignee-cell"><span class="small-avatar">${escapeHtml(initials(ticket.assignee.displayName))}</span>${escapeHtml(ticket.assignee.displayName)}</span>`;
 }
 
 function labelsMarkup(labels = []) {
@@ -512,55 +512,55 @@ function labelsMarkup(labels = []) {
 }
 
 // `orderable` adds an Order column with move-up/move-down buttons (D31);
-// only meaningful when `issues` is a single project's full, rank-sorted
-// list, since reorderIssue's `beforeIssueKey` anchor must be in the same
-// project as the issue being moved. `selectable` adds a checkbox column for
+// only meaningful when `tickets` is a single project's full, rank-sorted
+// list, since reorderTicket's `beforeTicketKey` anchor must be in the same
+// project as the ticket being moved. `selectable` adds a checkbox column for
 // bulk actions (D36).
-function issueRows(issues, { orderable = false, selectable = false } = {}) {
+function ticketRows(tickets, { orderable = false, selectable = false } = {}) {
   const extraColumns = (orderable ? 1 : 0) + (selectable ? 1 : 0);
-  if (!issues.length) {
-    return `<tr><td colspan="${6 + extraColumns}"><div class="empty-state"><strong>No issues found</strong>Adjust the filters or create a new issue.</div></td></tr>`;
+  if (!tickets.length) {
+    return `<tr><td colspan="${6 + extraColumns}"><div class="empty-state"><strong>No tickets found</strong>Adjust the filters or create a new ticket.</div></td></tr>`;
   }
-  return issues.map((issue, index) => `
-    <tr data-issue-key="${escapeHtml(issue.key)}">
-      ${selectable ? `<td class="select-column"><input type="checkbox" class="issue-select" value="${escapeHtml(issue.key)}" aria-label="Select ${escapeHtml(issue.key)}"></td>` : ''}
-      <td><span class="issue-type" title="${escapeHtml(issue.type.name)}"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)}</span></td>
-      <td><span class="issue-key">${escapeHtml(issue.key)}</span></td>
-      <td class="issue-summary">${escapeHtml(issue.summary)}</td>
-      <td>${statusChip(issue)}</td>
-      <td>${priorityChip(issue)}</td>
-      <td>${assigneeMarkup(issue)}</td>
+  return tickets.map((ticket, index) => `
+    <tr data-ticket-key="${escapeHtml(ticket.key)}">
+      ${selectable ? `<td class="select-column"><input type="checkbox" class="ticket-select" value="${escapeHtml(ticket.key)}" aria-label="Select ${escapeHtml(ticket.key)}"></td>` : ''}
+      <td><span class="ticket-type" title="${escapeHtml(ticket.type.name)}"><span style="color:${escapeHtml(ticket.type.color)}">${escapeHtml(ticket.type.icon)}</span>${escapeHtml(ticket.type.name)}</span></td>
+      <td><span class="ticket-key">${escapeHtml(ticket.key)}</span></td>
+      <td class="ticket-summary">${escapeHtml(ticket.summary)}</td>
+      <td>${statusChip(ticket)}</td>
+      <td>${priorityChip(ticket)}</td>
+      <td>${assigneeMarkup(ticket)}</td>
       ${orderable ? `<td class="order-cell">
-        <button type="button" class="icon-button" data-move-up="${escapeHtml(issue.key)}" ${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
-        <button type="button" class="icon-button" data-move-down="${escapeHtml(issue.key)}" ${index === issues.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+        <button type="button" class="icon-button" data-move-up="${escapeHtml(ticket.key)}" ${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+        <button type="button" class="icon-button" data-move-down="${escapeHtml(ticket.key)}" ${index === tickets.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
       </td>` : ''}
     </tr>`).join('');
 }
 
-function deletedIssueRows(issues) {
-  if (!issues.length) {
+function deletedTicketRows(tickets) {
+  if (!tickets.length) {
     return `<tr><td colspan="7"><div class="empty-state"><strong>The recycle bin is empty</strong></div></td></tr>`;
   }
-  return issues.map(issue => `
+  return tickets.map(ticket => `
     <tr>
-      <td><span class="issue-type" title="${escapeHtml(issue.type.name)}"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)}</span></td>
-      <td><span class="issue-key">${escapeHtml(issue.key)}</span></td>
-      <td class="issue-summary">${escapeHtml(issue.summary)}</td>
-      <td>${statusChip(issue)}</td>
-      <td>${priorityChip(issue)}</td>
-      <td>${assigneeMarkup(issue)}</td>
-      <td><div class="project-card-actions"><button type="button" class="secondary-button" data-restore-issue="${escapeHtml(issue.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-issue="${escapeHtml(issue.key)}">Delete permanently</button></div></td>
+      <td><span class="ticket-type" title="${escapeHtml(ticket.type.name)}"><span style="color:${escapeHtml(ticket.type.color)}">${escapeHtml(ticket.type.icon)}</span>${escapeHtml(ticket.type.name)}</span></td>
+      <td><span class="ticket-key">${escapeHtml(ticket.key)}</span></td>
+      <td class="ticket-summary">${escapeHtml(ticket.summary)}</td>
+      <td>${statusChip(ticket)}</td>
+      <td>${priorityChip(ticket)}</td>
+      <td>${assigneeMarkup(ticket)}</td>
+      <td><div class="project-card-actions"><button type="button" class="secondary-button" data-restore-ticket="${escapeHtml(ticket.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-ticket="${escapeHtml(ticket.key)}">Delete permanently</button></div></td>
     </tr>`).join('');
 }
 
-function tablePanel(issues, title = 'Issues') {
+function tablePanel(tickets, title = 'Tickets') {
   return `
     <div class="panel">
-      <div class="panel-header"><h2>${escapeHtml(title)}</h2><span class="eyebrow">${issues.length} shown</span></div>
+      <div class="panel-header"><h2>${escapeHtml(title)}</h2><span class="eyebrow">${tickets.length} shown</span></div>
       <div style="overflow-x:auto">
-        <table class="issue-table">
+        <table class="ticket-table">
           <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th></tr></thead>
-          <tbody>${issueRows(issues)}</tbody>
+          <tbody>${ticketRows(tickets)}</tbody>
         </table>
       </div>
     </div>`;
@@ -569,20 +569,20 @@ function tablePanel(issues, title = 'Issues') {
 // Dashboard-only deadlines widget (D24): same shape as tablePanel but with
 // a Due date column, since that's the one thing this particular list is
 // sorted and shown for.
-function deadlinesPanel(issues, title = 'Upcoming deadlines') {
-  const rows = issues.length ? issues.map(issue => `
-    <tr data-issue-key="${escapeHtml(issue.key)}">
-      <td><span class="issue-type" title="${escapeHtml(issue.type.name)}"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)}</span></td>
-      <td><span class="issue-key">${escapeHtml(issue.key)}</span></td>
-      <td class="issue-summary">${escapeHtml(issue.summary)}</td>
-      <td>${statusChip(issue)}</td>
-      <td>${escapeHtml(formatDate(issue.dueDate))}</td>
+function deadlinesPanel(tickets, title = 'Upcoming deadlines') {
+  const rows = tickets.length ? tickets.map(ticket => `
+    <tr data-ticket-key="${escapeHtml(ticket.key)}">
+      <td><span class="ticket-type" title="${escapeHtml(ticket.type.name)}"><span style="color:${escapeHtml(ticket.type.color)}">${escapeHtml(ticket.type.icon)}</span>${escapeHtml(ticket.type.name)}</span></td>
+      <td><span class="ticket-key">${escapeHtml(ticket.key)}</span></td>
+      <td class="ticket-summary">${escapeHtml(ticket.summary)}</td>
+      <td>${statusChip(ticket)}</td>
+      <td>${escapeHtml(formatDate(ticket.dueDate))}</td>
     </tr>`).join('') : '<tr><td colspan="5"><div class="empty-state">No upcoming deadlines.</div></td></tr>';
   return `
     <div class="panel">
-      <div class="panel-header"><h2>${escapeHtml(title)}</h2><span class="eyebrow">${issues.length} shown</span></div>
+      <div class="panel-header"><h2>${escapeHtml(title)}</h2><span class="eyebrow">${tickets.length} shown</span></div>
       <div style="overflow-x:auto">
-        <table class="issue-table">
+        <table class="ticket-table">
           <thead><tr><th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Due date</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -639,13 +639,13 @@ async function refreshNotificationBadge() {
 }
 
 function notificationSummary(notification) {
-  const issueRef = notification.issueKey
-    ? `${notification.issueKey}${notification.issueSummary ? ` — ${notification.issueSummary}` : ''}`
-    : 'an issue';
-  if (notification.type === 'assigned') return `You were assigned ${issueRef}`;
-  if (notification.type === 'mentioned') return `You were mentioned on ${issueRef}`;
-  if (notification.type === 'watched_comment') return `New comment on ${issueRef}`;
-  return issueRef;
+  const ticketRef = notification.ticketKey
+    ? `${notification.ticketKey}${notification.ticketSummary ? ` — ${notification.ticketSummary}` : ''}`
+    : 'a ticket';
+  if (notification.type === 'assigned') return `You were assigned ${ticketRef}`;
+  if (notification.type === 'mentioned') return `You were mentioned on ${ticketRef}`;
+  if (notification.type === 'watched_comment') return `New comment on ${ticketRef}`;
+  return ticketRef;
 }
 
 async function renderNotificationPanel() {
@@ -659,7 +659,7 @@ async function renderNotificationPanel() {
     </div>
     ${items.length
       ? items.map(notification => `
-        <button type="button" class="notification-item ${notification.readAt ? '' : 'unread'}" data-notification-id="${escapeHtml(notification.id)}" data-issue-key="${escapeHtml(notification.issueKey || '')}">
+        <button type="button" class="notification-item ${notification.readAt ? '' : 'unread'}" data-notification-id="${escapeHtml(notification.id)}" data-ticket-key="${escapeHtml(notification.ticketKey || '')}">
           <span class="notification-type">${escapeHtml(notification.type.replace('_', ' '))}</span>
           <span class="notification-summary">${escapeHtml(notificationSummary(notification))}</span>
           <span class="notification-time">${escapeHtml(relativeDate(notification.createdAt))}</span>
@@ -675,8 +675,8 @@ async function renderNotificationPanel() {
     await api(`/api/v1/notifications/${encodeURIComponent(item.dataset.notificationId)}/read`, { method: 'POST' });
     panel.classList.add('hidden');
     await refreshNotificationBadge();
-    if (item.dataset.issueKey) {
-      await openIssue(item.dataset.issueKey);
+    if (item.dataset.ticketKey) {
+      await openTicket(item.dataset.ticketKey);
     }
   }));
 }
@@ -767,16 +767,16 @@ async function renderDashboard() {
   content.innerHTML = `
     ${pageHeader('Dashboard', 'A focused overview of work across all projects.', 'Workspace')}
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-label">All issues</div><div class="stat-value">${stats.totalIssues}</div><div class="stat-meta">Across ${state.projects.length} projects</div></div>
-      <div class="stat-card"><div class="stat-label">To do</div><div class="stat-value">${stats.todoIssues}</div><div class="stat-meta">Backlog and selected work</div></div>
-      <div class="stat-card"><div class="stat-label">In progress</div><div class="stat-value">${stats.inProgressIssues}</div><div class="stat-meta">Active and in review</div></div>
-      <div class="stat-card"><div class="stat-label">Done</div><div class="stat-value">${stats.doneIssues}</div><div class="stat-meta">Completed work</div></div>
+      <div class="stat-card"><div class="stat-label">All tickets</div><div class="stat-value">${stats.totalTickets}</div><div class="stat-meta">Across ${state.projects.length} projects</div></div>
+      <div class="stat-card"><div class="stat-label">To do</div><div class="stat-value">${stats.todoTickets}</div><div class="stat-meta">Backlog and selected work</div></div>
+      <div class="stat-card"><div class="stat-label">In progress</div><div class="stat-value">${stats.inProgressTickets}</div><div class="stat-meta">Active and in review</div></div>
+      <div class="stat-card"><div class="stat-label">Done</div><div class="stat-value">${stats.doneTickets}</div><div class="stat-meta">Completed work</div></div>
     </div>
     ${state.principal ? tablePanel(stats.assignedToMe, 'Assigned to me') : ''}
-    ${state.principal ? tablePanel(stats.watchedIssues, 'Issues I’m watching') : ''}
+    ${state.principal ? tablePanel(stats.watchedTickets, 'Tickets I’m watching') : ''}
     ${state.principal ? deadlinesPanel(stats.upcomingDeadlines) : ''}
-    ${tablePanel(stats.recentIssues, 'Recently active issues')}`;
-  bindIssueLinks();
+    ${tablePanel(stats.recentTickets, 'Recently active tickets')}`;
+  bindTicketLinks();
 }
 
 // Simple append-only admin/security audit log (D23): global-administrator-
@@ -790,7 +790,7 @@ async function renderAuditLog() {
     <div class="panel">
       <div class="panel-header"><h2>Events</h2><span class="eyebrow">${items.length} shown</span></div>
       <div style="overflow-x:auto">
-        <table class="issue-table">
+        <table class="ticket-table">
           <thead><tr><th>When</th><th>Category</th><th>Action</th><th>Actor</th><th>Target</th><th>Details</th></tr></thead>
           <tbody>${items.length ? items.map(event => `
             <tr>
@@ -809,9 +809,9 @@ async function renderAuditLog() {
 
 // Attachment recycle bin (D101/D102): global-administrator-only, fixed
 // 90-day on-demand retention (checked server-side on every fetch, not a
-// background job). Spans every issue, so each row shows the issue key
+// background job). Spans every ticket, so each row shows the ticket key
 // (resolved server-side via a join) rather than requiring the admin to
-// already be looking at a specific issue.
+// already be looking at a specific ticket.
 async function renderAttachmentRecycleBin() {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   const { items } = await api('/api/v1/attachments/deleted');
@@ -820,12 +820,12 @@ async function renderAttachmentRecycleBin() {
     <div class="panel">
       <div class="panel-header"><h2>Deleted attachments</h2><span class="eyebrow">${items.length} shown</span></div>
       <div style="overflow-x:auto">
-        <table class="issue-table">
-          <thead><tr><th>File</th><th>Issue</th><th>Uploader</th><th>Deleted</th><th>Actions</th></tr></thead>
+        <table class="ticket-table">
+          <thead><tr><th>File</th><th>Ticket</th><th>Uploader</th><th>Deleted</th><th>Actions</th></tr></thead>
           <tbody>${items.length ? items.map(attachment => `
             <tr>
               <td>${attachmentIcon(attachment.contentType)} ${escapeHtml(attachment.fileName)}</td>
-              <td><span class="issue-key" data-issue-key="${escapeHtml(attachment.issueKey)}">${escapeHtml(attachment.issueKey)}</span></td>
+              <td><span class="ticket-key" data-ticket-key="${escapeHtml(attachment.ticketKey)}">${escapeHtml(attachment.ticketKey)}</span></td>
               <td>${escapeHtml(attachment.uploader.displayName)}</td>
               <td>${escapeHtml(relativeDate(attachment.createdAt))}</td>
               <td><div class="project-card-actions"><button type="button" class="secondary-button" data-restore-attachment="${escapeHtml(attachment.id)}">Restore</button><button type="button" class="secondary-button" data-permanent-attachment="${escapeHtml(attachment.id)}">Delete permanently</button></div></td>
@@ -834,7 +834,7 @@ async function renderAttachmentRecycleBin() {
         </table>
       </div>
     </div>`;
-  bindIssueLinks();
+  bindTicketLinks();
   document.querySelectorAll('[data-restore-attachment]').forEach(button => button.addEventListener('click', async () => {
     try {
       await api(`/api/v1/attachments/${encodeURIComponent(button.dataset.restoreAttachment)}/restore`, { method: 'POST' });
@@ -885,7 +885,7 @@ async function renderAccountView() {
       </form>
       <div id="token-error" class="form-error hidden"></div>
       <div style="overflow-x:auto">
-        <table class="issue-table">
+        <table class="ticket-table">
           <thead><tr><th>Name</th><th>Created</th><th>Expires</th><th>Last used</th><th>Status</th><th></th></tr></thead>
           <tbody>${tokens.length ? tokens.map(token => `
             <tr>
@@ -903,7 +903,7 @@ async function renderAccountView() {
     <div class="panel">
       <div class="panel-header"><h2>Active sessions</h2>${sessions.length > 1 ? '<button type="button" class="secondary-button" id="sign-out-others-button">Sign out everywhere else</button>' : ''}</div>
       <div style="overflow-x:auto">
-        <table class="issue-table">
+        <table class="ticket-table">
           <thead><tr><th>Signed in</th><th>Expires</th><th></th></tr></thead>
           <tbody>${sessions.map(session => `
             <tr>
@@ -970,7 +970,7 @@ async function renderAccountView() {
   }
 }
 
-function issueFilterParams() {
+function ticketFilterParams() {
   const params = new URLSearchParams();
   if (state.selectedProject) params.set('project', state.selectedProject);
   if (state.status) params.set('status', state.status);
@@ -983,39 +983,39 @@ function issueFilterParams() {
   return params;
 }
 
-async function fetchIssues() {
-  const result = await api(`/api/v1/issues?${issueFilterParams()}`);
-  state.issues = result.items;
+async function fetchTickets() {
+  const result = await api(`/api/v1/tickets?${ticketFilterParams()}`);
+  state.tickets = result.items;
 }
 
-async function renderIssues() {
-  await renderIssuesView(false);
+async function renderTickets() {
+  await renderTicketsView(false);
 }
 
 // Mirrors renderProjectsView's active/recycle-bin toggle: `showingDeleted`
-// swaps the filter bar and normal issue table for the recycle bin (D22,
+// swaps the filter bar and normal ticket table for the recycle bin (D22,
 // global-administrator-only to view/restore/purge, same split as projects).
 // The active view also adds: manual reordering (D31, only meaningful and
-// only enabled with a single project selected, since reorderIssue's anchor
+// only enabled with a single project selected, since reorderTicket's anchor
 // must be in the same project -- the table is sorted by rankOrder in that
 // case so up/down visibly matches the stored order) and simple bulk actions
 // (D36, always available since each key is authorized/processed
 // independently regardless of project).
-async function renderIssuesView(showingDeleted) {
+async function renderTicketsView(showingDeleted) {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  let issues;
+  let tickets;
   if (showingDeleted) {
     try {
-      issues = (await api('/api/v1/issues/deleted')).items;
+      tickets = (await api('/api/v1/tickets/deleted')).items;
     } catch (error) {
       showError(error);
       return;
     }
   } else {
-    await fetchIssues();
-    issues = state.issues;
+    await fetchTickets();
+    tickets = state.tickets;
     if (state.selectedProject) {
-      issues = [...issues].sort((a, b) => a.rankOrder - b.rankOrder);
+      tickets = [...tickets].sort((a, b) => a.rankOrder - b.rankOrder);
     }
   }
   const orderable = !showingDeleted && Boolean(state.selectedProject);
@@ -1028,20 +1028,20 @@ async function renderIssuesView(showingDeleted) {
     <div class="page-header">
       <div>
         <span class="eyebrow">${escapeHtml(state.selectedProject || 'All projects')}</span>
-        <h1>${showingDeleted ? 'Issue recycle bin' : 'Issues'}</h1>
-        <p>${showingDeleted ? 'Issues moved to the recycle bin (90-day retention).' : 'Search, filter, and inspect the work items in a project.'}</p>
+        <h1>${showingDeleted ? 'Ticket recycle bin' : 'Tickets'}</h1>
+        <p>${showingDeleted ? 'Tickets moved to the recycle bin (90-day retention).' : 'Search, filter, and inspect the work items in a project.'}</p>
       </div>
       <div class="page-actions">
-        ${showingDeleted ? '' : `<a class="secondary-button" id="export-issues-csv" href="/api/v1/issues/export.csv?${issueFilterParams()}" download="issues.csv">⬇ Export CSV</a>`}
-        ${isAdmin ? `<button type="button" class="secondary-button" id="toggle-issue-recycle-bin">${showingDeleted ? '← Back to issues' : '🗑 Recycle bin'}</button>` : ''}
+        ${showingDeleted ? '' : `<a class="secondary-button" id="export-tickets-csv" href="/api/v1/tickets/export.csv?${ticketFilterParams()}" download="tickets.csv">⬇ Export CSV</a>`}
+        ${isAdmin ? `<button type="button" class="secondary-button" id="toggle-ticket-recycle-bin">${showingDeleted ? '← Back to tickets' : '🗑 Recycle bin'}</button>` : ''}
       </div>
     </div>
     <div class="panel">
       ${showingDeleted ? '' : `
       <div class="filter-bar">
-        <select id="issue-project-filter"><option value="">All projects</option>${projectOptions}</select>
-        <select id="issue-status-filter"><option value="">All statuses</option>${statusOptions}</select>
-        <select id="issue-type-filter">
+        <select id="ticket-project-filter"><option value="">All projects</option>${projectOptions}</select>
+        <select id="ticket-status-filter"><option value="">All statuses</option>${statusOptions}</select>
+        <select id="ticket-type-filter">
           <option value="">All types</option>
           <option value="epic" ${state.filterType === 'epic' ? 'selected' : ''}>Epic</option>
           <option value="story" ${state.filterType === 'story' ? 'selected' : ''}>Story</option>
@@ -1049,7 +1049,7 @@ async function renderIssuesView(showingDeleted) {
           <option value="bug" ${state.filterType === 'bug' ? 'selected' : ''}>Bug</option>
           <option value="sub-task" ${state.filterType === 'sub-task' ? 'selected' : ''}>Sub-task</option>
         </select>
-        <select id="issue-priority-filter">
+        <select id="ticket-priority-filter">
           <option value="">All priorities</option>
           <option value="highest" ${state.filterPriority === 'highest' ? 'selected' : ''}>Highest</option>
           <option value="high" ${state.filterPriority === 'high' ? 'selected' : ''}>High</option>
@@ -1057,15 +1057,15 @@ async function renderIssuesView(showingDeleted) {
           <option value="low" ${state.filterPriority === 'low' ? 'selected' : ''}>Low</option>
           <option value="lowest" ${state.filterPriority === 'lowest' ? 'selected' : ''}>Lowest</option>
         </select>
-        <select id="issue-assignee-filter">
+        <select id="ticket-assignee-filter">
           <option value="">Any assignee</option>
           <option value="demo@ticket-hub.local" ${state.filterAssignee === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
           <option value="alex@ticket-hub.local" ${state.filterAssignee === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
           <option value="sam@ticket-hub.local" ${state.filterAssignee === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
         </select>
-        <input id="issue-label-filter" value="${escapeHtml(state.filterLabel)}" placeholder="Label" style="width:110px">
-        <input id="issue-due-filter" type="date" value="${escapeHtml(state.filterDueBefore)}" title="Due on or before">
-        <input id="issue-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key, summary, or description">
+        <input id="ticket-label-filter" value="${escapeHtml(state.filterLabel)}" placeholder="Label" style="width:110px">
+        <input id="ticket-due-filter" type="date" value="${escapeHtml(state.filterDueBefore)}" title="Due on or before">
+        <input id="ticket-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key, summary, or description">
         <button class="secondary-button" id="clear-filters">Clear</button>
       </div>
       <div class="bulk-bar hidden" id="bulk-bar">
@@ -1086,71 +1086,71 @@ async function renderIssuesView(showingDeleted) {
         <button type="button" class="ghost-button" id="bulk-clear">Clear</button>
       </div>`}
       <div style="overflow-x:auto">
-        <table class="issue-table">
+        <table class="ticket-table">
           <thead><tr>
-            ${showingDeleted ? '' : `<th class="select-column"><input type="checkbox" id="select-all-issues" aria-label="Select all issues" ${issues.length ? '' : 'disabled'}></th>`}
+            ${showingDeleted ? '' : `<th class="select-column"><input type="checkbox" id="select-all-tickets" aria-label="Select all tickets" ${tickets.length ? '' : 'disabled'}></th>`}
             <th>Type</th><th>Key</th><th>Summary</th><th>Status</th><th>Priority</th><th>Assignee</th>
             ${showingDeleted ? '<th>Actions</th>' : ''}
             ${orderable ? '<th>Order</th>' : ''}
           </tr></thead>
-          <tbody>${showingDeleted ? deletedIssueRows(issues) : issueRows(issues, { orderable, selectable: true })}</tbody>
+          <tbody>${showingDeleted ? deletedTicketRows(tickets) : ticketRows(tickets, { orderable, selectable: true })}</tbody>
         </table>
       </div>
     </div>`;
 
-  document.querySelector('#toggle-issue-recycle-bin')?.addEventListener('click', () => renderIssuesView(!showingDeleted));
+  document.querySelector('#toggle-ticket-recycle-bin')?.addEventListener('click', () => renderTicketsView(!showingDeleted));
 
   if (showingDeleted) {
-    document.querySelectorAll('[data-restore-issue]').forEach(button => button.addEventListener('click', async () => {
-      const key = button.dataset.restoreIssue;
+    document.querySelectorAll('[data-restore-ticket]').forEach(button => button.addEventListener('click', async () => {
+      const key = button.dataset.restoreTicket;
       try {
-        await api(`/api/v1/issues/${encodeURIComponent(key)}/restore`, { method: 'POST' });
+        await api(`/api/v1/tickets/${encodeURIComponent(key)}/restore`, { method: 'POST' });
         showToast(`${key} restored`);
-        await renderIssuesView(true);
+        await renderTicketsView(true);
       } catch (error) { showToast(error.message); }
     }));
-    document.querySelectorAll('[data-permanent-issue]').forEach(button => button.addEventListener('click', async () => {
-      const key = button.dataset.permanentIssue;
+    document.querySelectorAll('[data-permanent-ticket]').forEach(button => button.addEventListener('click', async () => {
+      const key = button.dataset.permanentTicket;
       try {
-        await api(`/api/v1/issues/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
+        await api(`/api/v1/tickets/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
         showToast(`${key} permanently deleted`);
-        await renderIssuesView(true);
+        await renderTicketsView(true);
       } catch (error) { showToast(error.message); }
     }));
     return;
   }
 
-  document.querySelector('#issue-project-filter').addEventListener('change', event => {
+  document.querySelector('#ticket-project-filter').addEventListener('change', event => {
     state.selectedProject = event.target.value || null;
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   });
-  document.querySelector('#issue-status-filter').addEventListener('change', event => {
+  document.querySelector('#ticket-status-filter').addEventListener('change', event => {
     state.status = event.target.value;
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   });
-  document.querySelector('#issue-type-filter').addEventListener('change', event => {
+  document.querySelector('#ticket-type-filter').addEventListener('change', event => {
     state.filterType = event.target.value;
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   });
-  document.querySelector('#issue-priority-filter').addEventListener('change', event => {
+  document.querySelector('#ticket-priority-filter').addEventListener('change', event => {
     state.filterPriority = event.target.value;
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   });
-  document.querySelector('#issue-assignee-filter').addEventListener('change', event => {
+  document.querySelector('#ticket-assignee-filter').addEventListener('change', event => {
     state.filterAssignee = event.target.value;
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   });
-  document.querySelector('#issue-label-filter').addEventListener('input', debounce(event => {
+  document.querySelector('#ticket-label-filter').addEventListener('input', debounce(event => {
     state.filterLabel = event.target.value.trim();
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   }, 300));
-  document.querySelector('#issue-due-filter').addEventListener('change', event => {
+  document.querySelector('#ticket-due-filter').addEventListener('change', event => {
     state.filterDueBefore = event.target.value;
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   });
-  document.querySelector('#issue-search-filter').addEventListener('input', debounce(event => {
+  document.querySelector('#ticket-search-filter').addEventListener('input', debounce(event => {
     state.search = event.target.value.trim();
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   }, 300));
   document.querySelector('#clear-filters').addEventListener('click', () => {
     state.status = '';
@@ -1161,37 +1161,37 @@ async function renderIssuesView(showingDeleted) {
     state.filterLabel = '';
     state.filterDueBefore = '';
     state.selectedProject = null;
-    renderIssues().catch(showError);
+    renderTickets().catch(showError);
   });
 
   if (orderable) {
     document.querySelectorAll('[data-move-up]').forEach(button => button.addEventListener('click', async event => {
       event.stopPropagation();
       const key = button.dataset.moveUp;
-      const index = issues.findIndex(candidate => candidate.key === key);
+      const index = tickets.findIndex(candidate => candidate.key === key);
       if (index <= 0) return;
       try {
-        await api(`/api/v1/issues/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeIssueKey: issues[index - 1].key }) });
-        await renderIssuesView(false);
+        await api(`/api/v1/tickets/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeTicketKey: tickets[index - 1].key }) });
+        await renderTicketsView(false);
       } catch (error) { showToast(error.message); }
     }));
     document.querySelectorAll('[data-move-down]').forEach(button => button.addEventListener('click', async event => {
       event.stopPropagation();
       const key = button.dataset.moveDown;
-      const index = issues.findIndex(candidate => candidate.key === key);
-      if (index === -1 || index >= issues.length - 1) return;
-      const beforeIssueKey = index + 2 < issues.length ? issues[index + 2].key : null;
+      const index = tickets.findIndex(candidate => candidate.key === key);
+      if (index === -1 || index >= tickets.length - 1) return;
+      const beforeTicketKey = index + 2 < tickets.length ? tickets[index + 2].key : null;
       try {
-        await api(`/api/v1/issues/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeIssueKey }) });
-        await renderIssuesView(false);
+        await api(`/api/v1/tickets/${encodeURIComponent(key)}/reorder`, { method: 'POST', body: JSON.stringify({ beforeTicketKey }) });
+        await renderTicketsView(false);
       } catch (error) { showToast(error.message); }
     }));
   }
 
   const bulkBar = document.querySelector('#bulk-bar');
-  const checkboxes = [...document.querySelectorAll('.issue-select')];
+  const checkboxes = [...document.querySelectorAll('.ticket-select')];
   const selectedKeys = () => checkboxes.filter(box => box.checked).map(box => box.value);
-  const selectAllBox = document.querySelector('#select-all-issues');
+  const selectAllBox = document.querySelector('#select-all-tickets');
   const refreshBulkBar = () => {
     const count = selectedKeys().length;
     document.querySelector('#bulk-count').textContent = `${count} selected`;
@@ -1239,23 +1239,23 @@ async function renderIssuesView(showingDeleted) {
     refreshBulkBar();
   });
   document.querySelector('#bulk-clear')?.addEventListener('click', () => {
-    document.querySelectorAll('.issue-select:checked').forEach(box => { box.checked = false; });
+    document.querySelectorAll('.ticket-select:checked').forEach(box => { box.checked = false; });
     lastCheckedIndex = null;
     refreshBulkBar();
   });
   const runBulk = async (path, extraPayload, verb) => {
-    const issueKeys = selectedKeys();
-    if (!issueKeys.length) return;
+    const ticketKeys = selectedKeys();
+    if (!ticketKeys.length) return;
     try {
-      const result = await api(path, { method: 'POST', body: JSON.stringify({ issueKeys, ...extraPayload }) });
+      const result = await api(path, { method: 'POST', body: JSON.stringify({ ticketKeys, ...extraPayload }) });
       showToast(`${verb}: ${result.succeeded.length} succeeded, ${result.failed.length} failed`);
-      await renderIssuesView(false);
+      await renderTicketsView(false);
     } catch (error) { showToast(error.message); }
   };
   // Bulk transition to a Done-category status shares the same resolution
-  // across every selected issue (D68-D70) -- the server already supported
-  // this (bulkChangeStatus forwards one shared `resolution` to each issue's
-  // own changeStatus call, same as the drawer/board's single-issue path),
+  // across every selected ticket (D68-D70) -- the server already supported
+  // this (bulkChangeStatus forwards one shared `resolution` to each ticket's
+  // own changeStatus call, same as the drawer/board's single-ticket path),
   // this only adds the picker so it's actually reachable from the bulk bar.
   const bulkStatusSelect = document.querySelector('#bulk-status-select');
   const bulkResolutionSelect = document.querySelector('#bulk-resolution-select');
@@ -1270,17 +1270,17 @@ async function renderIssuesView(showingDeleted) {
     const status = STATUSES.find(candidate => candidate.key === statusKey);
     const payload = { statusKey };
     if (status?.category === 'done') payload.resolution = bulkResolutionSelect.value;
-    runBulk('/api/v1/issues/bulk/status', payload, 'Bulk status change');
+    runBulk('/api/v1/tickets/bulk/status', payload, 'Bulk status change');
   });
-  document.querySelector('#bulk-assign-apply')?.addEventListener('click', () => runBulk('/api/v1/issues/bulk/assign', { assigneeEmail: document.querySelector('#bulk-assignee-select').value || null }, 'Bulk assign'));
+  document.querySelector('#bulk-assign-apply')?.addEventListener('click', () => runBulk('/api/v1/tickets/bulk/assign', { assigneeEmail: document.querySelector('#bulk-assignee-select').value || null }, 'Bulk assign'));
   document.querySelector('#bulk-label-apply')?.addEventListener('click', () => {
     const label = document.querySelector('#bulk-label-input').value.trim();
     if (!label) return;
-    runBulk('/api/v1/issues/bulk/label', { label }, 'Bulk add label');
+    runBulk('/api/v1/tickets/bulk/label', { label }, 'Bulk add label');
   });
-  document.querySelector('#bulk-delete-apply')?.addEventListener('click', () => runBulk('/api/v1/issues/bulk/delete', {}, 'Bulk delete'));
+  document.querySelector('#bulk-delete-apply')?.addEventListener('click', () => runBulk('/api/v1/tickets/bulk/delete', {}, 'Bulk delete'));
 
-  bindIssueLinks();
+  bindTicketLinks();
 }
 
 async function renderBoard() {
@@ -1293,19 +1293,19 @@ async function renderBoard() {
   state.filterLabel = '';
   state.filterDueBefore = '';
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
-  const [, boardColumns] = await Promise.all([fetchIssues(), api('/api/v1/board-columns')]);
+  const [, boardColumns] = await Promise.all([fetchTickets(), api('/api/v1/board-columns')]);
   const isAdmin = Boolean(state.principal?.isAdmin);
   const selected = state.projects.find(project => project.key === state.selectedProject);
   const columns = STATUSES.map(status => {
-    const issues = state.issues.filter(issue => issue.status.key === status.key);
+    const tickets = state.tickets.filter(ticket => ticket.status.key === status.key);
     // Kanban WIP limits (D32/D33): a single flat, installation-wide limit
     // per fixed workflow status -- soft and display-time-only, an
     // over-limit column is highlighted, never blocked from receiving more
-    // issues.
+    // tickets.
     const column = boardColumns.items.find(candidate => candidate.statusKey === status.key);
     const wipLimit = column?.wipLimit ?? null;
-    const overLimit = wipLimit !== null && issues.length > wipLimit;
-    const countLabel = wipLimit !== null ? `${issues.length} / ${wipLimit}` : `${issues.length}`;
+    const overLimit = wipLimit !== null && tickets.length > wipLimit;
+    const countLabel = wipLimit !== null ? `${tickets.length} / ${wipLimit}` : `${tickets.length}`;
     const wipEditor = isAdmin ? `
       <div class="wip-limit-edit">
         <input type="number" min="0" placeholder="No limit" value="${wipLimit !== null ? wipLimit : ''}" data-wip-input="${escapeHtml(status.key)}" title="WIP limit for ${escapeHtml(status.name)}">
@@ -1321,13 +1321,13 @@ async function renderBoard() {
         </div>
         ${wipEditor}
         <div class="board-list" data-status-key="${escapeHtml(status.key)}">
-          ${issues.length ? issues.map(issue => `
-            <article class="issue-card" draggable="true" data-issue-key="${escapeHtml(issue.key)}">
-              <div class="issue-type"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span><span class="issue-key">${escapeHtml(issue.key)}</span></div>
-              <div class="card-summary">${escapeHtml(issue.summary)}</div>
-              <div class="issue-card-labels">${labelsMarkup(issue.labels)}</div>
-              <div class="issue-card-footer">${priorityChip(issue)}${issue.assignee ? `<span class="small-avatar" title="${escapeHtml(issue.assignee.displayName)}">${escapeHtml(initials(issue.assignee.displayName))}</span>` : '<span></span>'}</div>
-            </article>`).join('') : '<div class="empty-state">No issues</div>'}
+          ${tickets.length ? tickets.map(ticket => `
+            <article class="ticket-card" draggable="true" data-ticket-key="${escapeHtml(ticket.key)}">
+              <div class="ticket-type"><span style="color:${escapeHtml(ticket.type.color)}">${escapeHtml(ticket.type.icon)}</span><span class="ticket-key">${escapeHtml(ticket.key)}</span></div>
+              <div class="card-summary">${escapeHtml(ticket.summary)}</div>
+              <div class="ticket-card-labels">${labelsMarkup(ticket.labels)}</div>
+              <div class="ticket-card-footer">${priorityChip(ticket)}${ticket.assignee ? `<span class="small-avatar" title="${escapeHtml(ticket.assignee.displayName)}">${escapeHtml(initials(ticket.assignee.displayName))}</span>` : '<span></span>'}</div>
+            </article>`).join('') : '<div class="empty-state">No tickets</div>'}
         </div>
       </section>`;
   }).join('');
@@ -1354,7 +1354,7 @@ async function renderBoard() {
     } catch (error) { showToast(error.message); }
   }));
   bindBoardDragAndDrop();
-  bindIssueLinks();
+  bindTicketLinks();
 }
 
 // Drag-and-drop card movement between board columns (optional UX polish --
@@ -1366,9 +1366,9 @@ async function renderBoard() {
 // existing resolution prompts for one first (D68-D70), exactly like the
 // drawer's status-select already does for the same case.
 function bindBoardDragAndDrop() {
-  document.querySelectorAll('.issue-card[draggable]').forEach(card => {
+  document.querySelectorAll('.ticket-card[draggable]').forEach(card => {
     card.addEventListener('dragstart', event => {
-      event.dataTransfer.setData('text/plain', card.dataset.issueKey);
+      event.dataTransfer.setData('text/plain', card.dataset.ticketKey);
       event.dataTransfer.effectAllowed = 'move';
       card.classList.add('dragging');
     });
@@ -1384,36 +1384,36 @@ function bindBoardDragAndDrop() {
     list.addEventListener('drop', event => {
       event.preventDefault();
       list.classList.remove('drag-over');
-      const issueKey = event.dataTransfer.getData('text/plain');
-      handleBoardDrop(issueKey, list.dataset.statusKey);
+      const ticketKey = event.dataTransfer.getData('text/plain');
+      handleBoardDrop(ticketKey, list.dataset.statusKey);
     });
   });
 }
 
-function handleBoardDrop(issueKey, targetStatusKey) {
-  const issue = state.issues.find(candidate => candidate.key === issueKey);
-  if (!issue || issue.status.key === targetStatusKey) {
+function handleBoardDrop(ticketKey, targetStatusKey) {
+  const ticket = state.tickets.find(candidate => candidate.key === ticketKey);
+  if (!ticket || ticket.status.key === targetStatusKey) {
     return;
   }
   const targetStatus = STATUSES.find(status => status.key === targetStatusKey);
-  if (targetStatus?.category === 'done' && !issue.resolution) {
-    promptBoardResolution(issue, targetStatusKey);
+  if (targetStatus?.category === 'done' && !ticket.resolution) {
+    promptBoardResolution(ticket, targetStatusKey);
     return;
   }
-  applyBoardStatusChange(issue.key, targetStatusKey, null, issue.version);
+  applyBoardStatusChange(ticket.key, targetStatusKey, null, ticket.version);
 }
 
 // Same request as applyStatusChange (used by the drawer's status select),
 // but stays on the board and re-renders it instead of opening the drawer --
 // jumping into the detail view is the right follow-up after a deliberate
 // dropdown change, but not after a quick drag-and-drop card move.
-async function applyBoardStatusChange(issueKey, statusKey, resolution, expectedVersion) {
+async function applyBoardStatusChange(ticketKey, statusKey, resolution, expectedVersion) {
   try {
     const payload = { statusKey, expectedVersion };
     if (resolution) payload.resolution = resolution;
-    await api(`/api/v1/issues/${encodeURIComponent(issueKey)}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
+    await api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
     const statusName = STATUSES.find(status => status.key === statusKey)?.name || statusKey;
-    showToast(`${issueKey} moved to ${statusName}`);
+    showToast(`${ticketKey} moved to ${statusName}`);
     await renderBoard();
   } catch (error) {
     showToast(error.message);
@@ -1422,11 +1422,11 @@ async function applyBoardStatusChange(issueKey, statusKey, resolution, expectedV
 }
 
 // A minimal dynamically-created dialog (reuses the existing .modal-backdrop/
-// .modal styling, same as the create-issue/create-project modals, but not
+// .modal styling, same as the create-ticket/create-project modals, but not
 // pre-declared in index.html since it only ever exists transiently) --
 // mirrors the drawer's inline resolution picker for the one case drag-and-
 // drop can't skip: a Done-category status requires a resolution.
-function promptBoardResolution(issue, targetStatusKey) {
+function promptBoardResolution(ticket, targetStatusKey) {
   const targetStatus = STATUSES.find(status => status.key === targetStatusKey);
   const backdrop = document.createElement('div');
   backdrop.className = 'modal-backdrop';
@@ -1435,7 +1435,7 @@ function promptBoardResolution(issue, targetStatusKey) {
   backdrop.innerHTML = `
     <div class="modal" style="max-width:420px">
       <div class="modal-header">
-        <div><span class="eyebrow">${escapeHtml(issue.key)}</span><h2>Resolve issue</h2></div>
+        <div><span class="eyebrow">${escapeHtml(ticket.key)}</span><h2>Resolve ticket</h2></div>
         <button type="button" class="icon-button" id="board-resolution-close" aria-label="Close">×</button>
       </div>
       <div class="form-grid">
@@ -1461,7 +1461,7 @@ function promptBoardResolution(issue, targetStatusKey) {
   backdrop.querySelector('#board-resolution-confirm').addEventListener('click', async () => {
     const resolution = backdrop.querySelector('#board-resolution-select').value;
     close();
-    await applyBoardStatusChange(issue.key, targetStatusKey, resolution, issue.version);
+    await applyBoardStatusChange(ticket.key, targetStatusKey, resolution, ticket.version);
   });
   backdrop.querySelector('#board-resolution-select').focus();
 }
@@ -1492,7 +1492,7 @@ async function renderProjectsView(showingDeleted) {
       <div>
         <span class="eyebrow">Workspace</span>
         <h1>${showingDeleted ? 'Project recycle bin' : 'Projects'}</h1>
-        <p>${showingDeleted ? 'Projects moved to the recycle bin (90-day retention).' : 'Choose a project to see its issues and board.'}</p>
+        <p>${showingDeleted ? 'Projects moved to the recycle bin (90-day retention).' : 'Choose a project to see its tickets and board.'}</p>
       </div>
       <div class="page-actions">
         ${isAdmin ? `<button type="button" class="secondary-button" id="toggle-recycle-bin">${showingDeleted ? '← Back to projects' : '🗑 Recycle bin'}</button>` : ''}
@@ -1502,9 +1502,9 @@ async function renderProjectsView(showingDeleted) {
     <div class="project-grid">
       ${projects.length ? projects.map(project => `
         <article class="project-card" data-project-card="${escapeHtml(project.key)}">
-          <div class="project-card-head"><span class="project-avatar">${escapeHtml(project.key.slice(0, 2))}</span><div><h3>${escapeHtml(project.name)}</h3><span class="issue-key">${escapeHtml(project.key)}</span></div></div>
+          <div class="project-card-head"><span class="project-avatar">${escapeHtml(project.key.slice(0, 2))}</span><div><h3>${escapeHtml(project.name)}</h3><span class="ticket-key">${escapeHtml(project.key)}</span></div></div>
           <p>${escapeHtml(project.description)}</p>
-          <div class="project-card-stats"><div><strong>${project.issueCount}</strong><span>Total issues</span></div><div><strong>${project.openIssueCount}</strong><span>Open issues</span></div><div><strong>${escapeHtml(project.lead?.displayName || '—')}</strong><span>Lead</span></div></div>
+          <div class="project-card-stats"><div><strong>${project.ticketCount}</strong><span>Total tickets</span></div><div><strong>${project.openTicketCount}</strong><span>Open tickets</span></div><div><strong>${escapeHtml(project.lead?.displayName || '—')}</strong><span>Lead</span></div></div>
           <div class="project-card-actions">${showingDeleted
             ? `<button type="button" class="secondary-button" data-restore-project="${escapeHtml(project.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-project="${escapeHtml(project.key)}">Delete permanently</button>`
             : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
@@ -1575,7 +1575,7 @@ async function renderCurrentView() {
   try {
     if (state.view === 'dashboard') await renderDashboard();
     else if (state.view === 'board') await renderBoard();
-    else if (state.view === 'issues') await renderIssues();
+    else if (state.view === 'tickets') await renderTickets();
     else if (state.view === 'account') await renderAccountView();
     else if (state.view === 'audit') await renderAuditLog();
     else if (state.view === 'attachment-bin') await renderAttachmentRecycleBin();
@@ -1592,10 +1592,10 @@ function navigate(view) {
   renderCurrentView();
 }
 
-function bindIssueLinks() {
-  document.querySelectorAll('[data-issue-key]').forEach(element => {
-    element.addEventListener('click', () => openIssue(element.dataset.issueKey));
-    makeKeyboardActivatable(element, () => openIssue(element.dataset.issueKey));
+function bindTicketLinks() {
+  document.querySelectorAll('[data-ticket-key]').forEach(element => {
+    element.addEventListener('click', () => openTicket(element.dataset.ticketKey));
+    makeKeyboardActivatable(element, () => openTicket(element.dataset.ticketKey));
   });
 }
 
@@ -1617,122 +1617,122 @@ function makeKeyboardActivatable(element, activate) {
 // Resolution is required exactly when moving to a Done-category status
 // (D68-D70) -- omitted (null) for every other transition, which leaves it
 // untouched, or lets the server clear it automatically when reopening.
-async function applyStatusChange(issueKey, statusKey, resolution, expectedVersion) {
+async function applyStatusChange(ticketKey, statusKey, resolution, expectedVersion) {
   try {
     const payload = { statusKey, expectedVersion };
     if (resolution) payload.resolution = resolution;
-    await api(`/api/v1/issues/${encodeURIComponent(issueKey)}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
-    showToast(`${issueKey} status updated`);
+    await api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
+    showToast(`${ticketKey} status updated`);
     await renderCurrentView();
-    await openIssue(issueKey);
+    await openTicket(ticketKey);
   } catch (error) {
     showToast(error.message);
   }
 }
 
-function editFieldsMarkup(issue) {
+function editFieldsMarkup(ticket) {
   const typeOptions = [['task', 'Task'], ['story', 'Story'], ['bug', 'Bug'], ['epic', 'Epic'], ['sub-task', 'Sub-task']];
   return `
-    <label>Type<select id="edit-type">${typeOptions.map(([key, label]) => `<option value="${key}" ${key === issue.type.key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    <label>Type<select id="edit-type">${typeOptions.map(([key, label]) => `<option value="${key}" ${key === ticket.type.key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
     <label class="wide" id="edit-parent-label">
       <span id="edit-parent-label-text">Epic (optional)</span>
       <select id="edit-parent"><option value="">None</option></select>
     </label>
-    <label class="wide">Summary<input id="edit-summary" value="${escapeHtml(issue.summary)}" maxlength="255" required></label>
-    <label class="wide">Description<textarea id="edit-description" rows="6">${escapeHtml(issue.description)}</textarea></label>
-    <label>Priority<select id="edit-priority">${['highest', 'high', 'medium', 'low', 'lowest'].map(key => `<option value="${key}" ${key === issue.priority.key ? 'selected' : ''}>${key[0].toUpperCase()}${key.slice(1)}</option>`).join('')}</select></label>
+    <label class="wide">Summary<input id="edit-summary" value="${escapeHtml(ticket.summary)}" maxlength="255" required></label>
+    <label class="wide">Description<textarea id="edit-description" rows="6">${escapeHtml(ticket.description)}</textarea></label>
+    <label>Priority<select id="edit-priority">${['highest', 'high', 'medium', 'low', 'lowest'].map(key => `<option value="${key}" ${key === ticket.priority.key ? 'selected' : ''}>${key[0].toUpperCase()}${key.slice(1)}</option>`).join('')}</select></label>
     <label>Assignee<select id="edit-assignee">
       <option value="">Unassigned</option>
-      <option value="demo@ticket-hub.local" ${issue.assignee?.email === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
-      <option value="alex@ticket-hub.local" ${issue.assignee?.email === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
-      <option value="sam@ticket-hub.local" ${issue.assignee?.email === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
+      <option value="demo@ticket-hub.local" ${ticket.assignee?.email === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
+      <option value="alex@ticket-hub.local" ${ticket.assignee?.email === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
+      <option value="sam@ticket-hub.local" ${ticket.assignee?.email === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
     </select></label>
-    <label>Story points<input id="edit-story-points" type="number" min="0" max="10000" step="0.5" value="${issue.storyPoints ?? ''}"></label>
-    <label>Due date<input id="edit-due-date" type="date" value="${issue.dueDate ?? ''}"></label>
-    <label class="wide">Labels<input id="edit-labels" value="${escapeHtml(issue.labels.join(', '))}"></label>`;
+    <label>Story points<input id="edit-story-points" type="number" min="0" max="10000" step="0.5" value="${ticket.storyPoints ?? ''}"></label>
+    <label>Due date<input id="edit-due-date" type="date" value="${ticket.dueDate ?? ''}"></label>
+    <label class="wide">Labels<input id="edit-labels" value="${escapeHtml(ticket.labels.join(', '))}"></label>`;
 }
 
-// Jira-style direct issue links (/browse/TH-123), synced via history.
-// pushState rather than a full page navigation. openIssue/closeDrawer only
+// Jira-style direct ticket links (/browse/TH-123), synced via history.
+// pushState rather than a full page navigation. openTicket/closeDrawer only
 // push a new history entry when the URL doesn't already reflect the target
-// state -- this is what makes it safe to call openIssue(issue.key) after
+// state -- this is what makes it safe to call openTicket(ticket.key) after
 // every in-drawer mutation (edit, comment, watch/vote, worklog, ...) the
 // way the rest of this file already does, without spamming the browser's
-// back-button history with duplicate entries for the same issue, and what
+// back-button history with duplicate entries for the same ticket, and what
 // makes the popstate handler below not re-push the URL it's reacting to.
-function issueUrlFor(issueKey) {
-  return `/browse/${encodeURIComponent(issueKey)}`;
+function ticketUrlFor(ticketKey) {
+  return `/browse/${encodeURIComponent(ticketKey)}`;
 }
 
-function issueKeyFromLocation() {
+function ticketKeyFromLocation() {
   const match = window.location.pathname.match(/^\/browse\/([^/]+)$/);
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-async function openIssueFromUrlIfAny() {
-  const issueKey = issueKeyFromLocation();
-  if (issueKey) {
-    await openIssue(issueKey);
+async function openTicketFromUrlIfAny() {
+  const ticketKey = ticketKeyFromLocation();
+  if (ticketKey) {
+    await openTicket(ticketKey);
   }
 }
 
-async function openIssue(issueKey) {
-  if (issueKeyFromLocation() !== issueKey) {
-    history.pushState({ issueKey }, '', issueUrlFor(issueKey));
+async function openTicket(ticketKey) {
+  if (ticketKeyFromLocation() !== ticketKey) {
+    history.pushState({ ticketKey }, '', ticketUrlFor(ticketKey));
   }
-  issueDrawer.classList.remove('hidden');
+  ticketDrawer.classList.remove('hidden');
   drawerBackdrop.classList.remove('hidden');
-  issueDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  ticketDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   try {
-    const [issue, comments, links, watchers, voters, worklogs, attachments] = await Promise.all([
-      api(`/api/v1/issues/${encodeURIComponent(issueKey)}`),
-      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/comments`),
-      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/links`),
-      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/watchers`),
-      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/voters`),
-      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/worklogs`),
-      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/attachments`)
+    const [ticket, comments, links, watchers, voters, worklogs, attachments] = await Promise.all([
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}`),
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/comments`),
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/links`),
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/watchers`),
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/voters`),
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/worklogs`),
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/attachments`)
     ]);
-    state.currentIssue = issue;
+    state.currentTicket = ticket;
     let attachmentSort = 'date';
 
     // Fixed emoji reactions (D84): one reactions list per comment, fetched
     // alongside everything else -- fine at demo scale, mirrors the
     // watchers/voters fetch-once-per-open pattern above.
     const reactionLists = await Promise.all(comments.items.map(comment =>
-      api(`/api/v1/issues/${encodeURIComponent(issueKey)}/comments/${encodeURIComponent(comment.id)}/reactions`)));
+      api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/comments/${encodeURIComponent(comment.id)}/reactions`)));
     const reactionsByComment = new Map(comments.items.map((comment, index) => [comment.id, reactionLists[index].items]));
 
     const isWatching = watchers.items.some(user => user.id === state.principal?.userId);
     const isVoting = voters.items.some(user => user.id === state.principal?.userId);
 
     function render(editing) {
-      issueDrawer.innerHTML = `
-        <div class="drawer-header"><span class="issue-key">${escapeHtml(issue.key)}</span><button class="icon-button" id="close-drawer" aria-label="Close">×</button></div>
+      ticketDrawer.innerHTML = `
+        <div class="drawer-header"><span class="ticket-key">${escapeHtml(ticket.key)}</span><button class="icon-button" id="close-drawer" aria-label="Close">×</button></div>
         <div class="drawer-content">
-          <span class="issue-type"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span>${escapeHtml(issue.type.name)} · ${escapeHtml(issue.projectName)}</span>
+          <span class="ticket-type"><span style="color:${escapeHtml(ticket.type.color)}">${escapeHtml(ticket.type.icon)}</span>${escapeHtml(ticket.type.name)} · ${escapeHtml(ticket.projectName)}</span>
           <div class="drawer-actions">
             <button type="button" class="secondary-button" id="watch-toggle">${isWatching ? '★ Watching' : '☆ Watch'} (${watchers.items.length})</button>
             <button type="button" class="secondary-button" id="vote-toggle">${isVoting ? '▲ Voted' : '△ Vote'} (${voters.items.length})</button>
-            <button type="button" class="secondary-button" id="clone-issue">⧉ Clone</button>
-            ${editing ? '' : '<button type="button" class="secondary-button" id="edit-issue">✎ Edit</button>'}
-            ${editing ? '' : '<button type="button" class="secondary-button" id="delete-issue">🗑 Delete</button>'}
+            <button type="button" class="secondary-button" id="clone-ticket">⧉ Clone</button>
+            ${editing ? '' : '<button type="button" class="secondary-button" id="edit-ticket">✎ Edit</button>'}
+            ${editing ? '' : '<button type="button" class="secondary-button" id="delete-ticket">🗑 Delete</button>'}
           </div>
           ${editing
-            ? `<div class="form-grid" id="edit-form">${editFieldsMarkup(issue)}</div>
+            ? `<div class="form-grid" id="edit-form">${editFieldsMarkup(ticket)}</div>
                <div id="edit-error" class="form-error hidden"></div>
                <div class="modal-footer" style="padding:0 0 20px"><button type="button" class="secondary-button" id="edit-cancel">Cancel</button><button type="button" class="primary-button" id="edit-save">Save changes</button></div>`
-            : `<h1>${escapeHtml(issue.summary)}</h1>`}
+            : `<h1>${escapeHtml(ticket.summary)}</h1>`}
           <div class="drawer-layout">
             <div>
-              ${editing ? '' : `<section class="drawer-section"><h3>Description</h3><div class="description markdown-body">${issue.description ? renderMarkdown(issue.description) : '<p class="markdown-empty">No description provided.</p>'}</div></section>`}
+              ${editing ? '' : `<section class="drawer-section"><h3>Description</h3><div class="description markdown-body">${ticket.description ? renderMarkdown(ticket.description) : '<p class="markdown-empty">No description provided.</p>'}</div></section>`}
               <section class="drawer-section">
                 <h3>Links</h3>
                 <div class="link-list">${links.items.length ? links.items.map(link => `
                   <div class="link-row">
                     <span class="link-label">${escapeHtml(link.label)}</span>
-                    <span class="issue-key" data-issue-key="${escapeHtml(link.otherIssueKey)}">${escapeHtml(link.otherIssueKey)}</span>
-                    <span class="link-summary">${escapeHtml(link.otherIssueSummary)}</span>
+                    <span class="ticket-key" data-ticket-key="${escapeHtml(link.otherTicketKey)}">${escapeHtml(link.otherTicketKey)}</span>
+                    <span class="link-summary">${escapeHtml(link.otherTicketSummary)}</span>
                     <button type="button" class="icon-button" data-delete-link="${escapeHtml(link.id)}" aria-label="Remove link">×</button>
                   </div>`).join('') : '<div class="empty-state">No links yet.</div>'}</div>
                 <form class="link-form" id="link-form">
@@ -1741,7 +1741,7 @@ async function openIssue(issueKey) {
                     <option value="relates_to">relates to</option>
                     <option value="duplicates">duplicates</option>
                   </select>
-                  <input name="targetIssueKey" placeholder="Issue key, e.g. TH-3" required>
+                  <input name="targetTicketKey" placeholder="Ticket key, e.g. TH-3" required>
                   <button class="secondary-button" type="submit">Add link</button>
                 </form>
               </section>
@@ -1792,7 +1792,7 @@ async function openIssue(issueKey) {
                 }).join('') || '<div class="empty-state">No attachments yet.</div>'}</div>
                 <input type="file" id="attachment-file-input" multiple hidden>
                 <button type="button" class="secondary-button" id="attachment-upload-button">📎 Attach files</button>
-                <div class="attachment-dropzone" id="attachment-dropzone">Drag and drop files here, or use "Attach files" above (max 25MB each, 20 per issue)</div>
+                <div class="attachment-dropzone" id="attachment-dropzone">Drag and drop files here, or use "Attach files" above (max 25MB each, 20 per ticket)</div>
               </section>
               <section class="drawer-section">
                 <h3>Comments</h3>
@@ -1833,10 +1833,10 @@ async function openIssue(issueKey) {
               </section>
             </div>
             <aside class="meta-list">
-              <div class="meta-row"><span>Status</span><select id="drawer-status" class="status-select">${STATUSES.map(status => `<option value="${status.key}" ${status.key === issue.status.key ? 'selected' : ''}>${status.name}</option>`).join('')}</select></div>
-              <div class="meta-row" id="drawer-resolution-row" ${STATUSES.find(status => status.key === issue.status.key)?.category === 'done' ? '' : 'hidden'}>
+              <div class="meta-row"><span>Status</span><select id="drawer-status" class="status-select">${STATUSES.map(status => `<option value="${status.key}" ${status.key === ticket.status.key ? 'selected' : ''}>${status.name}</option>`).join('')}</select></div>
+              <div class="meta-row" id="drawer-resolution-row" ${STATUSES.find(status => status.key === ticket.status.key)?.category === 'done' ? '' : 'hidden'}>
                 <span>Resolution</span>
-                ${issue.resolution ? `<strong>${escapeHtml(resolutionLabel(issue.resolution))}</strong>` : `
+                ${ticket.resolution ? `<strong>${escapeHtml(resolutionLabel(ticket.resolution))}</strong>` : `
                 <select id="drawer-resolution">${RESOLUTIONS.map(resolution => `<option value="${resolution.key}">${resolution.name}</option>`).join('')}</select>
                 <div class="resolution-actions">
                   <button type="button" class="secondary-button" id="resolution-cancel">Cancel</button>
@@ -1844,70 +1844,70 @@ async function openIssue(issueKey) {
                 </div>`}
               </div>
               ${editing ? '' : `
-              <div class="meta-row"><span>Priority</span>${priorityChip(issue)}</div>
-              <div class="meta-row"><span>Assignee</span>${assigneeMarkup(issue)}</div>`}
-              <div class="meta-row"><span>Reporter</span>${escapeHtml(issue.reporter.displayName)}</div>
-              ${issue.parentIssueKey ? `<div class="meta-row"><span>Parent</span><strong class="issue-key" id="drawer-parent-link" style="cursor:pointer">${escapeHtml(issue.parentIssueKey)}</strong></div>` : ''}
-              ${editing || state.projects.filter(project => project.key !== issue.projectKey).length === 0 ? '' : `
+              <div class="meta-row"><span>Priority</span>${priorityChip(ticket)}</div>
+              <div class="meta-row"><span>Assignee</span>${assigneeMarkup(ticket)}</div>`}
+              <div class="meta-row"><span>Reporter</span>${escapeHtml(ticket.reporter.displayName)}</div>
+              ${ticket.parentTicketKey ? `<div class="meta-row"><span>Parent</span><strong class="ticket-key" id="drawer-parent-link" style="cursor:pointer">${escapeHtml(ticket.parentTicketKey)}</strong></div>` : ''}
+              ${editing || state.projects.filter(project => project.key !== ticket.projectKey).length === 0 ? '' : `
               <div class="meta-row">
                 <span>Move to project</span>
                 <div style="display:flex;gap:6px">
-                  <select id="move-target-project" class="status-select">${state.projects.filter(project => project.key !== issue.projectKey).map(project => `<option value="${escapeHtml(project.key)}">${escapeHtml(project.key)}</option>`).join('')}</select>
-                  <button type="button" class="secondary-button" id="move-issue-button">Move</button>
+                  <select id="move-target-project" class="status-select">${state.projects.filter(project => project.key !== ticket.projectKey).map(project => `<option value="${escapeHtml(project.key)}">${escapeHtml(project.key)}</option>`).join('')}</select>
+                  <button type="button" class="secondary-button" id="move-ticket-button">Move</button>
                 </div>
               </div>`}
               ${editing ? '' : `
-              <div class="meta-row"><span>Story points</span><strong>${issue.storyPoints ?? '—'}</strong></div>
-              <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(issue.dueDate))}</strong></div>
-              <div class="meta-row"><span>Labels</span><div>${labelsMarkup(issue.labels) || '—'}</div></div>`}
-              <div class="meta-row"><span>Created</span><strong>${escapeHtml(formatDate(issue.createdAt))}</strong></div>
-              <div class="meta-row"><span>Updated</span><strong>${escapeHtml(relativeDate(issue.updatedAt))}</strong></div>
+              <div class="meta-row"><span>Story points</span><strong>${ticket.storyPoints ?? '—'}</strong></div>
+              <div class="meta-row"><span>Due date</span><strong>${escapeHtml(formatDate(ticket.dueDate))}</strong></div>
+              <div class="meta-row"><span>Labels</span><div>${labelsMarkup(ticket.labels) || '—'}</div></div>`}
+              <div class="meta-row"><span>Created</span><strong>${escapeHtml(formatDate(ticket.createdAt))}</strong></div>
+              <div class="meta-row"><span>Updated</span><strong>${escapeHtml(relativeDate(ticket.updatedAt))}</strong></div>
             </aside>
           </div>
         </div>`;
 
       document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
-      if (issue.parentIssueKey) {
-        document.querySelector('#drawer-parent-link').addEventListener('click', () => openIssue(issue.parentIssueKey));
+      if (ticket.parentTicketKey) {
+        document.querySelector('#drawer-parent-link').addEventListener('click', () => openTicket(ticket.parentTicketKey));
       }
-      document.querySelector('#move-issue-button')?.addEventListener('click', async () => {
+      document.querySelector('#move-ticket-button')?.addEventListener('click', async () => {
         const targetProjectKey = document.querySelector('#move-target-project').value;
         try {
-          const moved = await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/move`, { method: 'POST', body: JSON.stringify({ targetProjectKey }) });
-          showToast(`${issue.key} moved to ${moved.key}`);
+          const moved = await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/move`, { method: 'POST', body: JSON.stringify({ targetProjectKey }) });
+          showToast(`${ticket.key} moved to ${moved.key}`);
           await loadBaseData();
           await renderCurrentView();
-          await openIssue(moved.key);
+          await openTicket(moved.key);
         } catch (error) { showToast(error.message); }
       });
-      document.querySelectorAll('.link-row [data-issue-key]').forEach(element => {
-        element.addEventListener('click', () => openIssue(element.dataset.issueKey));
+      document.querySelectorAll('.link-row [data-ticket-key]').forEach(element => {
+        element.addEventListener('click', () => openTicket(element.dataset.ticketKey));
       });
 
       document.querySelector('#watch-toggle').addEventListener('click', async () => {
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/watch`, { method: isWatching ? 'DELETE' : 'POST' });
-          await openIssue(issue.key);
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/watch`, { method: isWatching ? 'DELETE' : 'POST' });
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       });
       document.querySelector('#vote-toggle').addEventListener('click', async () => {
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/vote`, { method: isVoting ? 'DELETE' : 'POST' });
-          await openIssue(issue.key);
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/vote`, { method: isVoting ? 'DELETE' : 'POST' });
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       });
-      document.querySelector('#clone-issue').addEventListener('click', async () => {
+      document.querySelector('#clone-ticket').addEventListener('click', async () => {
         try {
-          const cloned = await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/clone`, { method: 'POST' });
-          showToast(`${issue.key} cloned as ${cloned.key}`);
+          const cloned = await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/clone`, { method: 'POST' });
+          showToast(`${ticket.key} cloned as ${cloned.key}`);
           await renderCurrentView();
-          await openIssue(cloned.key);
+          await openTicket(cloned.key);
         } catch (error) { showToast(error.message); }
       });
-      document.querySelector('#delete-issue')?.addEventListener('click', async () => {
+      document.querySelector('#delete-ticket')?.addEventListener('click', async () => {
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}`, { method: 'DELETE' });
-          showToast(`${issue.key} moved to the recycle bin`);
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}`, { method: 'DELETE' });
+          showToast(`${ticket.key} moved to the recycle bin`);
           closeDrawer();
           await renderCurrentView();
         } catch (error) { showToast(error.message); }
@@ -1916,18 +1916,18 @@ async function openIssue(issueKey) {
         event.preventDefault();
         const values = Object.fromEntries(new FormData(event.currentTarget).entries());
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/links`, {
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/links`, {
             method: 'POST',
-            body: JSON.stringify({ targetIssueKey: values.targetIssueKey.trim(), linkType: values.linkType })
+            body: JSON.stringify({ targetTicketKey: values.targetTicketKey.trim(), linkType: values.linkType })
           });
-          await openIssue(issue.key);
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       });
       document.querySelectorAll('[data-delete-link]').forEach(button => {
         button.addEventListener('click', async () => {
           try {
-            await api(`/api/v1/issue-links/${encodeURIComponent(button.dataset.deleteLink)}`, { method: 'DELETE' });
-            await openIssue(issue.key);
+            await api(`/api/v1/ticket-links/${encodeURIComponent(button.dataset.deleteLink)}`, { method: 'DELETE' });
+            await openTicket(ticket.key);
           } catch (error) { showToast(error.message); }
         });
       });
@@ -1935,19 +1935,19 @@ async function openIssue(issueKey) {
       document.querySelector('#drawer-status').addEventListener('change', async event => {
         const newStatusKey = event.target.value;
         const newStatus = STATUSES.find(status => status.key === newStatusKey);
-        if (newStatus?.category === 'done' && !issue.resolution) {
+        if (newStatus?.category === 'done' && !ticket.resolution) {
           document.querySelector('#drawer-resolution-row').hidden = false;
           return;
         }
-        await applyStatusChange(issue.key, newStatusKey, null, issue.version);
+        await applyStatusChange(ticket.key, newStatusKey, null, ticket.version);
       });
       document.querySelector('#resolution-confirm')?.addEventListener('click', async () => {
         const resolution = document.querySelector('#drawer-resolution').value;
         const statusKey = document.querySelector('#drawer-status').value;
-        await applyStatusChange(issue.key, statusKey, resolution, issue.version);
+        await applyStatusChange(ticket.key, statusKey, resolution, ticket.version);
       });
       document.querySelector('#resolution-cancel')?.addEventListener('click', () => {
-        document.querySelector('#drawer-status').value = issue.status.key;
+        document.querySelector('#drawer-status').value = ticket.status.key;
         document.querySelector('#drawer-resolution-row').hidden = true;
       });
       document.querySelector('#worklog-form').addEventListener('submit', async event => {
@@ -1959,19 +1959,19 @@ async function openIssue(issueKey) {
           return;
         }
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/worklogs`, {
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/worklogs`, {
             method: 'POST',
             body: JSON.stringify({ workDate: values.workDate, timeSpentSeconds, comment: values.comment || null })
           });
           showToast('Time logged');
-          await openIssue(issue.key);
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       });
       document.querySelectorAll('[data-delete-worklog]').forEach(button => button.addEventListener('click', async () => {
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/worklogs/${encodeURIComponent(button.dataset.deleteWorklog)}`, { method: 'DELETE' });
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/worklogs/${encodeURIComponent(button.dataset.deleteWorklog)}`, { method: 'DELETE' });
           showToast('Worklog deleted');
-          await openIssue(issue.key);
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       }));
 
@@ -2012,20 +2012,20 @@ async function openIssue(issueKey) {
       }));
       document.querySelectorAll('[data-delete-attachment]').forEach(button => button.addEventListener('click', async () => {
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/attachments/${encodeURIComponent(button.dataset.deleteAttachment)}`, { method: 'DELETE' });
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/attachments/${encodeURIComponent(button.dataset.deleteAttachment)}`, { method: 'DELETE' });
           showToast('Attachment deleted');
-          await openIssue(issue.key);
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       }));
       const uploadFiles = async files => {
         for (const file of files) {
           try {
-            await uploadAttachmentFile(issue.key, file);
+            await uploadAttachmentFile(ticket.key, file);
           } catch (error) {
             showToast(`${file.name}: ${error.message}`);
           }
         }
-        await openIssue(issue.key);
+        await openTicket(ticket.key);
       };
       document.querySelector('#attachment-upload-button').addEventListener('click', () => {
         document.querySelector('#attachment-file-input').click();
@@ -2042,32 +2042,32 @@ async function openIssue(issueKey) {
         if (event.dataTransfer.files.length) uploadFiles([...event.dataTransfer.files]);
       });
 
-      attachMarkdownToolbar(document.querySelector('#comment-form textarea[name=body]'), issue.key);
+      attachMarkdownToolbar(document.querySelector('#comment-form textarea[name=body]'), ticket.key);
       attachMentionAutocomplete(document.querySelector('#comment-form textarea[name=body]'));
       document.querySelector('#comment-form').addEventListener('submit', async event => {
         event.preventDefault();
         const body = new FormData(event.currentTarget).get('body').trim();
         if (!body) return;
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
           showToast('Comment added');
-          await openIssue(issue.key);
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       });
       document.querySelectorAll('[data-delete-comment]').forEach(button => button.addEventListener('click', async () => {
         try {
-          await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(button.dataset.deleteComment)}`, { method: 'DELETE' });
+          await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/comments/${encodeURIComponent(button.dataset.deleteComment)}`, { method: 'DELETE' });
           showToast('Comment deleted');
-          await openIssue(issue.key);
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       }));
       document.querySelectorAll('[data-toggle-reaction]').forEach(button => button.addEventListener('click', async () => {
         const commentId = button.dataset.toggleReaction;
         const reactionKey = button.dataset.reactionKey;
-        const path = `/api/v1/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(commentId)}/reactions/${encodeURIComponent(reactionKey)}`;
+        const path = `/api/v1/tickets/${encodeURIComponent(ticket.key)}/comments/${encodeURIComponent(commentId)}/reactions/${encodeURIComponent(reactionKey)}`;
         try {
           await api(path, { method: button.classList.contains('reaction-button--active') ? 'DELETE' : 'POST' });
-          await openIssue(issue.key);
+          await openTicket(ticket.key);
         } catch (error) { showToast(error.message); }
       }));
       document.querySelectorAll('[data-edit-comment]').forEach(button => button.addEventListener('click', () => {
@@ -2081,27 +2081,27 @@ async function openIssue(issueKey) {
             <button type="button" class="secondary-button" id="comment-edit-cancel">Cancel</button>
             <button type="button" class="primary-button" id="comment-edit-save">Save</button>
           </div>`;
-        attachMarkdownToolbar(article.querySelector('.comment-edit-textarea'), issue.key);
+        attachMarkdownToolbar(article.querySelector('.comment-edit-textarea'), ticket.key);
         attachMentionAutocomplete(article.querySelector('.comment-edit-textarea'));
-        article.querySelector('#comment-edit-cancel').addEventListener('click', () => openIssue(issue.key));
+        article.querySelector('#comment-edit-cancel').addEventListener('click', () => openTicket(ticket.key));
         article.querySelector('#comment-edit-save').addEventListener('click', async () => {
           const newBody = article.querySelector('.comment-edit-textarea').value.trim();
           if (!newBody) return;
           try {
-            await api(`/api/v1/issues/${encodeURIComponent(issue.key)}/comments/${encodeURIComponent(commentId)}`, {
+            await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}/comments/${encodeURIComponent(commentId)}`, {
               method: 'PATCH',
               body: JSON.stringify({ body: newBody, expectedVersion: comment.version })
             });
             showToast('Comment updated');
-            await openIssue(issue.key);
+            await openTicket(ticket.key);
           } catch (error) { showToast(error.message); }
         });
       }));
 
       if (editing) {
-        attachMarkdownToolbar(document.querySelector('#edit-description'), issue.key);
-        refreshEditParentOptions(issue).catch(() => {});
-        document.querySelector('#edit-type').addEventListener('change', () => refreshEditParentOptions(issue).catch(() => {}));
+        attachMarkdownToolbar(document.querySelector('#edit-description'), ticket.key);
+        refreshEditParentOptions(ticket).catch(() => {});
+        document.querySelector('#edit-type').addEventListener('change', () => refreshEditParentOptions(ticket).catch(() => {}));
         document.querySelector('#edit-cancel').addEventListener('click', () => render(false));
         document.querySelector('#edit-save').addEventListener('click', async () => {
           const errorElement = document.querySelector('#edit-error');
@@ -2114,37 +2114,37 @@ async function openIssue(issueKey) {
             storyPoints: storyPointsValue ? Number(storyPointsValue) : null,
             dueDate: document.querySelector('#edit-due-date').value || null,
             labels: document.querySelector('#edit-labels').value.split(',').map(value => value.trim()).filter(Boolean),
-            issueTypeKey: document.querySelector('#edit-type').value,
-            parentIssueKey: document.querySelector('#edit-parent').value || null,
-            expectedVersion: issue.version
+            ticketTypeKey: document.querySelector('#edit-type').value,
+            parentTicketKey: document.querySelector('#edit-parent').value || null,
+            expectedVersion: ticket.version
           };
           try {
-            await api(`/api/v1/issues/${encodeURIComponent(issue.key)}`, { method: 'PATCH', body: JSON.stringify(payload) });
-            showToast(`${issue.key} updated`);
+            await api(`/api/v1/tickets/${encodeURIComponent(ticket.key)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+            showToast(`${ticket.key} updated`);
             await renderCurrentView();
-            await openIssue(issue.key);
+            await openTicket(ticket.key);
           } catch (error) {
             errorElement.textContent = error.message;
             errorElement.classList.remove('hidden');
           }
         });
       } else {
-        document.querySelector('#edit-issue').addEventListener('click', () => render(true));
+        document.querySelector('#edit-ticket').addEventListener('click', () => render(true));
       }
     }
 
     render(false);
   } catch (error) {
-    issueDrawer.innerHTML = `<div class="drawer-header"><span>Issue</span><button class="icon-button" id="close-drawer">×</button></div><div class="drawer-content"><div class="error-banner">${escapeHtml(error.message)}</div></div>`;
+    ticketDrawer.innerHTML = `<div class="drawer-header"><span>Ticket</span><button class="icon-button" id="close-drawer">×</button></div><div class="drawer-content"><div class="error-banner">${escapeHtml(error.message)}</div></div>`;
     document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
   }
 }
 
 function closeDrawer() {
-  issueDrawer.classList.add('hidden');
+  ticketDrawer.classList.add('hidden');
   drawerBackdrop.classList.add('hidden');
-  state.currentIssue = null;
-  if (issueKeyFromLocation()) {
+  state.currentTicket = null;
+  if (ticketKeyFromLocation()) {
     history.pushState(null, '', '/');
   }
 }
@@ -2160,10 +2160,10 @@ let createParentRequestId = 0;
 async function refreshCreateParentOptions() {
   const requestId = ++createParentRequestId;
   const projectKey = document.querySelector('#create-project').value;
-  const issueTypeKey = document.querySelector('#create-issue-type').value;
+  const ticketTypeKey = document.querySelector('#create-ticket-type').value;
   const label = document.querySelector('#create-parent-label');
   const select = document.querySelector('#create-parent');
-  const level = issueTypeHierarchyLevel(issueTypeKey);
+  const level = ticketTypeHierarchyLevel(ticketTypeKey);
 
   if (level === 1) {
     label.classList.add('hidden');
@@ -2177,31 +2177,31 @@ async function refreshCreateParentOptions() {
 
   const wantedLevel = level === -1 ? 0 : 1;
   try {
-    const result = await api(`/api/v1/issues?project=${encodeURIComponent(projectKey)}`);
+    const result = await api(`/api/v1/tickets?project=${encodeURIComponent(projectKey)}`);
     if (requestId !== createParentRequestId) return; // a newer call already superseded this one
-    const candidates = result.items.filter(candidate => issueTypeHierarchyLevel(candidate.type.key) === wantedLevel);
+    const candidates = result.items.filter(candidate => ticketTypeHierarchyLevel(candidate.type.key) === wantedLevel);
     select.innerHTML += candidates.map(candidate => `<option value="${escapeHtml(candidate.key)}">${escapeHtml(candidate.key)} — ${escapeHtml(candidate.summary)}</option>`).join('');
   } catch {
-    // Leave just the "None" option if the project's issues can't be loaded;
+    // Leave just the "None" option if the project's tickets can't be loaded;
     // the create submit itself will surface a clearer error if needed.
   }
 }
 
-// Same purpose as refreshCreateParentOptions, adapted for the issue drawer's
-// edit form (re-typing/re-parenting an existing issue): the project is
-// fixed (moving an issue between projects is a separate action, D37), and
-// the issue itself is excluded from its own candidate-parent list. The
-// server (TicketService::validateHierarchyShape / IDatabase::editIssue) is
+// Same purpose as refreshCreateParentOptions, adapted for the ticket drawer's
+// edit form (re-typing/re-parenting an existing ticket): the project is
+// fixed (moving a ticket between projects is a separate action, D37), and
+// the ticket itself is excluded from its own candidate-parent list. The
+// server (TicketService::validateHierarchyShape / IDatabase::editTicket) is
 // the actual source of truth, including the "no children" rule for
 // retyping across hierarchy levels that this picker doesn't attempt to
 // predict client-side.
 let editParentRequestId = 0;
-async function refreshEditParentOptions(issue) {
+async function refreshEditParentOptions(ticket) {
   const requestId = ++editParentRequestId;
-  const issueTypeKey = document.querySelector('#edit-type').value;
+  const ticketTypeKey = document.querySelector('#edit-type').value;
   const label = document.querySelector('#edit-parent-label');
   const select = document.querySelector('#edit-parent');
-  const level = issueTypeHierarchyLevel(issueTypeKey);
+  const level = ticketTypeHierarchyLevel(ticketTypeKey);
 
   if (level === 1) {
     label.classList.add('hidden');
@@ -2210,19 +2210,19 @@ async function refreshEditParentOptions(issue) {
   }
   label.classList.remove('hidden');
   document.querySelector('#edit-parent-label-text').textContent = level === -1 ? 'Parent (required)' : 'Epic (optional)';
-  const preselect = level === issueTypeHierarchyLevel(issue.type.key) ? issue.parentIssueKey : null;
+  const preselect = level === ticketTypeHierarchyLevel(ticket.type.key) ? ticket.parentTicketKey : null;
   select.innerHTML = '<option value="">None</option>';
 
   const wantedLevel = level === -1 ? 0 : 1;
   try {
-    const result = await api(`/api/v1/issues?project=${encodeURIComponent(issue.projectKey)}`);
+    const result = await api(`/api/v1/tickets?project=${encodeURIComponent(ticket.projectKey)}`);
     if (requestId !== editParentRequestId) return; // a newer call already superseded this one
     const candidates = result.items.filter(candidate =>
-      issueTypeHierarchyLevel(candidate.type.key) === wantedLevel && candidate.key !== issue.key);
+      ticketTypeHierarchyLevel(candidate.type.key) === wantedLevel && candidate.key !== ticket.key);
     select.innerHTML += candidates.map(candidate =>
       `<option value="${escapeHtml(candidate.key)}" ${candidate.key === preselect ? 'selected' : ''}>${escapeHtml(candidate.key)} — ${escapeHtml(candidate.summary)}</option>`).join('');
   } catch {
-    // Leave just the "None" option if the project's issues can't be loaded.
+    // Leave just the "None" option if the project's tickets can't be loaded.
   }
 }
 
@@ -2249,7 +2249,7 @@ function debounce(fn, delay) {
 document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', () => navigate(item.dataset.view)));
 document.querySelector('#create-button').addEventListener('click', openCreateModal);
 document.querySelector('#create-project').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
-document.querySelector('#create-issue-type').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
+document.querySelector('#create-ticket-type').addEventListener('change', () => refreshCreateParentOptions().catch(() => {}));
 document.querySelectorAll('[data-close-modal]').forEach(button => button.addEventListener('click', () => {
   button.closest('.modal-backdrop')?.classList.add('hidden');
 }));
@@ -2274,7 +2274,7 @@ document.querySelector('#global-search').addEventListener('input', debounce(even
     state.filterAssignee = '';
     state.filterLabel = '';
     state.filterDueBefore = '';
-    navigate('issues');
+    navigate('tickets');
   }
 }, 350));
 
@@ -2284,25 +2284,25 @@ document.querySelector('#create-form').addEventListener('submit', async event =>
   const values = Object.fromEntries(new FormData(form).entries());
   const payload = {
     projectKey: values.projectKey,
-    issueTypeKey: values.issueTypeKey,
+    ticketTypeKey: values.ticketTypeKey,
     summary: values.summary.trim(),
     description: values.description.trim(),
     priorityKey: values.priorityKey,
     assigneeEmail: values.assigneeEmail || null,
-    parentIssueKey: values.parentIssueKey || null,
+    parentTicketKey: values.parentTicketKey || null,
     storyPoints: values.storyPoints ? Number(values.storyPoints) : null,
     dueDate: values.dueDate || null,
     labels: values.labels.split(',').map(value => value.trim()).filter(Boolean)
   };
   const errorElement = document.querySelector('#create-error');
   try {
-    const created = await api('/api/v1/issues', { method: 'POST', body: JSON.stringify(payload) });
+    const created = await api('/api/v1/tickets', { method: 'POST', body: JSON.stringify(payload) });
     state.selectedProject = created.projectKey;
     form.reset();
     closeCreateModal();
     showToast(`${created.key} created`);
     await renderCurrentView();
-    await openIssue(created.key);
+    await openTicket(created.key);
   } catch (error) {
     errorElement.textContent = error.message;
     errorElement.classList.remove('hidden');
@@ -2332,7 +2332,7 @@ document.querySelector('#project-form').addEventListener('submit', async event =
   }
 });
 
-// The create-issue modal's description field is static markup (unlike the
+// The create-ticket modal's description field is static markup (unlike the
 // drawer's, which is rebuilt via innerHTML on every open) -- attach its
 // toolbar once here rather than on every openCreateModal() call, which
 // would otherwise stack a duplicate toolbar/preview pane each time.
@@ -2350,7 +2350,7 @@ loginForm.addEventListener('submit', async event => {
     showAppShell();
     await loadBaseData();
     await renderCurrentView();
-    await openIssueFromUrlIfAny();
+    await openTicketFromUrlIfAny();
   } catch (error) {
     loginError.textContent = error.message;
     loginError.classList.remove('hidden');
@@ -2368,14 +2368,14 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
 
 // Back/forward button support for /browse/{key} links: react to the URL
 // having already changed (the browser updates it before firing popstate)
-// rather than pushing a new entry ourselves -- openIssue/closeDrawer's own
+// rather than pushing a new entry ourselves -- openTicket/closeDrawer's own
 // "only push if the URL doesn't already match" guards make this safe.
 window.addEventListener('popstate', () => {
   if (loginScreen.classList.contains('hidden')) {
-    const issueKey = issueKeyFromLocation();
-    if (issueKey) {
-      openIssue(issueKey).catch(() => {});
-    } else if (state.currentIssue) {
+    const ticketKey = ticketKeyFromLocation();
+    if (ticketKey) {
+      openTicket(ticketKey).catch(() => {});
+    } else if (state.currentTicket) {
       closeDrawer();
     }
   }
@@ -2404,7 +2404,7 @@ document.addEventListener('keydown', event => {
   try {
     await loadBaseData();
     await renderDashboard();
-    await openIssueFromUrlIfAny();
+    await openTicketFromUrlIfAny();
   } catch (error) {
     showError(error);
   }

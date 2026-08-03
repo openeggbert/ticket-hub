@@ -112,39 +112,39 @@ Domain::User readUser(sqlite3_stmt* statement) {
 constexpr const char* UserSelect =
     "SELECT id, email, display_name, handle, time_zone, clock_format, active, is_admin, created_at FROM users";
 
-Domain::Issue readIssue(sqlite3_stmt* statement) {
-    Domain::Issue issue;
-    issue.id = text(statement, 0);
-    issue.key = text(statement, 1);
-    issue.number = sqlite3_column_int64(statement, 2);
-    issue.projectKey = text(statement, 3);
-    issue.projectName = text(statement, 4);
-    issue.summary = text(statement, 5);
-    issue.description = text(statement, 6);
-    issue.type = {text(statement, 7), text(statement, 8), text(statement, 9), text(statement, 10)};
-    issue.status = {text(statement, 11), text(statement, 12), text(statement, 13), sqlite3_column_int(statement, 14)};
-    issue.priority = {text(statement, 15), text(statement, 16), sqlite3_column_int(statement, 17), text(statement, 18)};
-    issue.reporter = readUserSummary(statement, 19);
+Domain::Ticket readTicket(sqlite3_stmt* statement) {
+    Domain::Ticket ticket;
+    ticket.id = text(statement, 0);
+    ticket.key = text(statement, 1);
+    ticket.number = sqlite3_column_int64(statement, 2);
+    ticket.projectKey = text(statement, 3);
+    ticket.projectName = text(statement, 4);
+    ticket.summary = text(statement, 5);
+    ticket.description = text(statement, 6);
+    ticket.type = {text(statement, 7), text(statement, 8), text(statement, 9), text(statement, 10)};
+    ticket.status = {text(statement, 11), text(statement, 12), text(statement, 13), sqlite3_column_int(statement, 14)};
+    ticket.priority = {text(statement, 15), text(statement, 16), sqlite3_column_int(statement, 17), text(statement, 18)};
+    ticket.reporter = readUserSummary(statement, 19);
     if (sqlite3_column_type(statement, 22) != SQLITE_NULL) {
-        issue.assignee = readUserSummary(statement, 22);
+        ticket.assignee = readUserSummary(statement, 22);
     }
-    issue.parentIssueKey = optionalText(statement, 25);
+    ticket.parentTicketKey = optionalText(statement, 25);
     if (sqlite3_column_type(statement, 26) != SQLITE_NULL) {
-        issue.storyPoints = sqlite3_column_double(statement, 26);
+        ticket.storyPoints = sqlite3_column_double(statement, 26);
     }
-    issue.dueDate = optionalText(statement, 27);
-    issue.labels = splitLabels(text(statement, 28));
-    issue.createdAt = text(statement, 29);
-    issue.updatedAt = text(statement, 30);
-    issue.version = sqlite3_column_int64(statement, 31);
-    issue.resolution = optionalText(statement, 32);
-    issue.rankOrder = sqlite3_column_int64(statement, 33);
-    return issue;
+    ticket.dueDate = optionalText(statement, 27);
+    ticket.labels = splitLabels(text(statement, 28));
+    ticket.createdAt = text(statement, 29);
+    ticket.updatedAt = text(statement, 30);
+    ticket.version = sqlite3_column_int64(statement, 31);
+    ticket.resolution = optionalText(statement, 32);
+    ticket.rankOrder = sqlite3_column_int64(statement, 33);
+    return ticket;
 }
 
-constexpr const char* IssueSelect = R"SQL(
+constexpr const char* TicketSelect = R"SQL(
 SELECT
-    i.id, i.issue_key, i.issue_number,
+    i.id, i.ticket_key, i.ticket_number,
     p.project_key, p.name,
     i.summary, i.description,
     it.type_key, it.name, it.icon, it.color,
@@ -152,19 +152,19 @@ SELECT
     pr.priority_key, pr.name, pr.rank, pr.color,
     reporter.id, reporter.display_name, reporter.email,
     assignee.id, assignee.display_name, assignee.email,
-    parent.issue_key,
+    parent.ticket_key,
     i.story_points, i.due_date,
     COALESCE(GROUP_CONCAT(DISTINCT l.name), ''),
     i.created_at, i.updated_at, i.version, i.resolution, i.rank_order
-FROM issues i
+FROM tickets i
 JOIN projects p ON p.id = i.project_id
-JOIN issue_types it ON it.id = i.issue_type_id
-JOIN issue_statuses s ON s.id = i.status_id
+JOIN ticket_types it ON it.id = i.ticket_type_id
+JOIN ticket_statuses s ON s.id = i.status_id
 JOIN priorities pr ON pr.id = i.priority_id
 JOIN users reporter ON reporter.id = i.reporter_user_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
-LEFT JOIN issues parent ON parent.id = i.parent_issue_id
-LEFT JOIN issue_labels il ON il.issue_id = i.id
+LEFT JOIN tickets parent ON parent.id = i.parent_ticket_id
+LEFT JOIN ticket_labels il ON il.ticket_id = i.id
 LEFT JOIN labels l ON l.id = il.label_id
 )SQL";
 
@@ -184,16 +184,16 @@ std::string requireUserId(sqlite3* database, const std::string& userId) {
     return lookupId(database, "users", "id", userId);
 }
 
-std::string lookupIssueId(sqlite3* database, const std::string& issueKey) {
+std::string lookupTicketId(sqlite3* database, const std::string& ticketKey) {
     Statement statement(database, R"SQL(
 SELECT i.id
-FROM issues i
+FROM tickets i
 WHERE i.deleted_at IS NULL
-  AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
+  AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
 )SQL");
-    statement.bind(1, issueKey);
+    statement.bind(1, ticketKey);
     if (statement.step() != SQLITE_ROW) {
-        throw std::invalid_argument("Unknown issue key: " + issueKey);
+        throw std::invalid_argument("Unknown ticket key: " + ticketKey);
     }
     return text(statement.get(), 0);
 }
@@ -207,7 +207,7 @@ void expectDone(sqlite3* database, Statement& statement, const std::string& acti
 Domain::Comment readComment(sqlite3_stmt* statement) {
     Domain::Comment comment;
     comment.id = text(statement, 0);
-    comment.issueId = text(statement, 1);
+    comment.ticketId = text(statement, 1);
     comment.author = readUserSummary(statement, 2);
     comment.body = text(statement, 5);
     comment.createdAt = text(statement, 6);
@@ -218,7 +218,7 @@ Domain::Comment readComment(sqlite3_stmt* statement) {
 }
 
 constexpr const char* CommentSelect = R"SQL(
-SELECT c.id, c.issue_id, u.id, u.display_name, u.email,
+SELECT c.id, c.ticket_id, u.id, u.display_name, u.email,
        c.body, c.created_at, c.updated_at, c.version, c.edited_at
 FROM comments c JOIN users u ON u.id = c.author_user_id
 )SQL";
@@ -226,7 +226,7 @@ FROM comments c JOIN users u ON u.id = c.author_user_id
 Domain::Worklog readWorklog(sqlite3_stmt* statement) {
     Domain::Worklog worklog;
     worklog.id = text(statement, 0);
-    worklog.issueId = text(statement, 1);
+    worklog.ticketId = text(statement, 1);
     worklog.author = readUserSummary(statement, 2);
     worklog.workDate = text(statement, 5);
     worklog.timeSpentSeconds = sqlite3_column_int64(statement, 6);
@@ -238,7 +238,7 @@ Domain::Worklog readWorklog(sqlite3_stmt* statement) {
 }
 
 constexpr const char* WorklogSelect = R"SQL(
-SELECT w.id, w.issue_id, u.id, u.display_name, u.email,
+SELECT w.id, w.ticket_id, u.id, u.display_name, u.email,
        w.work_date, w.time_spent_seconds, w.comment, w.created_at, w.updated_at, w.version
 FROM worklogs w JOIN users u ON u.id = w.author_user_id
 )SQL";
@@ -246,7 +246,7 @@ FROM worklogs w JOIN users u ON u.id = w.author_user_id
 Domain::Attachment readAttachment(sqlite3_stmt* statement) {
     Domain::Attachment attachment;
     attachment.id = text(statement, 0);
-    attachment.issueId = text(statement, 1);
+    attachment.ticketId = text(statement, 1);
     attachment.uploader = readUserSummary(statement, 2);
     attachment.fileName = text(statement, 5);
     attachment.contentType = text(statement, 6);
@@ -254,14 +254,14 @@ Domain::Attachment readAttachment(sqlite3_stmt* statement) {
     attachment.sha256 = text(statement, 8);
     attachment.createdAt = text(statement, 9);
     attachment.deletedAt = optionalText(statement, 10);
-    attachment.issueKey = text(statement, 11);
+    attachment.ticketKey = text(statement, 11);
     return attachment;
 }
 
 constexpr const char* AttachmentSelect = R"SQL(
-SELECT a.id, a.issue_id, u.id, u.display_name, u.email,
-       a.file_name, a.content_type, a.byte_size, a.sha256, a.created_at, a.deleted_at, i.issue_key
-FROM attachments a JOIN users u ON u.id = a.uploader_user_id JOIN issues i ON i.id = a.issue_id
+SELECT a.id, a.ticket_id, u.id, u.display_name, u.email,
+       a.file_name, a.content_type, a.byte_size, a.sha256, a.created_at, a.deleted_at, i.ticket_key
+FROM attachments a JOIN users u ON u.id = a.uploader_user_id JOIN tickets i ON i.id = a.ticket_id
 )SQL";
 
 Domain::AuditEvent readAuditEvent(sqlite3_stmt* statement) {
@@ -301,7 +301,7 @@ Domain::BoardColumn readBoardColumn(sqlite3_stmt* statement) {
 
 constexpr const char* BoardColumnSelect = R"SQL(
 SELECT bc.id, s.status_key, s.name, bc.sort_order, bc.wip_limit
-FROM board_columns bc JOIN issue_statuses s ON s.id = bc.status_id
+FROM board_columns bc JOIN ticket_statuses s ON s.id = bc.status_id
 ORDER BY bc.sort_order
 )SQL";
 
@@ -797,8 +797,8 @@ SELECT p.id, p.project_key, p.name, p.description,
        p.archived
 FROM projects p
 LEFT JOIN users lead ON lead.id = p.lead_user_id
-LEFT JOIN issues i ON i.project_id = p.id AND i.deleted_at IS NULL
-LEFT JOIN issue_statuses s ON s.id = i.status_id
+LEFT JOIN tickets i ON i.project_id = p.id AND i.deleted_at IS NULL
+LEFT JOIN ticket_statuses s ON s.id = i.status_id
 )SQL";
 } // namespace
 
@@ -826,7 +826,7 @@ Domain::Project SqliteDatabase::createProject(const Domain::CreateProjectRequest
     try {
         const std::string projectId = Common::uuidV4();
         Statement insert(database_, R"SQL(
-INSERT INTO projects(id, project_key, name, description, lead_user_id, next_issue_number, archived, created_at, updated_at)
+INSERT INTO projects(id, project_key, name, description, lead_user_id, next_ticket_number, archived, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL");
         insert.bind(1, projectId);
@@ -859,8 +859,8 @@ VALUES (?, ?, ?, ?, ?, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         if (sqlite3_column_type(read.get(), 4) != SQLITE_NULL) {
             project.lead = readUserSummary(read.get(), 4);
         }
-        project.issueCount = sqlite3_column_int64(read.get(), 7);
-        project.openIssueCount = sqlite3_column_int64(read.get(), 8);
+        project.ticketCount = sqlite3_column_int64(read.get(), 7);
+        project.openTicketCount = sqlite3_column_int64(read.get(), 8);
         project.archived = boolColumn(read.get(), 9);
         return project;
     } catch (...) {
@@ -925,8 +925,8 @@ std::vector<Domain::Project> SqliteDatabase::listDeletedProjects() {
         if (sqlite3_column_type(statement.get(), 4) != SQLITE_NULL) {
             project.lead = readUserSummary(statement.get(), 4);
         }
-        project.issueCount = sqlite3_column_int64(statement.get(), 7);
-        project.openIssueCount = sqlite3_column_int64(statement.get(), 8);
+        project.ticketCount = sqlite3_column_int64(statement.get(), 7);
+        project.openTicketCount = sqlite3_column_int64(statement.get(), 8);
         project.archived = boolColumn(statement.get(), 9);
         projects.push_back(std::move(project));
     }
@@ -962,7 +962,7 @@ ON CONFLICT(setting_key) DO UPDATE SET value = excluded.value, updated_at = CURR
     expectDone(database_, statement, "Set installation setting");
 }
 
-// --- Issue tracker ---
+// --- Ticket tracker ---
 
 std::vector<Domain::Project> SqliteDatabase::listProjects() {
     std::scoped_lock lock(mutex_);
@@ -973,8 +973,8 @@ SELECT p.id, p.project_key, p.name, p.description,
        SUM(CASE WHEN s.category <> 'done' THEN 1 ELSE 0 END)
 FROM projects p
 LEFT JOIN users lead ON lead.id = p.lead_user_id
-LEFT JOIN issues i ON i.project_id = p.id AND i.deleted_at IS NULL
-LEFT JOIN issue_statuses s ON s.id = i.status_id
+LEFT JOIN tickets i ON i.project_id = p.id AND i.deleted_at IS NULL
+LEFT JOIN ticket_statuses s ON s.id = i.status_id
 WHERE p.archived = 0 AND p.deleted_at IS NULL
 GROUP BY p.id
 ORDER BY p.name
@@ -990,20 +990,20 @@ ORDER BY p.name
         if (sqlite3_column_type(statement.get(), 4) != SQLITE_NULL) {
             project.lead = readUserSummary(statement.get(), 4);
         }
-        project.issueCount = sqlite3_column_int64(statement.get(), 7);
-        project.openIssueCount = sqlite3_column_int64(statement.get(), 8);
+        project.ticketCount = sqlite3_column_int64(statement.get(), 7);
+        project.openTicketCount = sqlite3_column_int64(statement.get(), 8);
         projects.push_back(std::move(project));
     }
     return projects;
 }
 
-std::vector<Domain::Issue> SqliteDatabase::listIssues(const Domain::IssueFilter& filter) {
+std::vector<Domain::Ticket> SqliteDatabase::listTickets(const Domain::TicketFilter& filter) {
     std::scoped_lock lock(mutex_);
     // `label` is checked via EXISTS rather than the already-joined/aggregated
-    // issue_labels/labels (which feed the GROUP_CONCAT summary column) --
+    // ticket_labels/labels (which feed the GROUP_CONCAT summary column) --
     // filtering on the joined row directly would silently drop every other
-    // label the issue has from that GROUP_CONCAT.
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    // label the ticket has from that GROUP_CONCAT.
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
   AND (?1 IS NULL OR p.project_key = ?1)
@@ -1013,34 +1013,34 @@ WHERE i.deleted_at IS NULL
   AND (?5 IS NULL OR assignee.email = ?5)
   AND (?6 IS NULL OR i.due_date <= ?6)
   AND (?7 IS NULL OR EXISTS (
-        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
-        WHERE il2.issue_id = i.id AND LOWER(l2.name) = LOWER(?7)))
+        SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
   AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
-       OR LOWER(i.issue_key) LIKE LOWER(?8))
+       OR LOWER(i.ticket_key) LIKE LOWER(?8))
 GROUP BY i.id
-ORDER BY i.updated_at DESC, i.issue_key DESC
+ORDER BY i.updated_at DESC, i.ticket_key DESC
 LIMIT 200
 )SQL";
     Statement statement(database_, sql);
     filter.projectKey ? statement.bind(1, *filter.projectKey) : statement.bindNull(1);
     filter.statusKey ? statement.bind(2, *filter.statusKey) : statement.bindNull(2);
-    filter.issueTypeKey ? statement.bind(3, *filter.issueTypeKey) : statement.bindNull(3);
+    filter.ticketTypeKey ? statement.bind(3, *filter.ticketTypeKey) : statement.bindNull(3);
     filter.priorityKey ? statement.bind(4, *filter.priorityKey) : statement.bindNull(4);
     filter.assigneeEmail ? statement.bind(5, *filter.assigneeEmail) : statement.bindNull(5);
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
     filter.label ? statement.bind(7, *filter.label) : statement.bindNull(7);
     filter.search ? statement.bind(8, "%" + *filter.search + "%") : statement.bindNull(8);
 
-    std::vector<Domain::Issue> issues;
+    std::vector<Domain::Ticket> tickets;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
-        issues.push_back(readIssue(statement.get()));
+        tickets.push_back(readTicket(statement.get()));
     }
-    return issues;
+    return tickets;
 }
 
-std::vector<Domain::Issue> SqliteDatabase::listIssues(const Domain::IssueFilter& filter, int limit, int offset) {
+std::vector<Domain::Ticket> SqliteDatabase::listTickets(const Domain::TicketFilter& filter, int limit, int offset) {
     std::scoped_lock lock(mutex_);
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
   AND (?1 IS NULL OR p.project_key = ?1)
@@ -1050,18 +1050,18 @@ WHERE i.deleted_at IS NULL
   AND (?5 IS NULL OR assignee.email = ?5)
   AND (?6 IS NULL OR i.due_date <= ?6)
   AND (?7 IS NULL OR EXISTS (
-        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
-        WHERE il2.issue_id = i.id AND LOWER(l2.name) = LOWER(?7)))
+        SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
   AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
-       OR LOWER(i.issue_key) LIKE LOWER(?8))
+       OR LOWER(i.ticket_key) LIKE LOWER(?8))
 GROUP BY i.id
-ORDER BY i.updated_at DESC, i.issue_key DESC
+ORDER BY i.updated_at DESC, i.ticket_key DESC
 LIMIT ?9 OFFSET ?10
 )SQL";
     Statement statement(database_, sql);
     filter.projectKey ? statement.bind(1, *filter.projectKey) : statement.bindNull(1);
     filter.statusKey ? statement.bind(2, *filter.statusKey) : statement.bindNull(2);
-    filter.issueTypeKey ? statement.bind(3, *filter.issueTypeKey) : statement.bindNull(3);
+    filter.ticketTypeKey ? statement.bind(3, *filter.ticketTypeKey) : statement.bindNull(3);
     filter.priorityKey ? statement.bind(4, *filter.priorityKey) : statement.bindNull(4);
     filter.assigneeEmail ? statement.bind(5, *filter.assigneeEmail) : statement.bindNull(5);
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
@@ -1070,21 +1070,21 @@ LIMIT ?9 OFFSET ?10
     statement.bind(9, static_cast<std::int64_t>(limit));
     statement.bind(10, static_cast<std::int64_t>(offset));
 
-    std::vector<Domain::Issue> issues;
+    std::vector<Domain::Ticket> tickets;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
-        issues.push_back(readIssue(statement.get()));
+        tickets.push_back(readTicket(statement.get()));
     }
-    return issues;
+    return tickets;
 }
 
-std::int64_t SqliteDatabase::countIssues(const Domain::IssueFilter& filter) {
+std::int64_t SqliteDatabase::countTickets(const Domain::TicketFilter& filter) {
     std::scoped_lock lock(mutex_);
     const std::string sql = R"SQL(
 SELECT COUNT(*)
-FROM issues i
+FROM tickets i
 JOIN projects p ON p.id = i.project_id
-JOIN issue_types it ON it.id = i.issue_type_id
-JOIN issue_statuses s ON s.id = i.status_id
+JOIN ticket_types it ON it.id = i.ticket_type_id
+JOIN ticket_statuses s ON s.id = i.status_id
 JOIN priorities pr ON pr.id = i.priority_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
 WHERE i.deleted_at IS NULL
@@ -1096,15 +1096,15 @@ WHERE i.deleted_at IS NULL
   AND (?5 IS NULL OR assignee.email = ?5)
   AND (?6 IS NULL OR i.due_date <= ?6)
   AND (?7 IS NULL OR EXISTS (
-        SELECT 1 FROM issue_labels il2 JOIN labels l2 ON l2.id = il2.label_id
-        WHERE il2.issue_id = i.id AND LOWER(l2.name) = LOWER(?7)))
+        SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
+        WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
   AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
-       OR LOWER(i.issue_key) LIKE LOWER(?8))
+       OR LOWER(i.ticket_key) LIKE LOWER(?8))
 )SQL";
     Statement statement(database_, sql);
     filter.projectKey ? statement.bind(1, *filter.projectKey) : statement.bindNull(1);
     filter.statusKey ? statement.bind(2, *filter.statusKey) : statement.bindNull(2);
-    filter.issueTypeKey ? statement.bind(3, *filter.issueTypeKey) : statement.bindNull(3);
+    filter.ticketTypeKey ? statement.bind(3, *filter.ticketTypeKey) : statement.bindNull(3);
     filter.priorityKey ? statement.bind(4, *filter.priorityKey) : statement.bindNull(4);
     filter.assigneeEmail ? statement.bind(5, *filter.assigneeEmail) : statement.bindNull(5);
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
@@ -1117,42 +1117,42 @@ WHERE i.deleted_at IS NULL
     return sqlite3_column_int64(statement.get(), 0);
 }
 
-std::optional<Domain::Issue> SqliteDatabase::findIssueByKey(const std::string& issueKey) {
+std::optional<Domain::Ticket> SqliteDatabase::findTicketByKey(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
-  AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
+  AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
 GROUP BY i.id
 )SQL";
     Statement statement(database_, sql);
-    statement.bind(1, issueKey);
+    statement.bind(1, ticketKey);
     if (statement.step() != SQLITE_ROW) {
         return std::nullopt;
     }
-    return readIssue(statement.get());
+    return readTicket(statement.get());
 }
 
-Domain::Issue SqliteDatabase::createIssue(const Domain::CreateIssueRequest& request,
+Domain::Ticket SqliteDatabase::createTicket(const Domain::CreateTicketRequest& request,
                                           const std::string& reporterUserId) {
     std::scoped_lock lock(mutex_);
     executeScript("BEGIN IMMEDIATE;");
     try {
-        Statement projectStatement(database_, "SELECT id, next_issue_number FROM projects WHERE project_key = ? AND archived = 0 AND deleted_at IS NULL");
+        Statement projectStatement(database_, "SELECT id, next_ticket_number FROM projects WHERE project_key = ? AND archived = 0 AND deleted_at IS NULL");
         projectStatement.bind(1, request.projectKey);
         if (projectStatement.step() != SQLITE_ROW) {
             throw std::invalid_argument("Unknown project: " + request.projectKey);
         }
         const std::string projectId = text(projectStatement.get(), 0);
-        const std::int64_t issueNumber = sqlite3_column_int64(projectStatement.get(), 1);
-        const std::string issueKey = request.projectKey + "-" + std::to_string(issueNumber);
+        const std::int64_t ticketNumber = sqlite3_column_int64(projectStatement.get(), 1);
+        const std::string ticketKey = request.projectKey + "-" + std::to_string(ticketNumber);
 
-        Statement increment(database_, "UPDATE projects SET next_issue_number = next_issue_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+        Statement increment(database_, "UPDATE projects SET next_ticket_number = next_ticket_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
         increment.bind(1, projectId);
         expectDone(database_, increment, "Project counter update");
 
-        const std::string issueId = Common::uuidV4();
-        const std::string issueTypeId = lookupId(database_, "issue_types", "type_key", request.issueTypeKey);
-        const std::string statusId = lookupId(database_, "issue_statuses", "status_key", "backlog");
+        const std::string ticketId = Common::uuidV4();
+        const std::string ticketTypeId = lookupId(database_, "ticket_types", "type_key", request.ticketTypeKey);
+        const std::string statusId = lookupId(database_, "ticket_statuses", "status_key", "backlog");
         const std::string priorityId = lookupId(database_, "priorities", "priority_key", request.priorityKey);
         const std::string reporterId = requireUserId(database_, reporterUserId);
         std::optional<std::string> assigneeId;
@@ -1160,15 +1160,15 @@ Domain::Issue SqliteDatabase::createIssue(const Domain::CreateIssueRequest& requ
             assigneeId = lookupId(database_, "users", "email", *request.assigneeEmail);
         }
         std::optional<std::string> parentId;
-        if (request.parentIssueKey.has_value() && !request.parentIssueKey->empty()) {
-            parentId = lookupIssueId(database_, *request.parentIssueKey);
+        if (request.parentTicketKey.has_value() && !request.parentTicketKey->empty()) {
+            parentId = lookupTicketId(database_, *request.parentTicketKey);
         }
 
-        // Simple integer manual order (D31): new issues are appended after
+        // Simple integer manual order (D31): new tickets are appended after
         // the highest existing rank within their project.
         std::int64_t rankOrder = 1;
         {
-            Statement maxRank(database_, "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM issues WHERE project_id = ? AND deleted_at IS NULL");
+            Statement maxRank(database_, "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM tickets WHERE project_id = ? AND deleted_at IS NULL");
             maxRank.bind(1, projectId);
             if (maxRank.step() == SQLITE_ROW) {
                 rankOrder = sqlite3_column_int64(maxRank.get(), 0);
@@ -1176,18 +1176,18 @@ Domain::Issue SqliteDatabase::createIssue(const Domain::CreateIssueRequest& requ
         }
 
         Statement insert(database_, R"SQL(
-INSERT INTO issues(id, project_id, issue_number, issue_key, summary, description,
-                   issue_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
-                   parent_issue_id, story_points, due_date, rank_order, created_at, updated_at)
+INSERT INTO tickets(id, project_id, ticket_number, ticket_key, summary, description,
+                   ticket_type_id, status_id, priority_id, reporter_user_id, assignee_user_id,
+                   parent_ticket_id, story_points, due_date, rank_order, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL");
-        insert.bind(1, issueId);
+        insert.bind(1, ticketId);
         insert.bind(2, projectId);
-        insert.bind(3, issueNumber);
-        insert.bind(4, issueKey);
+        insert.bind(3, ticketNumber);
+        insert.bind(4, ticketKey);
         insert.bind(5, request.summary);
         insert.bind(6, request.description);
-        insert.bind(7, issueTypeId);
+        insert.bind(7, ticketTypeId);
         insert.bind(8, statusId);
         insert.bind(9, priorityId);
         insert.bind(10, reporterId);
@@ -1196,7 +1196,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_
         request.storyPoints ? insert.bind(13, *request.storyPoints) : insert.bindNull(13);
         request.dueDate ? insert.bind(14, *request.dueDate) : insert.bindNull(14);
         insert.bind(15, rankOrder);
-        expectDone(database_, insert, "Issue insert");
+        expectDone(database_, insert, "Ticket insert");
 
         for (const auto& labelName : request.labels) {
             const std::string labelId = Common::uuidV4();
@@ -1206,22 +1206,22 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_
             expectDone(database_, label, "Label insert");
 
             Statement link(database_, R"SQL(
-INSERT OR IGNORE INTO issue_labels(issue_id, label_id)
+INSERT OR IGNORE INTO ticket_labels(ticket_id, label_id)
 SELECT ?, id FROM labels WHERE name = ?
 )SQL");
-            link.bind(1, issueId);
+            link.bind(1, ticketId);
             link.bind(2, labelName);
-            expectDone(database_, link, "Issue label insert");
+            expectDone(database_, link, "Ticket label insert");
         }
 
         executeScript("COMMIT;");
-        const std::string sql = std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.issue_key = ?1 GROUP BY i.id";
+        const std::string sql = std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.ticket_key = ?1 GROUP BY i.id";
         Statement read(database_, sql);
-        read.bind(1, issueKey);
+        read.bind(1, ticketKey);
         if (read.step() != SQLITE_ROW) {
-            throw std::runtime_error("Created issue could not be read back");
+            throw std::runtime_error("Created ticket could not be read back");
         }
-        return readIssue(read.get());
+        return readTicket(read.get());
     } catch (...) {
         try {
             executeScript("ROLLBACK;");
@@ -1231,7 +1231,7 @@ SELECT ?, id FROM labels WHERE name = ?
     }
 }
 
-bool SqliteDatabase::changeIssueStatus(const std::string& issueKey,
+bool SqliteDatabase::changeTicketStatus(const std::string& ticketKey,
                                        const std::string& statusKey,
                                        const std::string& actorUserId,
                                        const std::optional<std::string> resolution,
@@ -1241,37 +1241,37 @@ bool SqliteDatabase::changeIssueStatus(const std::string& issueKey,
     try {
         Statement current(database_, R"SQL(
 SELECT i.id, s.status_key, s.category, i.version
-FROM issues i JOIN issue_statuses s ON s.id = i.status_id
+FROM tickets i JOIN ticket_statuses s ON s.id = i.status_id
 WHERE i.deleted_at IS NULL
-  AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
+  AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
 )SQL");
-        current.bind(1, issueKey);
+        current.bind(1, ticketKey);
         if (current.step() != SQLITE_ROW) {
             executeScript("ROLLBACK;");
             return false;
         }
-        const std::string issueId = text(current.get(), 0);
+        const std::string ticketId = text(current.get(), 0);
         const std::string oldStatus = text(current.get(), 1);
         const std::string oldCategory = text(current.get(), 2);
         const std::int64_t currentVersion = sqlite3_column_int64(current.get(), 3);
         if (expectedVersion && *expectedVersion != currentVersion) {
-            throw Domain::ConcurrencyConflict("Issue was modified by another user");
+            throw Domain::ConcurrencyConflict("Ticket was modified by another user");
         }
         if (oldStatus == statusKey) {
             executeScript("COMMIT;");
             return true;
         }
 
-        Statement targetStatus(database_, "SELECT id, category FROM issue_statuses WHERE status_key = ?");
+        Statement targetStatus(database_, "SELECT id, category FROM ticket_statuses WHERE status_key = ?");
         targetStatus.bind(1, statusKey);
         if (targetStatus.step() != SQLITE_ROW) {
-            throw std::invalid_argument("Unknown issue_statuses key: " + statusKey);
+            throw std::invalid_argument("Unknown ticket_statuses key: " + statusKey);
         }
         const std::string statusId = text(targetStatus.get(), 0);
         const std::string targetCategory = text(targetStatus.get(), 1);
         const std::string actorId = requireUserId(database_, actorUserId);
 
-        // The fixed workflow rules (D68-D70): completing an issue requires a
+        // The fixed workflow rules (D68-D70): completing a ticket requires a
         // resolution and is blocked while any sub-task is unfinished;
         // reopening (leaving Done) always clears resolution and never
         // cascades to sub-tasks; any other transition leaves resolution
@@ -1287,14 +1287,14 @@ WHERE i.deleted_at IS NULL
             }
             Statement unfinishedChild(database_, R"SQL(
 SELECT 1
-FROM issues child
-JOIN issue_statuses cs ON cs.id = child.status_id
-WHERE child.parent_issue_id = ? AND child.deleted_at IS NULL AND cs.category <> 'done'
+FROM tickets child
+JOIN ticket_statuses cs ON cs.id = child.status_id
+WHERE child.parent_ticket_id = ? AND child.deleted_at IS NULL AND cs.category <> 'done'
 LIMIT 1
 )SQL");
-            unfinishedChild.bind(1, issueId);
+            unfinishedChild.bind(1, ticketId);
             if (unfinishedChild.step() == SQLITE_ROW) {
-                throw Domain::WorkflowViolation("Cannot complete an issue while it has unfinished sub-tasks");
+                throw Domain::WorkflowViolation("Cannot complete a ticket while it has unfinished sub-tasks");
             }
             touchResolution = true;
             resolutionValue = resolution;
@@ -1305,29 +1305,29 @@ LIMIT 1
 
         if (touchResolution) {
             Statement update(database_, R"SQL(
-UPDATE issues SET status_id = ?, resolution = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+UPDATE tickets SET status_id = ?, resolution = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 )SQL");
             update.bind(1, statusId);
             resolutionValue ? update.bind(2, *resolutionValue) : update.bindNull(2);
-            update.bind(3, issueId);
-            expectDone(database_, update, "Issue status update");
+            update.bind(3, ticketId);
+            expectDone(database_, update, "Ticket status update");
         } else {
-            Statement update(database_, "UPDATE issues SET status_id = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+            Statement update(database_, "UPDATE tickets SET status_id = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
             update.bind(1, statusId);
-            update.bind(2, issueId);
-            expectDone(database_, update, "Issue status update");
+            update.bind(2, ticketId);
+            expectDone(database_, update, "Ticket status update");
         }
 
         Statement history(database_, R"SQL(
-INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+INSERT INTO ticket_history(id, ticket_id, actor_user_id, field_name, old_value, new_value)
 VALUES (?, ?, ?, 'status', ?, ?)
 )SQL");
         history.bind(1, Common::uuidV4());
-        history.bind(2, issueId);
+        history.bind(2, ticketId);
         history.bind(3, actorId);
         history.bind(4, oldStatus);
         history.bind(5, statusKey);
-        expectDone(database_, history, "Issue history insert");
+        expectDone(database_, history, "Ticket history insert");
         executeScript("COMMIT;");
         return true;
     } catch (...) {
@@ -1348,8 +1348,8 @@ std::string historyText(const std::optional<double>& value) {
 }
 } // namespace
 
-std::optional<Domain::Issue> SqliteDatabase::editIssue(const std::string& issueKey,
-                                                       const Domain::EditIssueRequest& request,
+std::optional<Domain::Ticket> SqliteDatabase::editTicket(const std::string& ticketKey,
+                                                       const Domain::EditTicketRequest& request,
                                                        const std::string& actorUserId,
                                                        const std::optional<std::int64_t> expectedVersion) {
     std::scoped_lock lock(mutex_);
@@ -1358,20 +1358,20 @@ std::optional<Domain::Issue> SqliteDatabase::editIssue(const std::string& issueK
         Statement current(database_, R"SQL(
 SELECT i.id, i.summary, i.description, pr.priority_key, assignee.email,
        i.story_points, i.due_date, i.version, it.type_key,
-       (SELECT issue_key FROM issues WHERE id = i.parent_issue_id)
-FROM issues i
+       (SELECT ticket_key FROM tickets WHERE id = i.parent_ticket_id)
+FROM tickets i
 JOIN priorities pr ON pr.id = i.priority_id
-JOIN issue_types it ON it.id = i.issue_type_id
+JOIN ticket_types it ON it.id = i.ticket_type_id
 LEFT JOIN users assignee ON assignee.id = i.assignee_user_id
 WHERE i.deleted_at IS NULL
-  AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
+  AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
 )SQL");
-        current.bind(1, issueKey);
+        current.bind(1, ticketKey);
         if (current.step() != SQLITE_ROW) {
             executeScript("ROLLBACK;");
             return std::nullopt;
         }
-        const std::string issueId = text(current.get(), 0);
+        const std::string ticketId = text(current.get(), 0);
         const std::string oldSummary = text(current.get(), 1);
         const std::string oldDescription = text(current.get(), 2);
         const std::string oldPriorityKey = text(current.get(), 3);
@@ -1385,27 +1385,27 @@ WHERE i.deleted_at IS NULL
         const std::string oldTypeKey = text(current.get(), 8);
         const std::optional<std::string> oldParentKey = optionalText(current.get(), 9);
         if (expectedVersion && *expectedVersion != currentVersion) {
-            throw Domain::ConcurrencyConflict("Issue was modified by another user");
+            throw Domain::ConcurrencyConflict("Ticket was modified by another user");
         }
 
         // Re-typing across hierarchy levels (Epic <-> Story/Task/Bug <->
-        // Sub-task) is only safe to apply if this issue currently has no
+        // Sub-task) is only safe to apply if this ticket currently has no
         // children -- a child's own hierarchy rule ("my parent must be an
         // Epic" / "my parent must be a Story, Task, or Bug") depends on
-        // this issue's *current* level, and cascading a fix to every child
-        // is out of scope (mirrors moveIssue's existing "has children"
+        // this ticket's *current* level, and cascading a fix to every child
+        // is out of scope (mirrors moveTicket's existing "has children"
         // rejection). Same-level retyping (e.g. Task -> Bug) never affects
         // children, since they all share hierarchy level 0. This must be
         // checked transactionally, not in TicketService, since a concurrent
         // insert of a new child between the check and the update would
         // otherwise race past it.
-        if (Domain::issueTypeHierarchyLevel(oldTypeKey) != Domain::issueTypeHierarchyLevel(request.issueTypeKey)) {
-            Statement childCheck(database_, "SELECT COUNT(*) FROM issues WHERE parent_issue_id = ? AND deleted_at IS NULL");
-            childCheck.bind(1, issueId);
+        if (Domain::ticketTypeHierarchyLevel(oldTypeKey) != Domain::ticketTypeHierarchyLevel(request.ticketTypeKey)) {
+            Statement childCheck(database_, "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = ? AND deleted_at IS NULL");
+            childCheck.bind(1, ticketId);
             childCheck.step();
             if (sqlite3_column_int64(childCheck.get(), 0) > 0) {
                 throw std::invalid_argument(
-                    "Cannot change an issue's type across hierarchy levels while it has child issues");
+                    "Cannot change a ticket's type across hierarchy levels while it has child tickets");
             }
         }
 
@@ -1414,17 +1414,17 @@ WHERE i.deleted_at IS NULL
         if (request.assigneeEmail.has_value() && !request.assigneeEmail->empty()) {
             assigneeId = lookupId(database_, "users", "email", *request.assigneeEmail);
         }
-        const std::string issueTypeId = lookupId(database_, "issue_types", "type_key", request.issueTypeKey);
+        const std::string ticketTypeId = lookupId(database_, "ticket_types", "type_key", request.ticketTypeKey);
         std::optional<std::string> parentId;
-        if (request.parentIssueKey.has_value() && !request.parentIssueKey->empty()) {
-            parentId = lookupIssueId(database_, *request.parentIssueKey);
+        if (request.parentTicketKey.has_value() && !request.parentTicketKey->empty()) {
+            parentId = lookupTicketId(database_, *request.parentTicketKey);
         }
         const std::string actorId = requireUserId(database_, actorUserId);
 
         Statement update(database_, R"SQL(
-UPDATE issues
+UPDATE tickets
 SET summary = ?, description = ?, priority_id = ?, assignee_user_id = ?,
-    issue_type_id = ?, parent_issue_id = ?,
+    ticket_type_id = ?, parent_ticket_id = ?,
     story_points = ?, due_date = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 )SQL");
@@ -1432,16 +1432,16 @@ WHERE id = ?
         update.bind(2, request.description);
         update.bind(3, priorityId);
         assigneeId ? update.bind(4, *assigneeId) : update.bindNull(4);
-        update.bind(5, issueTypeId);
+        update.bind(5, ticketTypeId);
         parentId ? update.bind(6, *parentId) : update.bindNull(6);
         request.storyPoints ? update.bind(7, *request.storyPoints) : update.bindNull(7);
         request.dueDate ? update.bind(8, *request.dueDate) : update.bindNull(8);
-        update.bind(9, issueId);
-        expectDone(database_, update, "Issue edit update");
+        update.bind(9, ticketId);
+        expectDone(database_, update, "Ticket edit update");
 
-        Statement clearLabels(database_, "DELETE FROM issue_labels WHERE issue_id = ?");
-        clearLabels.bind(1, issueId);
-        expectDone(database_, clearLabels, "Clear issue labels");
+        Statement clearLabels(database_, "DELETE FROM ticket_labels WHERE ticket_id = ?");
+        clearLabels.bind(1, ticketId);
+        expectDone(database_, clearLabels, "Clear ticket labels");
         for (const auto& labelName : request.labels) {
             const std::string labelId = Common::uuidV4();
             Statement label(database_, "INSERT INTO labels(id, name) VALUES (?, ?) ON CONFLICT(name) DO NOTHING");
@@ -1449,10 +1449,10 @@ WHERE id = ?
             label.bind(2, labelName);
             expectDone(database_, label, "Label insert");
 
-            Statement link(database_, "INSERT OR IGNORE INTO issue_labels(issue_id, label_id) SELECT ?, id FROM labels WHERE name = ?");
-            link.bind(1, issueId);
+            Statement link(database_, "INSERT OR IGNORE INTO ticket_labels(ticket_id, label_id) SELECT ?, id FROM labels WHERE name = ?");
+            link.bind(1, ticketId);
             link.bind(2, labelName);
-            expectDone(database_, link, "Issue label insert");
+            expectDone(database_, link, "Ticket label insert");
         }
 
         auto recordHistory = [&](const char* field, const std::string& oldValue, const std::string& newValue) {
@@ -1460,16 +1460,16 @@ WHERE id = ?
                 return;
             }
             Statement history(database_, R"SQL(
-INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+INSERT INTO ticket_history(id, ticket_id, actor_user_id, field_name, old_value, new_value)
 VALUES (?, ?, ?, ?, ?, ?)
 )SQL");
             history.bind(1, Common::uuidV4());
-            history.bind(2, issueId);
+            history.bind(2, ticketId);
             history.bind(3, actorId);
             history.bind(4, std::string(field));
             oldValue.empty() ? history.bindNull(5) : history.bind(5, oldValue);
             newValue.empty() ? history.bindNull(6) : history.bind(6, newValue);
-            expectDone(database_, history, "Issue history insert");
+            expectDone(database_, history, "Ticket history insert");
         };
         recordHistory("summary", oldSummary, request.summary);
         recordHistory("description", oldDescription, request.description);
@@ -1477,17 +1477,17 @@ VALUES (?, ?, ?, ?, ?, ?)
         recordHistory("assignee", historyText(oldAssigneeEmail), historyText(request.assigneeEmail));
         recordHistory("story_points", historyText(oldStoryPoints), historyText(request.storyPoints));
         recordHistory("due_date", historyText(oldDueDate), historyText(request.dueDate));
-        recordHistory("issue_type", oldTypeKey, request.issueTypeKey);
-        recordHistory("parent", historyText(oldParentKey), historyText(request.parentIssueKey));
+        recordHistory("ticket_type", oldTypeKey, request.ticketTypeKey);
+        recordHistory("parent", historyText(oldParentKey), historyText(request.parentTicketKey));
 
         executeScript("COMMIT;");
-        const std::string sql = std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
+        const std::string sql = std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
         Statement read(database_, sql);
-        read.bind(1, issueId);
+        read.bind(1, ticketId);
         if (read.step() != SQLITE_ROW) {
-            throw std::runtime_error("Edited issue could not be read back");
+            throw std::runtime_error("Edited ticket could not be read back");
         }
-        return readIssue(read.get());
+        return readTicket(read.get());
     } catch (...) {
         try {
             executeScript("ROLLBACK;");
@@ -1497,66 +1497,66 @@ VALUES (?, ?, ?, ?, ?, ?)
     }
 }
 
-Domain::Issue SqliteDatabase::reorderIssue(const std::string& issueKey,
-                                           std::optional<std::string> beforeIssueKey) {
+Domain::Ticket SqliteDatabase::reorderTicket(const std::string& ticketKey,
+                                           std::optional<std::string> beforeTicketKey) {
     std::scoped_lock lock(mutex_);
     executeScript("BEGIN IMMEDIATE;");
     try {
-        const std::string issueId = lookupIssueId(database_, issueKey);
-        Statement projectRow(database_, "SELECT project_id FROM issues WHERE id = ?");
-        projectRow.bind(1, issueId);
+        const std::string ticketId = lookupTicketId(database_, ticketKey);
+        Statement projectRow(database_, "SELECT project_id FROM tickets WHERE id = ?");
+        projectRow.bind(1, ticketId);
         projectRow.step();
         const std::string projectId = text(projectRow.get(), 0);
 
-        std::optional<std::string> beforeIssueId;
-        if (beforeIssueKey.has_value() && !beforeIssueKey->empty()) {
-            const std::string resolvedBeforeId = lookupIssueId(database_, *beforeIssueKey);
-            if (resolvedBeforeId == issueId) {
-                throw std::invalid_argument("Cannot reorder an issue before itself");
+        std::optional<std::string> beforeTicketId;
+        if (beforeTicketKey.has_value() && !beforeTicketKey->empty()) {
+            const std::string resolvedBeforeId = lookupTicketId(database_, *beforeTicketKey);
+            if (resolvedBeforeId == ticketId) {
+                throw std::invalid_argument("Cannot reorder a ticket before itself");
             }
-            Statement beforeProjectRow(database_, "SELECT project_id FROM issues WHERE id = ?");
+            Statement beforeProjectRow(database_, "SELECT project_id FROM tickets WHERE id = ?");
             beforeProjectRow.bind(1, resolvedBeforeId);
             beforeProjectRow.step();
             if (text(beforeProjectRow.get(), 0) != projectId) {
-                throw std::invalid_argument("Cannot reorder relative to an issue in a different project");
+                throw std::invalid_argument("Cannot reorder relative to a ticket in a different project");
             }
-            beforeIssueId = resolvedBeforeId;
+            beforeTicketId = resolvedBeforeId;
         }
 
-        // Full renumbering pass (D31): sufficient for small per-project issue
+        // Full renumbering pass (D31): sufficient for small per-project ticket
         // counts, and simpler than a minimal-diff fractional/shift scheme.
         std::vector<std::string> orderedIds;
-        Statement listStatement(database_, "SELECT id FROM issues WHERE project_id = ? AND deleted_at IS NULL ORDER BY rank_order, issue_number");
+        Statement listStatement(database_, "SELECT id FROM tickets WHERE project_id = ? AND deleted_at IS NULL ORDER BY rank_order, ticket_number");
         listStatement.bind(1, projectId);
         for (int result = listStatement.step(); result == SQLITE_ROW; result = listStatement.step()) {
             orderedIds.push_back(text(listStatement.get(), 0));
         }
 
-        orderedIds.erase(std::remove(orderedIds.begin(), orderedIds.end(), issueId), orderedIds.end());
-        if (beforeIssueId.has_value()) {
-            const auto position = std::find(orderedIds.begin(), orderedIds.end(), *beforeIssueId);
-            orderedIds.insert(position, issueId);
+        orderedIds.erase(std::remove(orderedIds.begin(), orderedIds.end(), ticketId), orderedIds.end());
+        if (beforeTicketId.has_value()) {
+            const auto position = std::find(orderedIds.begin(), orderedIds.end(), *beforeTicketId);
+            orderedIds.insert(position, ticketId);
         } else {
-            orderedIds.push_back(issueId);
+            orderedIds.push_back(ticketId);
         }
 
         for (std::size_t index = 0; index < orderedIds.size(); ++index) {
             const std::int64_t newRank = static_cast<std::int64_t>(index) + 1;
-            Statement update(database_, "UPDATE issues SET rank_order = ? WHERE id = ? AND rank_order <> ?");
+            Statement update(database_, "UPDATE tickets SET rank_order = ? WHERE id = ? AND rank_order <> ?");
             update.bind(1, newRank);
             update.bind(2, orderedIds[index]);
             update.bind(3, newRank);
-            expectDone(database_, update, "Issue rank update");
+            expectDone(database_, update, "Ticket rank update");
         }
 
         executeScript("COMMIT;");
-        const std::string sql = std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
+        const std::string sql = std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
         Statement read(database_, sql);
-        read.bind(1, issueId);
+        read.bind(1, ticketId);
         if (read.step() != SQLITE_ROW) {
-            throw std::runtime_error("Reordered issue could not be read back");
+            throw std::runtime_error("Reordered ticket could not be read back");
         }
-        return readIssue(read.get());
+        return readTicket(read.get());
     } catch (...) {
         try {
             executeScript("ROLLBACK;");
@@ -1566,55 +1566,55 @@ Domain::Issue SqliteDatabase::reorderIssue(const std::string& issueKey,
     }
 }
 
-Domain::Issue SqliteDatabase::moveIssue(const std::string& issueKey,
+Domain::Ticket SqliteDatabase::moveTicket(const std::string& ticketKey,
                                         const std::string& targetProjectKey,
                                         const std::string& actorUserId) {
     std::scoped_lock lock(mutex_);
     executeScript("BEGIN IMMEDIATE;");
     try {
-        const std::string issueId = lookupIssueId(database_, issueKey);
+        const std::string ticketId = lookupTicketId(database_, ticketKey);
         Statement current(database_, R"SQL(
-SELECT i.project_id, p.project_key, i.issue_key, i.parent_issue_id
-FROM issues i JOIN projects p ON p.id = i.project_id
+SELECT i.project_id, p.project_key, i.ticket_key, i.parent_ticket_id
+FROM tickets i JOIN projects p ON p.id = i.project_id
 WHERE i.id = ?
 )SQL");
-        current.bind(1, issueId);
+        current.bind(1, ticketId);
         current.step();
         const std::string currentProjectId = text(current.get(), 0);
         const std::string currentProjectKey = text(current.get(), 1);
-        const std::string currentIssueKey = text(current.get(), 2);
+        const std::string currentTicketKey = text(current.get(), 2);
         const bool hasParent = sqlite3_column_type(current.get(), 3) != SQLITE_NULL;
         if (hasParent) {
-            throw std::invalid_argument("Cannot move an issue that has a parent");
+            throw std::invalid_argument("Cannot move a ticket that has a parent");
         }
 
-        Statement childCheck(database_, "SELECT COUNT(*) FROM issues WHERE parent_issue_id = ? AND deleted_at IS NULL");
-        childCheck.bind(1, issueId);
+        Statement childCheck(database_, "SELECT COUNT(*) FROM tickets WHERE parent_ticket_id = ? AND deleted_at IS NULL");
+        childCheck.bind(1, ticketId);
         childCheck.step();
         if (sqlite3_column_int64(childCheck.get(), 0) > 0) {
-            throw std::invalid_argument("Cannot move an issue that has child issues");
+            throw std::invalid_argument("Cannot move a ticket that has child tickets");
         }
 
-        Statement projectRow(database_, "SELECT id, next_issue_number FROM projects WHERE project_key = ? AND archived = 0 AND deleted_at IS NULL");
+        Statement projectRow(database_, "SELECT id, next_ticket_number FROM projects WHERE project_key = ? AND archived = 0 AND deleted_at IS NULL");
         projectRow.bind(1, targetProjectKey);
         if (projectRow.step() != SQLITE_ROW) {
             throw std::invalid_argument("Unknown project: " + targetProjectKey);
         }
         const std::string targetProjectId = text(projectRow.get(), 0);
         if (targetProjectId == currentProjectId) {
-            throw std::invalid_argument("Issue is already in project: " + targetProjectKey);
+            throw std::invalid_argument("Ticket is already in project: " + targetProjectKey);
         }
-        const std::int64_t issueNumber = sqlite3_column_int64(projectRow.get(), 1);
-        const std::string newIssueKey = targetProjectKey + "-" + std::to_string(issueNumber);
+        const std::int64_t ticketNumber = sqlite3_column_int64(projectRow.get(), 1);
+        const std::string newTicketKey = targetProjectKey + "-" + std::to_string(ticketNumber);
 
-        Statement increment(database_, "UPDATE projects SET next_issue_number = next_issue_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+        Statement increment(database_, "UPDATE projects SET next_ticket_number = next_ticket_number + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
         increment.bind(1, targetProjectId);
         expectDone(database_, increment, "Project counter update");
 
-        // Append-at-end within the target project, same as createIssue (D31).
+        // Append-at-end within the target project, same as createTicket (D31).
         std::int64_t rankOrder = 1;
         {
-            Statement maxRank(database_, "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM issues WHERE project_id = ? AND deleted_at IS NULL");
+            Statement maxRank(database_, "SELECT COALESCE(MAX(rank_order), 0) + 1 FROM tickets WHERE project_id = ? AND deleted_at IS NULL");
             maxRank.bind(1, targetProjectId);
             if (maxRank.step() == SQLITE_ROW) {
                 rankOrder = sqlite3_column_int64(maxRank.get(), 0);
@@ -1622,45 +1622,45 @@ WHERE i.id = ?
         }
 
         Statement update(database_, R"SQL(
-UPDATE issues
-SET project_id = ?, issue_number = ?, issue_key = ?, rank_order = ?, updated_at = CURRENT_TIMESTAMP
+UPDATE tickets
+SET project_id = ?, ticket_number = ?, ticket_key = ?, rank_order = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 )SQL");
         update.bind(1, targetProjectId);
-        update.bind(2, issueNumber);
-        update.bind(3, newIssueKey);
+        update.bind(2, ticketNumber);
+        update.bind(3, newTicketKey);
         update.bind(4, rankOrder);
-        update.bind(5, issueId);
-        expectDone(database_, update, "Issue move update");
+        update.bind(5, ticketId);
+        expectDone(database_, update, "Ticket move update");
 
         // The vacated key becomes a permanent alias (D38); safe because
-        // issue_key_aliases.alias_key is a PRIMARY KEY (no collision) and
-        // issue numbers/keys are never reused.
-        Statement alias(database_, "INSERT INTO issue_key_aliases(alias_key, issue_id) VALUES (?, ?)");
-        alias.bind(1, currentIssueKey);
-        alias.bind(2, issueId);
-        expectDone(database_, alias, "Issue key alias insert");
+        // ticket_key_aliases.alias_key is a PRIMARY KEY (no collision) and
+        // ticket numbers/keys are never reused.
+        Statement alias(database_, "INSERT INTO ticket_key_aliases(alias_key, ticket_id) VALUES (?, ?)");
+        alias.bind(1, currentTicketKey);
+        alias.bind(2, ticketId);
+        expectDone(database_, alias, "Ticket key alias insert");
 
         const std::string actorId = requireUserId(database_, actorUserId);
         Statement history(database_, R"SQL(
-INSERT INTO issue_history(id, issue_id, actor_user_id, field_name, old_value, new_value)
+INSERT INTO ticket_history(id, ticket_id, actor_user_id, field_name, old_value, new_value)
 VALUES (?, ?, ?, 'project', ?, ?)
 )SQL");
         history.bind(1, Common::uuidV4());
-        history.bind(2, issueId);
+        history.bind(2, ticketId);
         history.bind(3, actorId);
         history.bind(4, currentProjectKey);
         history.bind(5, targetProjectKey);
-        expectDone(database_, history, "Issue history insert");
+        expectDone(database_, history, "Ticket history insert");
 
         executeScript("COMMIT;");
-        const std::string sql = std::string(IssueSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
+        const std::string sql = std::string(TicketSelect) + " WHERE i.deleted_at IS NULL AND i.id = ?1 GROUP BY i.id";
         Statement read(database_, sql);
-        read.bind(1, issueId);
+        read.bind(1, ticketId);
         if (read.step() != SQLITE_ROW) {
-            throw std::runtime_error("Moved issue could not be read back");
+            throw std::runtime_error("Moved ticket could not be read back");
         }
-        return readIssue(read.get());
+        return readTicket(read.get());
     } catch (...) {
         try {
             executeScript("ROLLBACK;");
@@ -1670,17 +1670,17 @@ VALUES (?, ?, ?, 'project', ?, ?)
     }
 }
 
-std::vector<Domain::Comment> SqliteDatabase::listComments(const std::string& issueKey) {
+std::vector<Domain::Comment> SqliteDatabase::listComments(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
     const std::string sql = std::string(CommentSelect) + R"SQL(
-JOIN issues i ON i.id = c.issue_id
+JOIN tickets i ON i.id = c.ticket_id
 WHERE c.deleted_at IS NULL
   AND i.deleted_at IS NULL
-  AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
+  AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
 ORDER BY c.created_at
 )SQL";
     Statement statement(database_, sql);
-    statement.bind(1, issueKey);
+    statement.bind(1, ticketKey);
     std::vector<Domain::Comment> comments;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
         comments.push_back(readComment(statement.get()));
@@ -1691,16 +1691,16 @@ ORDER BY c.created_at
 Domain::Comment SqliteDatabase::addComment(const Domain::AddCommentRequest& request,
                                            const std::string& authorUserId) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, request.issueKey);
+    const std::string ticketId = lookupTicketId(database_, request.ticketKey);
     const std::string authorId = requireUserId(database_, authorUserId);
     const std::string commentId = Common::uuidV4();
 
     Statement insert(database_, R"SQL(
-INSERT INTO comments(id, issue_id, author_user_id, body, created_at, updated_at)
+INSERT INTO comments(id, ticket_id, author_user_id, body, created_at, updated_at)
 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL");
     insert.bind(1, commentId);
-    insert.bind(2, issueId);
+    insert.bind(2, ticketId);
     insert.bind(3, authorId);
     insert.bind(4, request.body);
     expectDone(database_, insert, "Comment insert");
@@ -1726,8 +1726,8 @@ std::optional<Domain::Comment> SqliteDatabase::findCommentById(const std::string
 }
 
 // `actorUserId` is unused: D81's simplified edited-flag schema has no
-// per-edit actor column (unlike issue_history) -- only `edited_at` is
-// tracked. Kept in the signature for symmetry with editIssue and in case a
+// per-edit actor column (unlike ticket_history) -- only `edited_at` is
+// tracked. Kept in the signature for symmetry with editTicket and in case a
 // future decision adds an `edited_by_user_id` column.
 std::optional<Domain::Comment> SqliteDatabase::editComment(const std::string& commentId,
                                                             const std::string& body,
@@ -1836,32 +1836,32 @@ Domain::Notification readNotification(sqlite3_stmt* statement) {
     Domain::Notification notification;
     notification.id = text(statement, 0);
     notification.type = text(statement, 1);
-    notification.issueKey = optionalText(statement, 2);
-    notification.issueSummary = optionalText(statement, 3);
+    notification.ticketKey = optionalText(statement, 2);
+    notification.ticketSummary = optionalText(statement, 3);
     notification.readAt = optionalText(statement, 4);
     notification.createdAt = text(statement, 5);
     return notification;
 }
 
 constexpr const char* NotificationSelect = R"SQL(
-SELECT n.id, n.type, i.issue_key, i.summary, n.read_at, n.created_at
+SELECT n.id, n.type, i.ticket_key, i.summary, n.read_at, n.created_at
 FROM notifications n
-LEFT JOIN issues i ON i.id = n.issue_id
+LEFT JOIN tickets i ON i.id = n.ticket_id
 )SQL";
 } // namespace
 
 Domain::Notification SqliteDatabase::createNotification(const std::string& userId,
                                                          const std::string& type,
-                                                         const std::string& issueId) {
+                                                         const std::string& ticketId) {
     std::scoped_lock lock(mutex_);
     const std::string notificationId = Common::uuidV4();
     Statement insert(database_, R"SQL(
-INSERT INTO notifications(id, user_id, type, issue_id, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+INSERT INTO notifications(id, user_id, type, ticket_id, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 )SQL");
     insert.bind(1, notificationId);
     insert.bind(2, userId);
     insert.bind(3, type);
-    insert.bind(4, issueId);
+    insert.bind(4, ticketId);
     expectDone(database_, insert, "Insert notification");
 
     Statement read(database_, std::string(NotificationSelect) + "WHERE n.id = ?");
@@ -1917,17 +1917,17 @@ bool SqliteDatabase::markAllNotificationsRead(const std::string& userId) {
     return sqlite3_changes(database_) > 0;
 }
 
-std::vector<Domain::Worklog> SqliteDatabase::listWorklogs(const std::string& issueKey) {
+std::vector<Domain::Worklog> SqliteDatabase::listWorklogs(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
     const std::string sql = std::string(WorklogSelect) + R"SQL(
-JOIN issues i ON i.id = w.issue_id
+JOIN tickets i ON i.id = w.ticket_id
 WHERE w.deleted_at IS NULL
   AND i.deleted_at IS NULL
-  AND (i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1))
+  AND (i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1))
 ORDER BY w.work_date DESC, w.created_at DESC
 )SQL";
     Statement statement(database_, sql);
-    statement.bind(1, issueKey);
+    statement.bind(1, ticketKey);
     std::vector<Domain::Worklog> worklogs;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
         worklogs.push_back(readWorklog(statement.get()));
@@ -1937,16 +1937,16 @@ ORDER BY w.work_date DESC, w.created_at DESC
 
 Domain::Worklog SqliteDatabase::addWorklog(const Domain::AddWorklogRequest& request, const std::string& authorUserId) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, request.issueKey);
+    const std::string ticketId = lookupTicketId(database_, request.ticketKey);
     const std::string authorId = requireUserId(database_, authorUserId);
     const std::string worklogId = Common::uuidV4();
 
     Statement insert(database_, R"SQL(
-INSERT INTO worklogs(id, issue_id, author_user_id, work_date, time_spent_seconds, comment, created_at, updated_at)
+INSERT INTO worklogs(id, ticket_id, author_user_id, work_date, time_spent_seconds, comment, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 )SQL");
     insert.bind(1, worklogId);
-    insert.bind(2, issueId);
+    insert.bind(2, ticketId);
     insert.bind(3, authorId);
     insert.bind(4, request.workDate);
     insert.bind(5, request.timeSpentSeconds);
@@ -2072,21 +2072,21 @@ SELECT COUNT(i.id),
        SUM(CASE WHEN s.category = 'todo' THEN 1 ELSE 0 END),
        SUM(CASE WHEN s.category = 'in_progress' THEN 1 ELSE 0 END),
        SUM(CASE WHEN s.category = 'done' THEN 1 ELSE 0 END)
-FROM issues i JOIN issue_statuses s ON s.id = i.status_id
+FROM tickets i JOIN ticket_statuses s ON s.id = i.status_id
 WHERE i.deleted_at IS NULL
 )SQL");
         if (statement.step() == SQLITE_ROW) {
-            stats.totalIssues = sqlite3_column_int64(statement.get(), 0);
-            stats.todoIssues = sqlite3_column_int64(statement.get(), 1);
-            stats.inProgressIssues = sqlite3_column_int64(statement.get(), 2);
-            stats.doneIssues = sqlite3_column_int64(statement.get(), 3);
+            stats.totalTickets = sqlite3_column_int64(statement.get(), 0);
+            stats.todoTickets = sqlite3_column_int64(statement.get(), 1);
+            stats.inProgressTickets = sqlite3_column_int64(statement.get(), 2);
+            stats.doneTickets = sqlite3_column_int64(statement.get(), 3);
         }
     }
-    auto recent = listIssues({});
+    auto recent = listTickets({});
     if (recent.size() > 8) {
         recent.resize(8);
     }
-    stats.recentIssues = std::move(recent);
+    stats.recentTickets = std::move(recent);
     return stats;
 }
 
@@ -2104,7 +2104,7 @@ bool SqliteDatabase::setBoardColumnWipLimit(const std::string& statusKey, const 
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(
 UPDATE board_columns SET wip_limit = ?1
-WHERE status_id = (SELECT id FROM issue_statuses WHERE status_key = ?2)
+WHERE status_id = (SELECT id FROM ticket_statuses WHERE status_key = ?2)
 )SQL");
     wipLimit ? statement.bind(1, static_cast<std::int64_t>(*wipLimit)) : statement.bindNull(1);
     statement.bind(2, statusKey);
@@ -2112,15 +2112,15 @@ WHERE status_id = (SELECT id FROM issue_statuses WHERE status_key = ?2)
     return sqlite3_changes(database_) > 0;
 }
 
-Domain::IssueLink SqliteDatabase::createIssueLink(const std::string& sourceIssueKey,
-                                                  const std::string& targetIssueKey,
+Domain::TicketLink SqliteDatabase::createTicketLink(const std::string& sourceTicketKey,
+                                                  const std::string& targetTicketKey,
                                                   const std::string& linkType) {
     std::scoped_lock lock(mutex_);
-    const std::string sourceId = lookupIssueId(database_, sourceIssueKey);
-    const std::string targetId = lookupIssueId(database_, targetIssueKey);
+    const std::string sourceId = lookupTicketId(database_, sourceTicketKey);
+    const std::string targetId = lookupTicketId(database_, targetTicketKey);
 
     Statement duplicate(database_,
-        "SELECT 1 FROM issue_links WHERE source_issue_id = ? AND target_issue_id = ? AND link_type = ?");
+        "SELECT 1 FROM ticket_links WHERE source_ticket_id = ? AND target_ticket_id = ? AND link_type = ?");
     duplicate.bind(1, sourceId);
     duplicate.bind(2, targetId);
     duplicate.bind(3, linkType);
@@ -2130,63 +2130,63 @@ Domain::IssueLink SqliteDatabase::createIssueLink(const std::string& sourceIssue
 
     const std::string linkId = Common::uuidV4();
     Statement insert(database_, R"SQL(
-INSERT INTO issue_links(id, source_issue_id, target_issue_id, link_type) VALUES (?, ?, ?, ?)
+INSERT INTO ticket_links(id, source_ticket_id, target_ticket_id, link_type) VALUES (?, ?, ?, ?)
 )SQL");
     insert.bind(1, linkId);
     insert.bind(2, sourceId);
     insert.bind(3, targetId);
     insert.bind(4, linkType);
-    expectDone(database_, insert, "Insert issue link");
+    expectDone(database_, insert, "Insert ticket link");
 
-    Domain::IssueLink link;
+    Domain::TicketLink link;
     link.id = linkId;
     link.linkType = linkType;
     link.outward = true;
 
-    Statement targetRow(database_, "SELECT issue_key, summary FROM issues WHERE id = ?");
+    Statement targetRow(database_, "SELECT ticket_key, summary FROM tickets WHERE id = ?");
     targetRow.bind(1, targetId);
     if (targetRow.step() == SQLITE_ROW) {
-        link.otherIssueKey = text(targetRow.get(), 0);
-        link.otherIssueSummary = text(targetRow.get(), 1);
+        link.otherTicketKey = text(targetRow.get(), 0);
+        link.otherTicketSummary = text(targetRow.get(), 1);
     }
     return link;
 }
 
-std::vector<Domain::IssueLink> SqliteDatabase::listIssueLinks(const std::string& issueKey) {
+std::vector<Domain::TicketLink> SqliteDatabase::listTicketLinks(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
 
     Statement statement(database_, R"SQL(
-SELECT l.id, l.link_type, 1 AS outward, tgt.issue_key, tgt.summary
-FROM issue_links l JOIN issues tgt ON tgt.id = l.target_issue_id
-WHERE l.source_issue_id = ?1 AND tgt.deleted_at IS NULL
+SELECT l.id, l.link_type, 1 AS outward, tgt.ticket_key, tgt.summary
+FROM ticket_links l JOIN tickets tgt ON tgt.id = l.target_ticket_id
+WHERE l.source_ticket_id = ?1 AND tgt.deleted_at IS NULL
 UNION ALL
-SELECT l.id, l.link_type, 0 AS outward, src.issue_key, src.summary
-FROM issue_links l JOIN issues src ON src.id = l.source_issue_id
-WHERE l.target_issue_id = ?1 AND src.deleted_at IS NULL
+SELECT l.id, l.link_type, 0 AS outward, src.ticket_key, src.summary
+FROM ticket_links l JOIN tickets src ON src.id = l.source_ticket_id
+WHERE l.target_ticket_id = ?1 AND src.deleted_at IS NULL
 )SQL");
-    statement.bind(1, issueId);
-    std::vector<Domain::IssueLink> links;
+    statement.bind(1, ticketId);
+    std::vector<Domain::TicketLink> links;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
-        Domain::IssueLink link;
+        Domain::TicketLink link;
         link.id = text(statement.get(), 0);
         link.linkType = text(statement.get(), 1);
         link.outward = sqlite3_column_int(statement.get(), 2) != 0;
-        link.otherIssueKey = text(statement.get(), 3);
-        link.otherIssueSummary = text(statement.get(), 4);
+        link.otherTicketKey = text(statement.get(), 3);
+        link.otherTicketSummary = text(statement.get(), 4);
         links.push_back(std::move(link));
     }
     return links;
 }
 
-std::optional<Domain::IssueLinkDetail> SqliteDatabase::findIssueLinkById(const std::string& linkId) {
+std::optional<Domain::TicketLinkDetail> SqliteDatabase::findTicketLinkById(const std::string& linkId) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(
-SELECT l.id, l.link_type, src.issue_key, srcProj.project_key, tgt.issue_key, tgtProj.project_key
-FROM issue_links l
-JOIN issues src ON src.id = l.source_issue_id
+SELECT l.id, l.link_type, src.ticket_key, srcProj.project_key, tgt.ticket_key, tgtProj.project_key
+FROM ticket_links l
+JOIN tickets src ON src.id = l.source_ticket_id
 JOIN projects srcProj ON srcProj.id = src.project_id
-JOIN issues tgt ON tgt.id = l.target_issue_id
+JOIN tickets tgt ON tgt.id = l.target_ticket_id
 JOIN projects tgtProj ON tgtProj.id = tgt.project_id
 WHERE l.id = ?
 )SQL");
@@ -2194,49 +2194,49 @@ WHERE l.id = ?
     if (statement.step() != SQLITE_ROW) {
         return std::nullopt;
     }
-    Domain::IssueLinkDetail detail;
+    Domain::TicketLinkDetail detail;
     detail.id = text(statement.get(), 0);
     detail.linkType = text(statement.get(), 1);
-    detail.sourceIssueKey = text(statement.get(), 2);
+    detail.sourceTicketKey = text(statement.get(), 2);
     detail.sourceProjectKey = text(statement.get(), 3);
-    detail.targetIssueKey = text(statement.get(), 4);
+    detail.targetTicketKey = text(statement.get(), 4);
     detail.targetProjectKey = text(statement.get(), 5);
     return detail;
 }
 
-bool SqliteDatabase::deleteIssueLink(const std::string& linkId) {
+bool SqliteDatabase::deleteTicketLink(const std::string& linkId) {
     std::scoped_lock lock(mutex_);
-    Statement statement(database_, "DELETE FROM issue_links WHERE id = ?");
+    Statement statement(database_, "DELETE FROM ticket_links WHERE id = ?");
     statement.bind(1, linkId);
     statement.step();
     return sqlite3_changes(database_) > 0;
 }
 
 namespace {
-// Shared by the two structurally-identical watch/vote tables (issue_watchers,
-// issue_votes: both (issue_id, user_id) composite-PK many-to-many tables with
+// Shared by the two structurally-identical watch/vote tables (ticket_watchers,
+// ticket_votes: both (ticket_id, user_id) composite-PK many-to-many tables with
 // no other columns worth reading back). `table` is always a fixed internal
 // literal, never caller input, matching the existing `lookupId` pattern.
-bool insertMembership(sqlite3* database, const char* table, const std::string& issueId, const std::string& userId) {
-    Statement statement(database, std::string("INSERT OR IGNORE INTO ") + table + "(issue_id, user_id) VALUES (?, ?)");
-    statement.bind(1, issueId);
+bool insertMembership(sqlite3* database, const char* table, const std::string& ticketId, const std::string& userId) {
+    Statement statement(database, std::string("INSERT OR IGNORE INTO ") + table + "(ticket_id, user_id) VALUES (?, ?)");
+    statement.bind(1, ticketId);
     statement.bind(2, userId);
     statement.step();
     return sqlite3_changes(database) > 0;
 }
 
-bool deleteMembership(sqlite3* database, const char* table, const std::string& issueId, const std::string& userId) {
-    Statement statement(database, std::string("DELETE FROM ") + table + " WHERE issue_id = ? AND user_id = ?");
-    statement.bind(1, issueId);
+bool deleteMembership(sqlite3* database, const char* table, const std::string& ticketId, const std::string& userId) {
+    Statement statement(database, std::string("DELETE FROM ") + table + " WHERE ticket_id = ? AND user_id = ?");
+    statement.bind(1, ticketId);
     statement.bind(2, userId);
     statement.step();
     return sqlite3_changes(database) > 0;
 }
 
-std::vector<Domain::UserSummary> listMembers(sqlite3* database, const char* table, const std::string& issueId) {
+std::vector<Domain::UserSummary> listMembers(sqlite3* database, const char* table, const std::string& ticketId) {
     Statement statement(database, std::string("SELECT u.id, u.display_name, u.email FROM ") + table
-        + " t JOIN users u ON u.id = t.user_id WHERE t.issue_id = ? ORDER BY u.display_name");
-    statement.bind(1, issueId);
+        + " t JOIN users u ON u.id = t.user_id WHERE t.ticket_id = ? ORDER BY u.display_name");
+    statement.bind(1, ticketId);
     std::vector<Domain::UserSummary> users;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
         users.push_back(readUserSummary(statement.get(), 0));
@@ -2245,31 +2245,31 @@ std::vector<Domain::UserSummary> listMembers(sqlite3* database, const char* tabl
 }
 } // namespace
 
-bool SqliteDatabase::watchIssue(const std::string& issueKey, const std::string& userId) {
+bool SqliteDatabase::watchTicket(const std::string& ticketKey, const std::string& userId) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
     const std::string resolvedUserId = requireUserId(database_, userId);
-    return insertMembership(database_, "issue_watchers", issueId, resolvedUserId);
+    return insertMembership(database_, "ticket_watchers", ticketId, resolvedUserId);
 }
 
-bool SqliteDatabase::unwatchIssue(const std::string& issueKey, const std::string& userId) {
+bool SqliteDatabase::unwatchTicket(const std::string& ticketKey, const std::string& userId) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
-    return deleteMembership(database_, "issue_watchers", issueId, userId);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
+    return deleteMembership(database_, "ticket_watchers", ticketId, userId);
 }
 
-std::vector<Domain::UserSummary> SqliteDatabase::listWatchers(const std::string& issueKey) {
+std::vector<Domain::UserSummary> SqliteDatabase::listWatchers(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
-    return listMembers(database_, "issue_watchers", issueId);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
+    return listMembers(database_, "ticket_watchers", ticketId);
 }
 
-std::vector<Domain::Issue> SqliteDatabase::listWatchedIssues(const std::string& userId, int limit) {
+std::vector<Domain::Ticket> SqliteDatabase::listWatchedTickets(const std::string& userId, int limit) {
     std::scoped_lock lock(mutex_);
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NULL
   AND p.deleted_at IS NULL
-  AND EXISTS (SELECT 1 FROM issue_watchers w WHERE w.issue_id = i.id AND w.user_id = ?1)
+  AND EXISTS (SELECT 1 FROM ticket_watchers w WHERE w.ticket_id = i.id AND w.user_id = ?1)
 GROUP BY i.id
 ORDER BY i.updated_at DESC
 LIMIT ?2
@@ -2277,99 +2277,99 @@ LIMIT ?2
     Statement statement(database_, sql);
     statement.bind(1, userId);
     statement.bind(2, static_cast<std::int64_t>(limit));
-    std::vector<Domain::Issue> issues;
+    std::vector<Domain::Ticket> tickets;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
-        issues.push_back(readIssue(statement.get()));
+        tickets.push_back(readTicket(statement.get()));
     }
-    return issues;
+    return tickets;
 }
 
-bool SqliteDatabase::voteIssue(const std::string& issueKey, const std::string& userId) {
+bool SqliteDatabase::voteTicket(const std::string& ticketKey, const std::string& userId) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
     const std::string resolvedUserId = requireUserId(database_, userId);
-    return insertMembership(database_, "issue_votes", issueId, resolvedUserId);
+    return insertMembership(database_, "ticket_votes", ticketId, resolvedUserId);
 }
 
-bool SqliteDatabase::unvoteIssue(const std::string& issueKey, const std::string& userId) {
+bool SqliteDatabase::unvoteTicket(const std::string& ticketKey, const std::string& userId) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
-    return deleteMembership(database_, "issue_votes", issueId, userId);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
+    return deleteMembership(database_, "ticket_votes", ticketId, userId);
 }
 
-std::vector<Domain::UserSummary> SqliteDatabase::listVoters(const std::string& issueKey) {
+std::vector<Domain::UserSummary> SqliteDatabase::listVoters(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
-    return listMembers(database_, "issue_votes", issueId);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
+    return listMembers(database_, "ticket_votes", ticketId);
 }
 
-bool SqliteDatabase::softDeleteIssue(const std::string& issueKey, const std::string& actorUserId) {
+bool SqliteDatabase::softDeleteTicket(const std::string& ticketKey, const std::string& actorUserId) {
     std::scoped_lock lock(mutex_);
     const std::string actorId = requireUserId(database_, actorUserId);
     Statement statement(database_, R"SQL(
-UPDATE issues SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = ?, updated_at = CURRENT_TIMESTAMP
-WHERE (issue_key = ?2 OR id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?2)) AND deleted_at IS NULL
+UPDATE tickets SET deleted_at = CURRENT_TIMESTAMP, deleted_by_user_id = ?, updated_at = CURRENT_TIMESTAMP
+WHERE (ticket_key = ?2 OR id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?2)) AND deleted_at IS NULL
 )SQL");
     statement.bind(1, actorId);
-    statement.bind(2, issueKey);
+    statement.bind(2, ticketKey);
     statement.step();
     return sqlite3_changes(database_) > 0;
 }
 
-bool SqliteDatabase::restoreIssue(const std::string& issueKey) {
+bool SqliteDatabase::restoreTicket(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(
-UPDATE issues SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
-WHERE issue_key = ? AND deleted_at IS NOT NULL
+UPDATE tickets SET deleted_at = NULL, deleted_by_user_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE ticket_key = ? AND deleted_at IS NOT NULL
 )SQL");
-    statement.bind(1, issueKey);
+    statement.bind(1, ticketKey);
     statement.step();
     return sqlite3_changes(database_) > 0;
 }
 
-std::vector<Domain::Issue> SqliteDatabase::listDeletedIssues() {
+std::vector<Domain::Ticket> SqliteDatabase::listDeletedTickets() {
     std::scoped_lock lock(mutex_);
     // Fixed 90-day retention, checked on demand -- there is no background
-    // job to purge proactively (D89-analog for issues, D51).
-    executeScript("DELETE FROM issues WHERE deleted_at IS NOT NULL AND deleted_at <= datetime('now', '-90 days');");
+    // job to purge proactively (D89-analog for tickets, D51).
+    executeScript("DELETE FROM tickets WHERE deleted_at IS NOT NULL AND deleted_at <= datetime('now', '-90 days');");
 
-    const std::string sql = std::string(IssueSelect) + R"SQL(
+    const std::string sql = std::string(TicketSelect) + R"SQL(
 WHERE i.deleted_at IS NOT NULL
 GROUP BY i.id
 ORDER BY i.deleted_at DESC
 )SQL";
     Statement statement(database_, sql);
-    std::vector<Domain::Issue> issues;
+    std::vector<Domain::Ticket> tickets;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
-        issues.push_back(readIssue(statement.get()));
+        tickets.push_back(readTicket(statement.get()));
     }
-    return issues;
+    return tickets;
 }
 
-bool SqliteDatabase::permanentlyDeleteIssue(const std::string& issueKey) {
+bool SqliteDatabase::permanentlyDeleteTicket(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
-    Statement statement(database_, "DELETE FROM issues WHERE issue_key = ? AND deleted_at IS NOT NULL");
-    statement.bind(1, issueKey);
+    Statement statement(database_, "DELETE FROM tickets WHERE ticket_key = ? AND deleted_at IS NOT NULL");
+    statement.bind(1, ticketKey);
     statement.step();
     return sqlite3_changes(database_) > 0;
 }
 
 Domain::Attachment SqliteDatabase::createAttachment(const std::string& id,
-                                                    const std::string& issueKey,
+                                                    const std::string& ticketKey,
                                                     const std::string& uploaderUserId,
                                                     const std::string& fileName,
                                                     const std::string& contentType,
                                                     const std::int64_t byteSize,
                                                     const std::string& sha256) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
     const std::string uploaderId = requireUserId(database_, uploaderUserId);
     Statement insert(database_, R"SQL(
-INSERT INTO attachments(id, issue_id, uploader_user_id, file_name, content_type, byte_size, storage_key, sha256)
+INSERT INTO attachments(id, ticket_id, uploader_user_id, file_name, content_type, byte_size, storage_key, sha256)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?1, ?7)
 )SQL");
     insert.bind(1, id);
-    insert.bind(2, issueId);
+    insert.bind(2, ticketId);
     insert.bind(3, uploaderId);
     insert.bind(4, fileName);
     insert.bind(5, contentType);
@@ -2385,11 +2385,11 @@ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?1, ?7)
     return readAttachment(read.get());
 }
 
-std::vector<Domain::Attachment> SqliteDatabase::listAttachments(const std::string& issueKey) {
+std::vector<Domain::Attachment> SqliteDatabase::listAttachments(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
-    const std::string issueId = lookupIssueId(database_, issueKey);
-    Statement statement(database_, std::string(AttachmentSelect) + "WHERE a.issue_id = ?1 AND a.deleted_at IS NULL ORDER BY a.created_at");
-    statement.bind(1, issueId);
+    const std::string ticketId = lookupTicketId(database_, ticketKey);
+    Statement statement(database_, std::string(AttachmentSelect) + "WHERE a.ticket_id = ?1 AND a.deleted_at IS NULL ORDER BY a.created_at");
+    statement.bind(1, ticketId);
     std::vector<Domain::Attachment> attachments;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
         attachments.push_back(readAttachment(statement.get()));
@@ -2449,16 +2449,16 @@ bool SqliteDatabase::permanentlyDeleteAttachment(const std::string& attachmentId
     return sqlite3_changes(database_) > 0;
 }
 
-std::vector<std::string> SqliteDatabase::listAttachmentStorageKeysForIssue(const std::string& issueKey) {
+std::vector<std::string> SqliteDatabase::listAttachmentStorageKeysForTicket(const std::string& ticketKey) {
     std::scoped_lock lock(mutex_);
-    // Deliberately does not use lookupIssueId (which excludes soft-deleted
-    // issues): this is called right before a permanent delete, at which
-    // point the issue is expected to already be soft-deleted.
+    // Deliberately does not use lookupTicketId (which excludes soft-deleted
+    // tickets): this is called right before a permanent delete, at which
+    // point the ticket is expected to already be soft-deleted.
     Statement statement(database_, R"SQL(
-SELECT a.storage_key FROM attachments a JOIN issues i ON i.id = a.issue_id
-WHERE i.issue_key = ?1 OR i.id = (SELECT issue_id FROM issue_key_aliases WHERE alias_key = ?1)
+SELECT a.storage_key FROM attachments a JOIN tickets i ON i.id = a.ticket_id
+WHERE i.ticket_key = ?1 OR i.id = (SELECT ticket_id FROM ticket_key_aliases WHERE alias_key = ?1)
 )SQL");
-    statement.bind(1, issueKey);
+    statement.bind(1, ticketKey);
     std::vector<std::string> keys;
     for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
         keys.push_back(text(statement.get(), 0));
@@ -2470,7 +2470,7 @@ std::vector<std::string> SqliteDatabase::listAttachmentStorageKeysForProject(con
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(
 SELECT a.storage_key FROM attachments a
-JOIN issues i ON i.id = a.issue_id
+JOIN tickets i ON i.id = a.ticket_id
 JOIN projects p ON p.id = i.project_id
 WHERE p.project_key = ?
 )SQL");

@@ -28,12 +28,12 @@ std::string upper(const std::string& value) {
     return result;
 }
 
-// Shared between validateCreateIssue and validateEditIssue: the standard
+// Shared between validateCreateTicket and validateEditTicket: the standard
 // content fields both requests carry (summary/description/priorityKey/
-// storyPoints/labels). projectKey/issueTypeKey (create-only) and the
-// hierarchy/parentIssueKey rules (checked against database state, not pure
+// storyPoints/labels). projectKey/ticketTypeKey (create-only) and the
+// hierarchy/parentTicketKey rules (checked against database state, not pure
 // input validation) are each caller's own responsibility.
-void appendIssueContentErrors(std::vector<std::string>& errors,
+void appendTicketContentErrors(std::vector<std::string>& errors,
                               const std::string& summary,
                               const std::string& description,
                               const std::string& priorityKey,
@@ -54,7 +54,7 @@ void appendIssueContentErrors(std::vector<std::string>& errors,
         errors.emplace_back("storyPoints must be between 0 and 10000");
     }
     if (labels.size() > 50) {
-        errors.emplace_back("an issue may have at most 50 labels");
+        errors.emplace_back("a ticket may have at most 50 labels");
     }
     if (std::any_of(labels.begin(), labels.end(), [](const std::string& label) {
             const auto normalized = normalizeLabel(label);
@@ -70,7 +70,7 @@ std::string normalizeProjectKey(const std::string& value) {
     return upper(trim(value));
 }
 
-std::string normalizeIssueKey(const std::string& value) {
+std::string normalizeTicketKey(const std::string& value) {
     return upper(trim(value));
 }
 
@@ -87,33 +87,33 @@ bool isValidProjectKey(const std::string& value) {
     return std::regex_match(normalizeProjectKey(value), pattern);
 }
 
-bool isValidIssueKey(const std::string& value) {
+bool isValidTicketKey(const std::string& value) {
     static const std::regex pattern("^[A-Z][A-Z0-9]{1,11}-[1-9][0-9]*$");
-    return std::regex_match(normalizeIssueKey(value), pattern);
+    return std::regex_match(normalizeTicketKey(value), pattern);
 }
 
-std::vector<std::string> validateCreateIssue(const CreateIssueRequest& request) {
+std::vector<std::string> validateCreateTicket(const CreateTicketRequest& request) {
     std::vector<std::string> errors;
     const auto normalizedKey = normalizeProjectKey(request.projectKey);
 
     if (!isValidProjectKey(normalizedKey)) {
         errors.emplace_back("projectKey must contain 2-12 uppercase letters or digits and start with a letter");
     }
-    if (request.issueTypeKey.empty()) {
-        errors.emplace_back("issueTypeKey is required");
+    if (request.ticketTypeKey.empty()) {
+        errors.emplace_back("ticketTypeKey is required");
     }
-    appendIssueContentErrors(errors, request.summary, request.description, request.priorityKey,
+    appendTicketContentErrors(errors, request.summary, request.description, request.priorityKey,
                              request.storyPoints, request.labels);
 
     return errors;
 }
 
-std::vector<std::string> validateEditIssue(const EditIssueRequest& request) {
+std::vector<std::string> validateEditTicket(const EditTicketRequest& request) {
     std::vector<std::string> errors;
-    if (request.issueTypeKey.empty()) {
-        errors.emplace_back("issueTypeKey is required");
+    if (request.ticketTypeKey.empty()) {
+        errors.emplace_back("ticketTypeKey is required");
     }
-    appendIssueContentErrors(errors, request.summary, request.description, request.priorityKey,
+    appendTicketContentErrors(errors, request.summary, request.description, request.priorityKey,
                              request.storyPoints, request.labels);
     return errors;
 }
@@ -283,8 +283,8 @@ std::vector<std::string> validateAttachmentUpload(const std::string& fileName,
     if (byteSize > AttachmentMaxBytes) {
         errors.emplace_back("File exceeds the maximum attachment size of 25MB");
     }
-    if (existingAttachmentCount >= AttachmentMaxPerIssue) {
-        errors.emplace_back("This issue already has the maximum of 20 attachments");
+    if (existingAttachmentCount >= AttachmentMaxPerTicket) {
+        errors.emplace_back("This ticket already has the maximum of 20 attachments");
     }
     const auto extension = lowerExtension(fileName);
     if (!extension.empty()) {

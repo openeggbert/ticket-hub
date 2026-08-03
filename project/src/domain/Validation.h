@@ -9,12 +9,12 @@
 namespace TicketHub::Domain {
 
 std::string normalizeProjectKey(const std::string& value);
-std::string normalizeIssueKey(const std::string& value);
+std::string normalizeTicketKey(const std::string& value);
 std::string normalizeLabel(const std::string& value);
 bool isValidProjectKey(const std::string& value);
-bool isValidIssueKey(const std::string& value);
-std::vector<std::string> validateCreateIssue(const CreateIssueRequest& request);
-std::vector<std::string> validateEditIssue(const EditIssueRequest& request);
+bool isValidTicketKey(const std::string& value);
+std::vector<std::string> validateCreateTicket(const CreateTicketRequest& request);
+std::vector<std::string> validateEditTicket(const EditTicketRequest& request);
 
 std::string normalizeEmail(const std::string& value);
 bool isValidEmail(const std::string& value);
@@ -36,7 +36,7 @@ std::vector<std::string> validateEditWorklog(const EditWorklogRequest& request);
 
 // Fixed attachment limits (D98): no admin configuration, no quotas.
 constexpr std::int64_t AttachmentMaxBytes = 25 * 1024 * 1024;
-constexpr int AttachmentMaxPerIssue = 20;
+constexpr int AttachmentMaxPerTicket = 20;
 std::vector<std::string> validateAttachmentUpload(const std::string& fileName,
                                                   std::int64_t byteSize,
                                                   int existingAttachmentCount);

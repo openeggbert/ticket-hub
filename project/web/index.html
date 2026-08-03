@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Ticket Hub — a lightweight Jira-like issue tracker written in C++ with Crow.">
+  <meta name="description" content="Ticket Hub — a lightweight Jira-like ticket tracker written in C++ with Crow.">
   <title>Ticket Hub</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
@@ -37,14 +37,14 @@
         <div class="brand-mark">TH</div>
         <div>
           <strong>Ticket Hub</strong>
-          <span>Issue tracking</span>
+          <span>Ticket tracking</span>
         </div>
       </div>
 
       <nav class="main-nav" aria-label="Main navigation">
         <button class="nav-item active" data-view="dashboard"><span>⌂</span> Dashboard</button>
         <button class="nav-item" data-view="board"><span>▦</span> Board</button>
-        <button class="nav-item" data-view="issues"><span>☷</span> Issues</button>
+        <button class="nav-item" data-view="tickets"><span>☷</span> Tickets</button>
         <button class="nav-item" data-view="projects"><span>◆</span> Projects</button>
         <button class="nav-item" data-view="account"><span>🔑</span> Account</button>
         <button class="nav-item hidden" id="nav-audit" data-view="audit"><span>🛡</span> Audit log</button>
@@ -71,7 +71,7 @@
         <button class="icon-button mobile-only" id="menu-button" aria-label="Open navigation">☰</button>
         <div class="global-search">
           <span>⌕</span>
-          <input id="global-search" type="search" placeholder="Search issues by key or summary" autocomplete="off">
+          <input id="global-search" type="search" placeholder="Search tickets by key or summary" autocomplete="off">
         </div>
         <div class="topbar-actions">
           <span id="backend-pill" class="backend-pill">connecting…</span>
@@ -101,7 +101,7 @@
       <div class="modal-header">
         <div>
           <span class="eyebrow">New work item</span>
-          <h2 id="create-title">Create issue</h2>
+          <h2 id="create-title">Create ticket</h2>
         </div>
         <button type="button" class="icon-button" data-close-modal aria-label="Close">×</button>
       </div>
@@ -111,8 +111,8 @@
           <select name="projectKey" id="create-project" required></select>
         </label>
         <label>
-          Issue type
-          <select name="issueTypeKey" id="create-issue-type">
+          Ticket type
+          <select name="ticketTypeKey" id="create-ticket-type">
             <option value="task">Task</option>
             <option value="story">Story</option>
             <option value="bug">Bug</option>
@@ -130,7 +130,7 @@
         </label>
         <label class="wide" id="create-parent-label">
           <span id="create-parent-label-text">Epic</span>
-          <select name="parentIssueKey" id="create-parent"><option value="">None</option></select>
+          <select name="parentTicketKey" id="create-parent"><option value="">None</option></select>
         </label>
         <label>
           Priority
@@ -167,7 +167,7 @@
       <div id="create-error" class="form-error hidden"></div>
       <div class="modal-footer">
         <button type="button" class="secondary-button" data-close-modal>Cancel</button>
-        <button type="submit" class="primary-button">Create issue</button>
+        <button type="submit" class="primary-button">Create ticket</button>
       </div>
     </form>
   </div>
@@ -203,8 +203,8 @@
     </form>
   </div>
 
-  <div class="drawer-backdrop hidden" id="issue-drawer-backdrop"></div>
-  <aside class="issue-drawer hidden" id="issue-drawer" aria-label="Issue details"></aside>
+  <div class="drawer-backdrop hidden" id="ticket-drawer-backdrop"></div>
+  <aside class="ticket-drawer hidden" id="ticket-drawer" aria-label="Ticket details"></aside>
 
   <div id="toast" class="toast hidden" role="status"></div>
   <script src="/app.js" defer></script>

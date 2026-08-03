@@ -61,8 +61,8 @@ int scalarInt(const std::filesystem::path& databasePath, const std::string& sql)
 
 int main() {
     namespace fs = std::filesystem;
-    using TicketHub::Domain::CreateIssueRequest;
-    using TicketHub::Domain::IssueFilter;
+    using TicketHub::Domain::CreateTicketRequest;
+    using TicketHub::Domain::TicketFilter;
     using TicketHub::Infrastructure::Database::SqliteDatabase;
 
     // Fixed seed identity from migrations/sqlite/002_seed_demo.sql.
@@ -88,56 +88,56 @@ int main() {
         const auto projects = database.listProjects();
         require(projects.size() == 2, "demo seed creates two projects and is idempotent");
 
-        const auto initialIssues = database.listIssues(IssueFilter{});
-        require(initialIssues.size() == 8, "demo seed creates eight issues");
+        const auto initialTickets = database.listTickets(TicketFilter{});
+        require(initialTickets.size() == 8, "demo seed creates eight tickets");
 
-        CreateIssueRequest request;
+        CreateTicketRequest request;
         request.projectKey = "TH";
         request.summary = "Verify portable database architecture";
         request.description = "Created by the SQLite integration test.";
-        request.issueTypeKey = "task";
+        request.ticketTypeKey = "task";
         request.priorityKey = "high";
         request.assigneeEmail = "alex@ticket-hub.local";
         request.labels = {"database", "integration"};
         request.storyPoints = 3.0;
 
-        const auto created = database.createIssue(request, demoUserId);
-        require(created.key == "TH-7", "project-local issue counter creates TH-7");
-        require(created.labels.size() == 2, "created issue has both labels");
+        const auto created = database.createTicket(request, demoUserId);
+        require(created.key == "TH-7", "project-local ticket counter creates TH-7");
+        require(created.labels.size() == 2, "created ticket has both labels");
 
-        const auto found = database.findIssueByKey(created.key);
-        require(found.has_value() && found->summary == request.summary, "created issue can be read back");
+        const auto found = database.findTicketByKey(created.key);
+        require(found.has_value() && found->summary == request.summary, "created ticket can be read back");
 
         executeSql(databasePath,
-                   "INSERT INTO issue_key_aliases(alias_key, issue_id) VALUES ('LEGACY-7', '" + created.id + "')");
-        const auto viaAlias = database.findIssueByKey("LEGACY-7");
-        require(viaAlias.has_value() && viaAlias->key == created.key, "permanent issue-key alias resolves to current key");
+                   "INSERT INTO ticket_key_aliases(alias_key, ticket_id) VALUES ('LEGACY-7', '" + created.id + "')");
+        const auto viaAlias = database.findTicketByKey("LEGACY-7");
+        require(viaAlias.has_value() && viaAlias->key == created.key, "permanent ticket-key alias resolves to current key");
 
-        require(database.changeIssueStatus(created.key, "done", demoUserId, std::string("fixed"), created.version),
-               "issue status can be changed");
-        const auto done = database.findIssueByKey(created.key);
+        require(database.changeTicketStatus(created.key, "done", demoUserId, std::string("fixed"), created.version),
+               "ticket status can be changed");
+        const auto done = database.findTicketByKey(created.key);
         require(done.has_value() && done->status.key == "done", "changed status is persisted");
         require(done->version == created.version + 1, "status change increments optimistic-lock version");
         require(done->resolution.has_value() && *done->resolution == "fixed",
                "resolution is stored on the transition to a Done-category status");
         bool conflictDetected = false;
         try {
-            database.changeIssueStatus(created.key, "review", demoUserId, std::nullopt, created.version);
+            database.changeTicketStatus(created.key, "review", demoUserId, std::nullopt, created.version);
         } catch (const TicketHub::Domain::ConcurrencyConflict&) {
             conflictDetected = true;
         }
         require(conflictDetected, "stale status update is rejected");
 
-        TicketHub::Domain::EditIssueRequest edit;
+        TicketHub::Domain::EditTicketRequest edit;
         edit.summary = "Verify portable database architecture (edited)";
         edit.description = "Updated by the SQLite integration test.";
         edit.priorityKey = "highest";
-        edit.issueTypeKey = "task";
+        edit.ticketTypeKey = "task";
         edit.assigneeEmail = "sam@ticket-hub.local";
         edit.labels = {"database"};
         edit.storyPoints = 5.0;
         edit.dueDate = "2026-12-31";
-        const auto edited = database.editIssue(created.key, edit, demoUserId, done->version);
+        const auto edited = database.editTicket(created.key, edit, demoUserId, done->version);
         require(edited.has_value(), "edit succeeds");
         require(edited->summary == edit.summary, "summary is updated");
         require(edited->description == edit.description, "description is updated");
@@ -151,131 +151,131 @@ int main() {
         require(edited->resolution.has_value() && *edited->resolution == "fixed",
                "editing standard fields does not disturb the resolution set by the earlier status change");
 
-        const auto containsIssue = [](const std::vector<TicketHub::Domain::Issue>& issues, const std::string& key) {
-            return std::any_of(issues.begin(), issues.end(),
-                               [&key](const auto& issue) { return issue.key == key; });
+        const auto containsTicket = [](const std::vector<TicketHub::Domain::Ticket>& tickets, const std::string& key) {
+            return std::any_of(tickets.begin(), tickets.end(),
+                               [&key](const auto& ticket) { return ticket.key == key; });
         };
 
         {
-            IssueFilter typeFilter;
+            TicketFilter typeFilter;
             typeFilter.projectKey = "TH";
-            typeFilter.issueTypeKey = "task";
-            require(containsIssue(database.listIssues(typeFilter), created.key), "issueTypeKey filter matches a task-type issue");
-            typeFilter.issueTypeKey = "bug";
-            require(!containsIssue(database.listIssues(typeFilter), created.key), "issueTypeKey filter excludes a non-matching type");
+            typeFilter.ticketTypeKey = "task";
+            require(containsTicket(database.listTickets(typeFilter), created.key), "ticketTypeKey filter matches a task-type ticket");
+            typeFilter.ticketTypeKey = "bug";
+            require(!containsTicket(database.listTickets(typeFilter), created.key), "ticketTypeKey filter excludes a non-matching type");
 
-            IssueFilter priorityFilter;
+            TicketFilter priorityFilter;
             priorityFilter.priorityKey = "highest";
-            require(containsIssue(database.listIssues(priorityFilter), created.key), "priorityKey filter matches the edited highest-priority issue");
+            require(containsTicket(database.listTickets(priorityFilter), created.key), "priorityKey filter matches the edited highest-priority ticket");
             priorityFilter.priorityKey = "low";
-            require(!containsIssue(database.listIssues(priorityFilter), created.key), "priorityKey filter excludes a non-matching priority");
+            require(!containsTicket(database.listTickets(priorityFilter), created.key), "priorityKey filter excludes a non-matching priority");
 
-            IssueFilter assigneeFilter;
+            TicketFilter assigneeFilter;
             assigneeFilter.assigneeEmail = "sam@ticket-hub.local";
-            require(containsIssue(database.listIssues(assigneeFilter), created.key), "assigneeEmail filter matches the edited assignee");
+            require(containsTicket(database.listTickets(assigneeFilter), created.key), "assigneeEmail filter matches the edited assignee");
             assigneeFilter.assigneeEmail = "alex@ticket-hub.local";
-            require(!containsIssue(database.listIssues(assigneeFilter), created.key), "assigneeEmail filter excludes a non-matching assignee");
+            require(!containsTicket(database.listTickets(assigneeFilter), created.key), "assigneeEmail filter excludes a non-matching assignee");
 
-            IssueFilter labelFilter;
+            TicketFilter labelFilter;
             labelFilter.label = "database";
-            require(containsIssue(database.listIssues(labelFilter), created.key), "label filter matches an issue carrying that label");
-            require(database.listIssues(labelFilter).size() == 1,
+            require(containsTicket(database.listTickets(labelFilter), created.key), "label filter matches a ticket carrying that label");
+            require(database.listTickets(labelFilter).size() == 1,
                    "label filter does not corrupt the aggregated label list into a per-row match count");
             labelFilter.label = "backend";
-            require(!containsIssue(database.listIssues(labelFilter), created.key), "label filter excludes an issue without that label");
+            require(!containsTicket(database.listTickets(labelFilter), created.key), "label filter excludes a ticket without that label");
 
-            IssueFilter dueFilter;
+            TicketFilter dueFilter;
             dueFilter.dueBefore = "2026-12-31";
-            require(containsIssue(database.listIssues(dueFilter), created.key), "dueBefore filter is inclusive of the exact due date");
+            require(containsTicket(database.listTickets(dueFilter), created.key), "dueBefore filter is inclusive of the exact due date");
             dueFilter.dueBefore = "2026-12-30";
-            require(!containsIssue(database.listIssues(dueFilter), created.key), "dueBefore filter excludes an issue due after the cutoff");
+            require(!containsTicket(database.listTickets(dueFilter), created.key), "dueBefore filter excludes a ticket due after the cutoff");
 
-            IssueFilter descriptionSearch;
+            TicketFilter descriptionSearch;
             descriptionSearch.search = "SQLite integration test";
-            require(containsIssue(database.listIssues(descriptionSearch), created.key),
-                   "search now matches the issue description, not just summary/key");
+            require(containsTicket(database.listTickets(descriptionSearch), created.key),
+                   "search now matches the ticket description, not just summary/key");
 
-            IssueFilter combined;
+            TicketFilter combined;
             combined.projectKey = "TH";
-            combined.issueTypeKey = "task";
+            combined.ticketTypeKey = "task";
             combined.priorityKey = "highest";
             combined.assigneeEmail = "sam@ticket-hub.local";
             combined.label = "database";
-            require(containsIssue(database.listIssues(combined), created.key), "combined filters all narrow to the same edited issue");
+            require(containsTicket(database.listTickets(combined), created.key), "combined filters all narrow to the same edited ticket");
             combined.label = "frontend";
-            require(!containsIssue(database.listIssues(combined), created.key), "combined filters exclude when any single field mismatches");
+            require(!containsTicket(database.listTickets(combined), created.key), "combined filters exclude when any single field mismatches");
 
             // Numbered/offset pagination (D126).
-            const auto allIssues = database.listIssues(IssueFilter{});
-            require(database.countIssues(IssueFilter{}) == static_cast<std::int64_t>(allIssues.size()),
-                   "countIssues matches the unpaginated listIssues row count for the same filter");
+            const auto allTickets = database.listTickets(TicketFilter{});
+            require(database.countTickets(TicketFilter{}) == static_cast<std::int64_t>(allTickets.size()),
+                   "countTickets matches the unpaginated listTickets row count for the same filter");
 
-            const auto firstPage = database.listIssues(IssueFilter{}, 3, 0);
-            require(firstPage.size() == 3, "paginated listIssues respects the limit");
-            const auto secondPage = database.listIssues(IssueFilter{}, 3, 3);
+            const auto firstPage = database.listTickets(TicketFilter{}, 3, 0);
+            require(firstPage.size() == 3, "paginated listTickets respects the limit");
+            const auto secondPage = database.listTickets(TicketFilter{}, 3, 3);
             require(secondPage.size() == 3, "second page also respects the limit");
             require(firstPage[0].key != secondPage[0].key, "offset actually advances past the first page");
-            for (const auto& firstPageIssue : firstPage) {
-                require(!containsIssue(secondPage, firstPageIssue.key), "pages do not overlap");
+            for (const auto& firstPageTicket : firstPage) {
+                require(!containsTicket(secondPage, firstPageTicket.key), "pages do not overlap");
             }
 
-            const auto pastTheEnd = database.listIssues(IssueFilter{}, 100, 100);
+            const auto pastTheEnd = database.listTickets(TicketFilter{}, 100, 100);
             require(pastTheEnd.empty(), "an offset beyond the total row count returns an empty page, not an error");
 
-            const auto wholeSetAsOnePage = database.listIssues(IssueFilter{}, 100, 0);
-            require(wholeSetAsOnePage.size() == allIssues.size(),
+            const auto wholeSetAsOnePage = database.listTickets(TicketFilter{}, 100, 0);
+            require(wholeSetAsOnePage.size() == allTickets.size(),
                    "a limit exceeding the total row count returns every matching row, not an error");
 
-            IssueFilter projectFilter;
+            TicketFilter projectFilter;
             projectFilter.projectKey = "TH";
-            const auto projectIssuesUnpaged = database.listIssues(projectFilter);
-            require(database.countIssues(projectFilter) == static_cast<std::int64_t>(projectIssuesUnpaged.size()),
-                   "countIssues respects the same filter as the paginated/unpaginated listIssues overloads");
-            const auto projectFirstPage = database.listIssues(projectFilter, 2, 0);
+            const auto projectTicketsUnpaged = database.listTickets(projectFilter);
+            require(database.countTickets(projectFilter) == static_cast<std::int64_t>(projectTicketsUnpaged.size()),
+                   "countTickets respects the same filter as the paginated/unpaginated listTickets overloads");
+            const auto projectFirstPage = database.listTickets(projectFilter, 2, 0);
             require(projectFirstPage.size() == 2, "pagination and filtering compose correctly");
-            for (const auto& issue : projectFirstPage) {
-                require(issue.projectKey == "TH", "a paginated+filtered page still only contains matching rows");
+            for (const auto& ticket : projectFirstPage) {
+                require(ticket.projectKey == "TH", "a paginated+filtered page still only contains matching rows");
             }
 
-            const auto stillHasBothLabels = database.findIssueByKey(created.key);
+            const auto stillHasBothLabels = database.findTicketByKey(created.key);
             require(stillHasBothLabels.has_value() && stillHasBothLabels->labels.size() == 1
                         && stillHasBothLabels->labels[0] == "database",
-                   "filtering by label does not mutate the issue's own label list");
+                   "filtering by label does not mutate the ticket's own label list");
         }
 
         bool editConflictDetected = false;
         try {
-            database.editIssue(created.key, edit, demoUserId, done->version);
+            database.editTicket(created.key, edit, demoUserId, done->version);
         } catch (const TicketHub::Domain::ConcurrencyConflict&) {
             editConflictDetected = true;
         }
         require(editConflictDetected, "stale edit is rejected");
 
-        TicketHub::Domain::EditIssueRequest unassign = edit;
+        TicketHub::Domain::EditTicketRequest unassign = edit;
         unassign.assigneeEmail = std::nullopt;
-        const auto unassigned = database.editIssue(created.key, unassign, demoUserId, edited->version);
+        const auto unassigned = database.editTicket(created.key, unassign, demoUserId, edited->version);
         require(unassigned.has_value() && !unassigned->assignee.has_value(), "assignee can be cleared");
 
         const auto editHistoryCount = scalarInt(databasePath,
-            "SELECT COUNT(*) FROM issue_history WHERE issue_id = '" + created.id
+            "SELECT COUNT(*) FROM ticket_history WHERE ticket_id = '" + created.id
             + "' AND field_name IN ('summary','description','priority','assignee','story_points','due_date')");
-        require(editHistoryCount >= 6, "each changed field writes an issue_history row");
+        require(editHistoryCount >= 6, "each changed field writes a ticket_history row");
 
-        const auto link = database.createIssueLink(created.key, "TH-1", TicketHub::Domain::LinkTypeBlocks);
-        require(!link.id.empty() && link.outward && link.otherIssueKey == "TH-1",
-               "a link is created from the source issue's perspective");
+        const auto link = database.createTicketLink(created.key, "TH-1", TicketHub::Domain::LinkTypeBlocks);
+        require(!link.id.empty() && link.outward && link.otherTicketKey == "TH-1",
+               "a link is created from the source ticket's perspective");
 
-        const auto sourceLinks = database.listIssueLinks(created.key);
-        require(sourceLinks.size() == 1 && sourceLinks[0].outward && sourceLinks[0].otherIssueKey == "TH-1",
-               "the source issue sees the link as outward");
+        const auto sourceLinks = database.listTicketLinks(created.key);
+        require(sourceLinks.size() == 1 && sourceLinks[0].outward && sourceLinks[0].otherTicketKey == "TH-1",
+               "the source ticket sees the link as outward");
 
-        const auto targetLinks = database.listIssueLinks("TH-1");
-        require(targetLinks.size() == 1 && !targetLinks[0].outward && targetLinks[0].otherIssueKey == created.key,
-               "the target issue sees the same link as inward");
+        const auto targetLinks = database.listTicketLinks("TH-1");
+        require(targetLinks.size() == 1 && !targetLinks[0].outward && targetLinks[0].otherTicketKey == created.key,
+               "the target ticket sees the same link as inward");
 
         bool duplicateLinkRejected = false;
         try {
-            database.createIssueLink(created.key, "TH-1", TicketHub::Domain::LinkTypeBlocks);
+            database.createTicketLink(created.key, "TH-1", TicketHub::Domain::LinkTypeBlocks);
         } catch (const std::invalid_argument&) {
             duplicateLinkRejected = true;
         }
@@ -283,49 +283,49 @@ int main() {
 
         bool selfLinkRejected = false;
         try {
-            database.createIssueLink(created.key, created.key, TicketHub::Domain::LinkTypeRelatesTo);
+            database.createTicketLink(created.key, created.key, TicketHub::Domain::LinkTypeRelatesTo);
         } catch (const std::exception&) {
             selfLinkRejected = true;
         }
         require(selfLinkRejected, "a self-link is rejected by the database CHECK constraint");
 
-        const auto linkDetail = database.findIssueLinkById(link.id);
-        require(linkDetail.has_value() && linkDetail->sourceIssueKey == created.key
-                    && linkDetail->targetIssueKey == "TH-1",
-               "findIssueLinkById resolves both ends of the link");
+        const auto linkDetail = database.findTicketLinkById(link.id);
+        require(linkDetail.has_value() && linkDetail->sourceTicketKey == created.key
+                    && linkDetail->targetTicketKey == "TH-1",
+               "findTicketLinkById resolves both ends of the link");
 
-        require(database.deleteIssueLink(link.id), "the link can be deleted");
-        require(database.listIssueLinks(created.key).empty(), "the link no longer appears after deletion");
-        require(!database.deleteIssueLink(link.id), "deleting an already-gone link returns false");
+        require(database.deleteTicketLink(link.id), "the link can be deleted");
+        require(database.listTicketLinks(created.key).empty(), "the link no longer appears after deletion");
+        require(!database.deleteTicketLink(link.id), "deleting an already-gone link returns false");
 
         const std::string alexUserId = "00000000-0000-4000-8000-000000000002";
-        require(database.watchIssue(created.key, demoUserId), "watching an issue succeeds");
-        require(!database.watchIssue(created.key, demoUserId), "watching an already-watched issue is a no-op");
-        require(database.watchIssue(created.key, alexUserId), "a second user can also watch");
+        require(database.watchTicket(created.key, demoUserId), "watching a ticket succeeds");
+        require(!database.watchTicket(created.key, demoUserId), "watching an already-watched ticket is a no-op");
+        require(database.watchTicket(created.key, alexUserId), "a second user can also watch");
         require(database.listWatchers(created.key).size() == 2, "both watchers are listed");
-        require(database.unwatchIssue(created.key, demoUserId), "unwatching removes the watcher");
-        require(!database.unwatchIssue(created.key, demoUserId), "unwatching again is a no-op");
+        require(database.unwatchTicket(created.key, demoUserId), "unwatching removes the watcher");
+        require(!database.unwatchTicket(created.key, demoUserId), "unwatching again is a no-op");
         require(database.listWatchers(created.key).size() == 1, "one watcher remains");
 
-        const auto alexWatched = database.listWatchedIssues(alexUserId, 10);
+        const auto alexWatched = database.listWatchedTickets(alexUserId, 10);
         require(alexWatched.size() == 1 && alexWatched[0].key == created.key,
-               "listWatchedIssues (the reverse of listWatchers) returns the issues a given user is watching");
-        require(database.listWatchedIssues(demoUserId, 10).empty(),
-               "listWatchedIssues is empty for a user watching nothing (demo unwatched above)");
+               "listWatchedTickets (the reverse of listWatchers) returns the tickets a given user is watching");
+        require(database.listWatchedTickets(demoUserId, 10).empty(),
+               "listWatchedTickets is empty for a user watching nothing (demo unwatched above)");
 
-        require(database.voteIssue(created.key, demoUserId), "voting for an issue succeeds");
-        require(!database.voteIssue(created.key, demoUserId), "voting again is a no-op");
+        require(database.voteTicket(created.key, demoUserId), "voting for a ticket succeeds");
+        require(!database.voteTicket(created.key, demoUserId), "voting again is a no-op");
         require(database.listVoters(created.key).size() == 1, "the voter is listed");
-        require(database.unvoteIssue(created.key, demoUserId), "removing a vote succeeds");
+        require(database.unvoteTicket(created.key, demoUserId), "removing a vote succeeds");
         require(database.listVoters(created.key).empty(), "no voters remain");
 
-        bool watchUnknownIssueRejected = false;
+        bool watchUnknownTicketRejected = false;
         try {
-            database.watchIssue("TH-9999", demoUserId);
+            database.watchTicket("TH-9999", demoUserId);
         } catch (const std::invalid_argument&) {
-            watchUnknownIssueRejected = true;
+            watchUnknownTicketRejected = true;
         }
-        require(watchUnknownIssueRejected, "watching an unknown issue is rejected");
+        require(watchUnknownTicketRejected, "watching an unknown ticket is rejected");
 
         const auto comment = database.addComment({created.key, "Database adapter smoke test passed."}, demoUserId);
         require(!comment.id.empty(), "comment receives an id");
@@ -377,8 +377,8 @@ int main() {
 
         const auto assignedNotification = database.createNotification(alexUserId, "assigned", created.id);
         require(assignedNotification.type == "assigned", "createNotification returns the type it was given");
-        require(assignedNotification.issueKey.has_value() && *assignedNotification.issueKey == created.key,
-               "createNotification resolves the issue key via the stored issue_id");
+        require(assignedNotification.ticketKey.has_value() && *assignedNotification.ticketKey == created.key,
+               "createNotification resolves the ticket key via the stored ticket_id");
         require(!assignedNotification.readAt.has_value(), "a new notification starts unread");
 
         database.createNotification(alexUserId, "mentioned", created.id);
@@ -454,7 +454,7 @@ int main() {
             require(attachment.sha256 == "deadbeef", "sha256 round-trips");
             require(!attachment.deletedAt.has_value(), "a freshly created attachment has no deletedAt");
 
-            require(database.listAttachments(created.key).size() == 1, "the attachment appears in the issue's list");
+            require(database.listAttachments(created.key).size() == 1, "the attachment appears in the ticket's list");
 
             const auto found = database.findAttachmentById(attachment.id);
             require(found.has_value() && found->fileName == "notes.txt", "findAttachmentById resolves the attachment");
@@ -463,7 +463,7 @@ int main() {
 
             require(database.softDeleteAttachment(attachment.id, demoUserId), "an attachment can be soft-deleted");
             require(database.listAttachments(created.key).empty(),
-                   "a soft-deleted attachment no longer appears in the issue's list");
+                   "a soft-deleted attachment no longer appears in the ticket's list");
             require(!database.softDeleteAttachment(attachment.id, demoUserId), "soft-deleting again is a no-op");
 
             const auto deleted = database.listDeletedAttachments();
@@ -471,7 +471,7 @@ int main() {
             require(deleted[0].deletedAt.has_value(), "a recycle-bin attachment reports its deletedAt");
 
             require(database.restoreAttachment(attachment.id), "the attachment can be restored");
-            require(database.listAttachments(created.key).size() == 1, "a restored attachment reappears in the issue's list");
+            require(database.listAttachments(created.key).size() == 1, "a restored attachment reappears in the ticket's list");
             require(!database.restoreAttachment(attachment.id), "restoring an already-active attachment is a no-op");
 
             require(database.softDeleteAttachment(attachment.id, demoUserId), "re-deleted for the permanent-delete test");
@@ -483,21 +483,21 @@ int main() {
 
             const auto secondAttachment = database.createAttachment("60000000-0000-4000-8000-0000000000a2", created.key,
                 demoUserId, "diagram.png", "image/png", 2048, "cafef00d");
-            const auto keysForIssue = database.listAttachmentStorageKeysForIssue(created.key);
-            require(keysForIssue.size() == 1 && keysForIssue[0] == secondAttachment.id,
-                   "listAttachmentStorageKeysForIssue returns every attachment's storage key regardless of soft-delete state");
+            const auto keysForTicket = database.listAttachmentStorageKeysForTicket(created.key);
+            require(keysForTicket.size() == 1 && keysForTicket[0] == secondAttachment.id,
+                   "listAttachmentStorageKeysForTicket returns every attachment's storage key regardless of soft-delete state");
 
             const auto keysForProject = database.listAttachmentStorageKeysForProject("TH");
             require(std::find(keysForProject.begin(), keysForProject.end(), secondAttachment.id) != keysForProject.end(),
-                   "listAttachmentStorageKeysForProject includes attachments from every issue in the project");
+                   "listAttachmentStorageKeysForProject includes attachments from every ticket in the project");
 
-            bool unknownIssueRejected = false;
+            bool unknownTicketRejected = false;
             try {
                 database.createAttachment("60000000-0000-4000-8000-0000000000a3", "TH-9999", demoUserId, "x.txt", "text/plain", 1, "aa");
             } catch (const std::invalid_argument&) {
-                unknownIssueRejected = true;
+                unknownTicketRejected = true;
             }
-            require(unknownIssueRejected, "creating an attachment on an unknown issue is rejected");
+            require(unknownTicketRejected, "creating an attachment on an unknown ticket is rejected");
         }
 
         // --- Simple append-only admin/security audit log (D23) ---
@@ -518,9 +518,9 @@ int main() {
         require(database.listAuditEvents(1).size() == 1, "the limit parameter caps the result size");
 
         const auto dashboard = database.dashboardStats();
-        require(dashboard.totalIssues == 9, "dashboard includes newly created issue");
-        require(!dashboard.recentIssues.empty() && dashboard.recentIssues.front().key == created.key,
-                "dashboard returns the most recently updated issue first");
+        require(dashboard.totalTickets == 9, "dashboard includes newly created ticket");
+        require(!dashboard.recentTickets.empty() && dashboard.recentTickets.front().key == created.key,
+                "dashboard returns the most recently updated ticket first");
 
         // --- Kanban board WIP limits (D32/D33) ---
         {
@@ -557,122 +557,122 @@ int main() {
         }
 
         // --- Manual ordering (D31) ---
-        const auto th1Before = database.findIssueByKey("TH-1");
-        const auto th3Before = database.findIssueByKey("TH-3");
+        const auto th1Before = database.findTicketByKey("TH-1");
+        const auto th3Before = database.findTicketByKey("TH-3");
         require(th1Before.has_value() && th3Before.has_value(), "TH-1 and TH-3 exist for the reorder test");
-        require(th1Before->rankOrder < th3Before->rankOrder, "seeded issues start ranked in creation order");
+        require(th1Before->rankOrder < th3Before->rankOrder, "seeded tickets start ranked in creation order");
 
-        const auto reordered = database.reorderIssue("TH-3", std::string("TH-1"));
-        require(reordered.key == "TH-3", "reorderIssue returns the moved issue");
-        const auto th1AfterReorder = database.findIssueByKey("TH-1");
-        const auto th3AfterReorder = database.findIssueByKey("TH-3");
+        const auto reordered = database.reorderTicket("TH-3", std::string("TH-1"));
+        require(reordered.key == "TH-3", "reorderTicket returns the moved ticket");
+        const auto th1AfterReorder = database.findTicketByKey("TH-1");
+        const auto th3AfterReorder = database.findTicketByKey("TH-3");
         require(th3AfterReorder->rankOrder < th1AfterReorder->rankOrder,
                "TH-3 now ranks immediately before TH-1 after being reordered there");
 
-        database.reorderIssue("TH-3", std::nullopt);
-        const auto th3AfterEnd = database.findIssueByKey("TH-3");
-        const auto th7AfterEnd = database.findIssueByKey(created.key);
+        database.reorderTicket("TH-3", std::nullopt);
+        const auto th3AfterEnd = database.findTicketByKey("TH-3");
+        const auto th7AfterEnd = database.findTicketByKey(created.key);
         require(th3AfterEnd->rankOrder > th7AfterEnd->rankOrder,
-               "reordering with no anchor appends the issue to the end of its project");
+               "reordering with no anchor appends the ticket to the end of its project");
 
         bool reorderCrossProjectRejected = false;
         try {
-            database.reorderIssue("TH-1", std::string("WEB-1"));
+            database.reorderTicket("TH-1", std::string("WEB-1"));
         } catch (const std::invalid_argument&) {
             reorderCrossProjectRejected = true;
         }
-        require(reorderCrossProjectRejected, "reordering relative to an issue in a different project is rejected");
+        require(reorderCrossProjectRejected, "reordering relative to a ticket in a different project is rejected");
 
         bool reorderSelfRejected = false;
         try {
-            database.reorderIssue("TH-1", std::string("TH-1"));
+            database.reorderTicket("TH-1", std::string("TH-1"));
         } catch (const std::invalid_argument&) {
             reorderSelfRejected = true;
         }
-        require(reorderSelfRejected, "reordering an issue before itself is rejected");
+        require(reorderSelfRejected, "reordering a ticket before itself is rejected");
 
         // --- Move between projects (D37) ---
-        const auto moved = database.moveIssue("TH-2", "WEB", demoUserId);
-        require(moved.projectKey == "WEB", "the moved issue now belongs to the target project");
-        require(moved.key == "WEB-3", "the moved issue receives the target project's next issue number");
-        require(moved.rankOrder == 3, "the moved issue is appended after the target project's existing issues");
+        const auto moved = database.moveTicket("TH-2", "WEB", demoUserId);
+        require(moved.projectKey == "WEB", "the moved ticket now belongs to the target project");
+        require(moved.key == "WEB-3", "the moved ticket receives the target project's next ticket number");
+        require(moved.rankOrder == 3, "the moved ticket is appended after the target project's existing tickets");
 
-        const auto viaOldKey = database.findIssueByKey("TH-2");
+        const auto viaOldKey = database.findTicketByKey("TH-2");
         require(viaOldKey.has_value() && viaOldKey->key == "WEB-3",
-               "the vacated source key permanently resolves to the moved issue via issue_key_aliases");
-        require(scalarInt(databasePath, "SELECT COUNT(*) FROM issue_key_aliases WHERE alias_key = 'TH-2'") == 1,
+               "the vacated source key permanently resolves to the moved ticket via ticket_key_aliases");
+        require(scalarInt(databasePath, "SELECT COUNT(*) FROM ticket_key_aliases WHERE alias_key = 'TH-2'") == 1,
                "the vacated key is recorded as a permanent alias");
         require(scalarInt(databasePath,
-                    "SELECT COUNT(*) FROM issue_history WHERE issue_id = '" + moved.id + "' AND field_name = 'project'") == 1,
-               "the move writes an issue_history row for the project field");
+                    "SELECT COUNT(*) FROM ticket_history WHERE ticket_id = '" + moved.id + "' AND field_name = 'project'") == 1,
+               "the move writes a ticket_history row for the project field");
 
         bool moveSameProjectRejected = false;
         try {
-            database.moveIssue("TH-1", "TH", demoUserId);
+            database.moveTicket("TH-1", "TH", demoUserId);
         } catch (const std::invalid_argument&) {
             moveSameProjectRejected = true;
         }
-        require(moveSameProjectRejected, "moving an issue to its own project is rejected");
+        require(moveSameProjectRejected, "moving a ticket to its own project is rejected");
 
         bool moveUnknownProjectRejected = false;
         try {
-            database.moveIssue("TH-1", "NOPE", demoUserId);
+            database.moveTicket("TH-1", "NOPE", demoUserId);
         } catch (const std::invalid_argument&) {
             moveUnknownProjectRejected = true;
         }
-        require(moveUnknownProjectRejected, "moving an issue to an unknown project is rejected");
+        require(moveUnknownProjectRejected, "moving a ticket to an unknown project is rejected");
 
-        CreateIssueRequest parentForMove;
+        CreateTicketRequest parentForMove;
         parentForMove.projectKey = "TH";
         parentForMove.summary = "Parent for move-rejection test";
-        parentForMove.issueTypeKey = "story";
+        parentForMove.ticketTypeKey = "story";
         parentForMove.priorityKey = "medium";
-        const auto moveParent = database.createIssue(parentForMove, demoUserId);
+        const auto moveParent = database.createTicket(parentForMove, demoUserId);
 
-        CreateIssueRequest childForMove;
+        CreateTicketRequest childForMove;
         childForMove.projectKey = "TH";
         childForMove.summary = "Child for move-rejection test";
-        childForMove.issueTypeKey = "sub-task";
+        childForMove.ticketTypeKey = "sub-task";
         childForMove.priorityKey = "medium";
-        childForMove.parentIssueKey = moveParent.key;
-        const auto moveChild = database.createIssue(childForMove, demoUserId);
+        childForMove.parentTicketKey = moveParent.key;
+        const auto moveChild = database.createTicket(childForMove, demoUserId);
 
-        bool moveIssueWithChildrenRejected = false;
+        bool moveTicketWithChildrenRejected = false;
         try {
-            database.moveIssue(moveParent.key, "WEB", demoUserId);
+            database.moveTicket(moveParent.key, "WEB", demoUserId);
         } catch (const std::invalid_argument&) {
-            moveIssueWithChildrenRejected = true;
+            moveTicketWithChildrenRejected = true;
         }
-        require(moveIssueWithChildrenRejected, "moving an issue that has children is rejected");
+        require(moveTicketWithChildrenRejected, "moving a ticket that has children is rejected");
 
-        bool moveIssueWithParentRejected = false;
+        bool moveTicketWithParentRejected = false;
         try {
-            database.moveIssue(moveChild.key, "WEB", demoUserId);
+            database.moveTicket(moveChild.key, "WEB", demoUserId);
         } catch (const std::invalid_argument&) {
-            moveIssueWithParentRejected = true;
+            moveTicketWithParentRejected = true;
         }
-        require(moveIssueWithParentRejected, "moving an issue that has a parent is rejected");
+        require(moveTicketWithParentRejected, "moving a ticket that has a parent is rejected");
 
-        require(database.softDeleteIssue(created.key, demoUserId), "an issue can be soft-deleted");
-        require(!database.findIssueByKey(created.key).has_value(),
-               "a soft-deleted issue is not found by ordinary lookup");
-        require(!database.softDeleteIssue(created.key, demoUserId), "soft-deleting an already-deleted issue is a no-op");
+        require(database.softDeleteTicket(created.key, demoUserId), "a ticket can be soft-deleted");
+        require(!database.findTicketByKey(created.key).has_value(),
+               "a soft-deleted ticket is not found by ordinary lookup");
+        require(!database.softDeleteTicket(created.key, demoUserId), "soft-deleting an already-deleted ticket is a no-op");
 
-        const auto deletedIssues = database.listDeletedIssues();
-        require(deletedIssues.size() == 1 && deletedIssues[0].key == created.key,
-               "the deleted issue appears in the recycle bin");
+        const auto deletedTickets = database.listDeletedTickets();
+        require(deletedTickets.size() == 1 && deletedTickets[0].key == created.key,
+               "the deleted ticket appears in the recycle bin");
 
-        require(database.restoreIssue(created.key), "the issue can be restored");
-        require(database.findIssueByKey(created.key).has_value(),
-               "a restored issue is found again by ordinary lookup");
-        require(database.listDeletedIssues().empty(), "the recycle bin is empty again after restore");
+        require(database.restoreTicket(created.key), "the ticket can be restored");
+        require(database.findTicketByKey(created.key).has_value(),
+               "a restored ticket is found again by ordinary lookup");
+        require(database.listDeletedTickets().empty(), "the recycle bin is empty again after restore");
 
-        require(database.softDeleteIssue(created.key, demoUserId), "re-deleting for the permanent-delete test");
-        require(database.permanentlyDeleteIssue(created.key), "the issue can be permanently deleted");
-        require(!database.permanentlyDeleteIssue(created.key),
-               "permanently deleting an already-gone issue returns false");
-        require(scalarInt(databasePath, "SELECT COUNT(*) FROM comments WHERE issue_id = '" + created.id + "'") == 0,
-               "comments cascade-delete with the permanently-deleted issue");
+        require(database.softDeleteTicket(created.key, demoUserId), "re-deleting for the permanent-delete test");
+        require(database.permanentlyDeleteTicket(created.key), "the ticket can be permanently deleted");
+        require(!database.permanentlyDeleteTicket(created.key),
+               "permanently deleting an already-gone ticket returns false");
+        require(scalarInt(databasePath, "SELECT COUNT(*) FROM comments WHERE ticket_id = '" + created.id + "'") == 0,
+               "comments cascade-delete with the permanently-deleted ticket");
     }
 
     fs::remove(databasePath, removeError);
@@ -717,7 +717,7 @@ int main() {
                                 (sourceRoot / "migrations/sqlite/002_seed_demo.sql").string());
         database.migrate();
         database.seedDemoData();
-        require(database.listIssues(IssueFilter{}).size() == 8, "backup source seeded with the demo issue set");
+        require(database.listTickets(TicketFilter{}).size() == 8, "backup source seeded with the demo ticket set");
 
         database.backup(backupDir.string());
         require(fs::exists(backupDir / "database.sqlite3"), "backup writes database.sqlite3 into the output directory");
@@ -725,18 +725,18 @@ int main() {
 
         // Mutate the live database after the backup was taken, so restoring
         // it is a meaningfully observable change, not a no-op.
-        CreateIssueRequest postBackupIssue;
-        postBackupIssue.projectKey = "TH";
-        postBackupIssue.summary = "Created after the backup was taken";
-        const auto createdAfterBackup = database.createIssue(postBackupIssue, demoUserId);
-        require(database.listIssues(IssueFilter{}).size() == 9,
-               "the live database now has one more issue than the backup captured");
+        CreateTicketRequest postBackupTicket;
+        postBackupTicket.projectKey = "TH";
+        postBackupTicket.summary = "Created after the backup was taken";
+        const auto createdAfterBackup = database.createTicket(postBackupTicket, demoUserId);
+        require(database.listTickets(TicketFilter{}).size() == 9,
+               "the live database now has one more ticket than the backup captured");
 
         database.restore(backupDir.string());
-        require(database.listIssues(IssueFilter{}).size() == 8,
+        require(database.listTickets(TicketFilter{}).size() == 8,
                "restore reverts the live database to exactly what the backup captured");
-        require(!database.findIssueByKey(createdAfterBackup.key).has_value(),
-               "an issue created after the backup was taken does not survive a restore from that backup");
+        require(!database.findTicketByKey(createdAfterBackup.key).has_value(),
+               "a ticket created after the backup was taken does not survive a restore from that backup");
     }
     fs::remove(backupSourceDb, removeError);
     fs::remove(backupSourceDb.string() + "-wal", removeError);

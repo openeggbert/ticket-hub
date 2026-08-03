@@ -116,8 +116,8 @@ struct Project {
     std::string name;
     std::string description;
     std::optional<UserSummary> lead;
-    std::int64_t issueCount{};
-    std::int64_t openIssueCount{};
+    std::int64_t ticketCount{};
+    std::int64_t openTicketCount{};
     bool archived{false};
 };
 
@@ -127,36 +127,36 @@ struct CreateProjectRequest {
     std::string description;
 };
 
-struct IssueType {
+struct TicketType {
     std::string key;
     std::string name;
     std::string icon;
     std::string color;
 };
 
-// Fixed issue types and the fixed hierarchy they imply (D5, D29, D64-D66):
+// Fixed ticket types and the fixed hierarchy they imply (D5, D29, D64-D66):
 // Epic -> Story/Task/Bug -> Sub-task, with nothing above Epic and nothing
 // below Sub-task. There are no custom types in V1, so this is a hardcoded
-// table rather than driven by the `issue_types.hierarchy_level` column.
-constexpr const char* IssueTypeEpic = "epic";
-constexpr const char* IssueTypeStory = "story";
-constexpr const char* IssueTypeTask = "task";
-constexpr const char* IssueTypeBug = "bug";
-constexpr const char* IssueTypeSubTask = "sub-task";
+// table rather than driven by the `ticket_types.hierarchy_level` column.
+constexpr const char* TicketTypeEpic = "epic";
+constexpr const char* TicketTypeStory = "story";
+constexpr const char* TicketTypeTask = "task";
+constexpr const char* TicketTypeBug = "bug";
+constexpr const char* TicketTypeSubTask = "sub-task";
 
 // 1 = Epic, 0 = Story/Task/Bug (or any unrecognized type, which the database
 // FK lookup will reject anyway), -1 = Sub-task.
-inline int issueTypeHierarchyLevel(const std::string& issueTypeKey) {
-    if (issueTypeKey == IssueTypeEpic) {
+inline int ticketTypeHierarchyLevel(const std::string& ticketTypeKey) {
+    if (ticketTypeKey == TicketTypeEpic) {
         return 1;
     }
-    if (issueTypeKey == IssueTypeSubTask) {
+    if (ticketTypeKey == TicketTypeSubTask) {
         return -1;
     }
     return 0;
 }
 
-// Fixed resolutions (D27/D28), matching the `issues.resolution` CHECK
+// Fixed resolutions (D27/D28), matching the `tickets.resolution` CHECK
 // constraint in migrations/*/001_initial.sql. Required on the transition to
 // a Done-category status and cleared automatically on reopen (D68-D70) --
 // there is no other way to set or clear it.
@@ -172,9 +172,9 @@ inline bool isValidResolution(const std::string& resolutionKey) {
         || resolutionKey == ResolutionCannotReproduce;
 }
 
-// Fixed issue-link catalog (D17): a larger built-in set instead of
+// Fixed ticket-link catalog (D17): a larger built-in set instead of
 // admin-configurable link types. `clones`/`is cloned by` is also the link
-// TicketService::cloneIssue creates automatically (D60).
+// TicketService::cloneTicket creates automatically (D60).
 constexpr const char* LinkTypeBlocks = "blocks";
 constexpr const char* LinkTypeRelatesTo = "relates_to";
 constexpr const char* LinkTypeDuplicates = "duplicates";
@@ -187,7 +187,7 @@ inline bool isValidLinkType(const std::string& linkType) {
 
 // A link is stored as one directed row (source "blocks" target), but is
 // meaningful read from either end -- `outward` says which label applies to
-// the issue this label pair is being shown on. `relates_to` is symmetric by
+// the ticket this label pair is being shown on. `relates_to` is symmetric by
 // convention (same label either way), matching Jira's own behavior.
 struct LinkTypeLabels {
     std::string outward;
@@ -207,30 +207,30 @@ inline LinkTypeLabels linkTypeLabels(const std::string& linkType) {
     return {"relates to", "relates to"};
 }
 
-// One link as seen from a specific issue (the one `listIssueLinks` was
-// called with) -- `outward` is true when that issue is the link's source.
-struct IssueLink {
+// One link as seen from a specific ticket (the one `listTicketLinks` was
+// called with) -- `outward` is true when that ticket is the link's source.
+struct TicketLink {
     std::string id;
     std::string linkType;
     bool outward{true};
-    std::string otherIssueKey;
-    std::string otherIssueSummary;
+    std::string otherTicketKey;
+    std::string otherTicketSummary;
 };
 
 // A link with both ends resolved to their project, for authorization checks
 // that must confirm the actor has access to both sides before creating or
 // deleting a link (a link write is not scoped to a single project).
-struct IssueLinkDetail {
+struct TicketLinkDetail {
     std::string id;
     std::string linkType;
-    std::string sourceIssueKey;
+    std::string sourceTicketKey;
     std::string sourceProjectKey;
-    std::string targetIssueKey;
+    std::string targetTicketKey;
     std::string targetProjectKey;
 };
 
-// Result of a simple bulk action (D36): each issue key is processed
-// independently (no cross-issue transaction), so a partial failure -- an
+// Result of a simple bulk action (D36): each ticket key is processed
+// independently (no cross-ticket transaction), so a partial failure -- an
 // unknown key, insufficient project role, a workflow rule violation -- does
 // not roll back the keys that already succeeded. No per-item error detail;
 // "simple bulk actions" does not call for it.
@@ -255,7 +255,7 @@ struct Priority {
 
 struct Comment {
     std::string id;
-    std::string issueId;
+    std::string ticketId;
     UserSummary author;
     std::string body;
     std::string createdAt;
@@ -270,18 +270,18 @@ struct Comment {
 // `storageKey` is an opaque handle into that local store, not a
 // discriminated union over multiple backends, since no other backend
 // exists or is planned for V1. `sha256` is computed once, at upload
-// (D105); there is no periodic re-verification. Attached to an issue
+// (D105); there is no periodic re-verification. Attached to a ticket
 // directly (not to an individual comment) so it can be referenced via
-// `attachment://<id>` from the issue description or from any comment on
-// that issue (D100).
+// `attachment://<id>` from the ticket description or from any comment on
+// that ticket (D100).
 struct Attachment {
     std::string id;
-    std::string issueId;
+    std::string ticketId;
     // Resolved via a join purely for display convenience (e.g. the
-    // attachment recycle bin, which spans every issue and would otherwise
+    // attachment recycle bin, which spans every ticket and would otherwise
     // have nothing human-readable to show); routes are always nested under
-    // `/api/issues/{key}/attachments`, so ordinary reads never need this.
-    std::string issueKey;
+    // `/api/tickets/{key}/attachments`, so ordinary reads never need this.
+    std::string ticketKey;
     UserSummary uploader;
     std::string fileName;
     std::string contentType;
@@ -289,7 +289,7 @@ struct Attachment {
     std::string sha256;
     std::string createdAt;
     // Set only when returned from the recycle bin (`listDeletedAttachments`);
-    // nullopt for an active attachment. Unlike issues/projects, whose fixed
+    // nullopt for an active attachment. Unlike tickets/projects, whose fixed
     // 90-day on-demand purge (D102) is a single DELETE entirely inside the
     // database adapter, an attachment's purge must also delete its file on
     // disk -- something only the application layer (TicketService) can do
@@ -302,7 +302,7 @@ struct Attachment {
 // GitHub's well-known eight-reaction set as a conservative, familiar
 // default. Each user may add each reaction at most once per comment
 // (enforced by the `comment_reactions` composite primary key), matching
-// D84's own wording; issues keep the separate, unrelated voting feature
+// D84's own wording; tickets keep the separate, unrelated voting feature
 // (D79).
 constexpr const char* CommentReactionThumbsUp = "thumbs_up";
 constexpr const char* CommentReactionThumbsDown = "thumbs_down";
@@ -338,22 +338,22 @@ constexpr const char* NotificationTypeAssigned = "assigned";
 constexpr const char* NotificationTypeMentioned = "mentioned";
 constexpr const char* NotificationTypeWatchedComment = "watched_comment";
 
-// `issueKey`/`issueSummary` are resolved at read time from the stored
-// `issue_id` (nullable in principle, but every current notification type
+// `ticketKey`/`ticketSummary` are resolved at read time from the stored
+// `ticket_id` (nullable in principle, but every current notification type
 // always has one) -- there is no stored message string, matching the
-// minimal `user_id, type, issue_id, read_at` shape in
+// minimal `user_id, type, ticket_id, read_at` shape in
 // docs/REDUCED_SCOPE_DATA_MODEL.md; the UI builds display text from
-// `type` + the resolved issue.
+// `type` + the resolved ticket.
 struct Notification {
     std::string id;
     std::string type;
-    std::optional<std::string> issueKey;
-    std::optional<std::string> issueSummary;
+    std::optional<std::string> ticketKey;
+    std::optional<std::string> ticketSummary;
     std::optional<std::string> readAt;
     std::string createdAt;
 };
 
-struct Issue {
+struct Ticket {
     std::string id;
     std::string key;
     std::int64_t number{};
@@ -361,12 +361,12 @@ struct Issue {
     std::string projectName;
     std::string summary;
     std::string description;
-    IssueType type;
+    TicketType type;
     Status status;
     Priority priority;
     UserSummary reporter;
     std::optional<UserSummary> assignee;
-    std::optional<std::string> parentIssueKey;
+    std::optional<std::string> parentTicketKey;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
     std::optional<std::string> resolution;
@@ -375,22 +375,22 @@ struct Issue {
     std::string updatedAt;
     std::int64_t version{1};
     // Simple integer manual order within its project (D31), replacing the
-    // never-used LexoRank-style string rank. New issues are appended
-    // (highest existing rankOrder + 1); TicketService::reorderIssue
-    // renumbers the issues between the old and new position by 1 each,
+    // never-used LexoRank-style string rank. New tickets are appended
+    // (highest existing rankOrder + 1); TicketService::reorderTicket
+    // renumbers the tickets between the old and new position by 1 each,
     // rather than using fractional/string ranks.
     std::int64_t rankOrder{0};
 };
 
 // Ad-hoc in-UI filters only (D10): no saved/shared filters, no JQL, not
 // usable as a webhook/board source. `search` is a plain case-insensitive
-// substring match (LIKE/ILIKE) against summary/description/issue key, no
+// substring match (LIKE/ILIKE) against summary/description/ticket key, no
 // full-text index (D43). `dueBefore` is inclusive ("due on or before this
 // date").
-struct IssueFilter {
+struct TicketFilter {
     std::optional<std::string> projectKey;
     std::optional<std::string> statusKey;
-    std::optional<std::string> issueTypeKey;
+    std::optional<std::string> ticketTypeKey;
     std::optional<std::string> priorityKey;
     std::optional<std::string> assigneeEmail;
     std::optional<std::string> label;
@@ -401,7 +401,7 @@ struct IssueFilter {
 // Numbered/offset pagination (D126); "no cursor mechanism." `pageSize` is
 // fixed-constant-bounded (D125's "max page size", coupled to this decision):
 // `DefaultPageSize` also equals `MaxPageSize` and matches the pre-existing
-// (previously undocumented) 200-row cap `listIssues` silently applied before
+// (previously undocumented) 200-row cap `listTickets` silently applied before
 // this decision was implemented, so a caller that never sends `page`/
 // `pageSize` gets exactly the same result set it always did -- pagination
 // is additive, not a behavior change, for any existing caller. No admin
@@ -420,32 +420,32 @@ struct Page {
     }
 };
 
-struct CreateIssueRequest {
+struct CreateTicketRequest {
     std::string projectKey;
     std::string summary;
     std::string description;
-    std::string issueTypeKey{"task"};
+    std::string ticketTypeKey{"task"};
     std::string priorityKey{"medium"};
     std::optional<std::string> assigneeEmail;
     // Epic link (for Story/Task/Bug) or required parent (for Sub-task) --
-    // see Domain::issueTypeHierarchyLevel and TicketService::createIssue.
-    std::optional<std::string> parentIssueKey;
+    // see Domain::ticketTypeHierarchyLevel and TicketService::createTicket.
+    std::optional<std::string> parentTicketKey;
     std::vector<std::string> labels;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
 };
 
-// Full-replacement edit of an issue's standard fields, applied with the same
-// optimistic-locking contract as changeIssueStatus (D129). This is a PUT-style
+// Full-replacement edit of a ticket's standard fields, applied with the same
+// optimistic-locking contract as changeTicketStatus (D129). This is a PUT-style
 // request, not a JSON-merge-patch: every field here is always the caller's
 // intended final value (an absent optional field means "no value", not
 // "leave whatever is there alone") -- the caller is expected to pre-populate
-// an edit form/request from the current issue. `issueTypeKey`/
-// `parentIssueKey` re-typing/re-parenting is validated the same way as at
+// an edit form/request from the current ticket. `ticketTypeKey`/
+// `parentTicketKey` re-typing/re-parenting is validated the same way as at
 // creation (TicketService::validateHierarchyShape) plus a database-state
-// check that a hierarchy-level change never orphans existing child issues
-// (IDatabase::editIssue) -- see docs/VERIFICATION.md for the exact rules.
-struct EditIssueRequest {
+// check that a hierarchy-level change never orphans existing child tickets
+// (IDatabase::editTicket) -- see docs/VERIFICATION.md for the exact rules.
+struct EditTicketRequest {
     std::string summary;
     std::string description;
     std::string priorityKey;
@@ -453,12 +453,12 @@ struct EditIssueRequest {
     std::vector<std::string> labels;
     std::optional<double> storyPoints;
     std::optional<std::string> dueDate;
-    std::string issueTypeKey;
-    std::optional<std::string> parentIssueKey;
+    std::string ticketTypeKey;
+    std::optional<std::string> parentTicketKey;
 };
 
 struct AddCommentRequest {
-    std::string issueKey;
+    std::string ticketKey;
     std::string body;
 };
 
@@ -466,12 +466,12 @@ struct AddCommentRequest {
 // only -- no remaining-estimate linkage (D12 dropped time estimates from
 // V1 entirely, so there is nothing for a worklog to adjust) and no
 // separate own-vs-others edit/delete permission split (D13: any project
-// member with issue access may edit or delete any worklog on that issue,
+// member with ticket access may edit or delete any worklog on that ticket,
 // not just the one they logged -- see TicketService::editWorklog/
 // deleteWorklog).
 struct Worklog {
     std::string id;
-    std::string issueId;
+    std::string ticketId;
     UserSummary author;
     std::string workDate; // ISO date, "YYYY-MM-DD"
     std::int64_t timeSpentSeconds{};
@@ -482,7 +482,7 @@ struct Worklog {
 };
 
 struct AddWorklogRequest {
-    std::string issueKey;
+    std::string ticketKey;
     std::string workDate;
     std::int64_t timeSpentSeconds{};
     std::optional<std::string> comment;
@@ -510,31 +510,31 @@ struct AuditEvent {
     std::string createdAt;
 };
 
-// Fixed personal dashboard (D24): assigned issues, watched issues, recent
+// Fixed personal dashboard (D24): assigned tickets, watched tickets, recent
 // activity, deadlines, simple stats -- no active-sprint widget (Scrum was
-// removed for V1). `recentIssues`/the four counts stay installation-wide;
-// `assignedToMe`/`watchedIssues`/`upcomingDeadlines` are empty for an
+// removed for V1). `recentTickets`/the four counts stay installation-wide;
+// `assignedToMe`/`watchedTickets`/`upcomingDeadlines` are empty for an
 // anonymous viewer (no personal identity to personalize for) and otherwise
 // scoped to the requesting actor. `assignedToMe` and `upcomingDeadlines`
-// both exclude Done-category issues (an already-finished issue isn't
-// something to act on); `upcomingDeadlines` is further limited to issues
+// both exclude Done-category tickets (an already-finished ticket isn't
+// something to act on); `upcomingDeadlines` is further limited to tickets
 // that have a due date, soonest first.
 struct DashboardStats {
-    std::int64_t totalIssues{};
-    std::int64_t todoIssues{};
-    std::int64_t inProgressIssues{};
-    std::int64_t doneIssues{};
-    std::vector<Issue> recentIssues;
-    std::vector<Issue> assignedToMe;
-    std::vector<Issue> watchedIssues;
-    std::vector<Issue> upcomingDeadlines;
+    std::int64_t totalTickets{};
+    std::int64_t todoTickets{};
+    std::int64_t inProgressTickets{};
+    std::int64_t doneTickets{};
+    std::vector<Ticket> recentTickets;
+    std::vector<Ticket> assignedToMe;
+    std::vector<Ticket> watchedTickets;
+    std::vector<Ticket> upcomingDeadlines;
 };
 
 // Kanban board WIP limits (D32/D33): D32 keeps "one board column equals
 // one workflow status", so this is a single flat, installation-wide list
 // -- one row per fixed workflow status, not one per project per status.
 // `wipLimit` is nullopt for "no limit" and is always soft: a
-// display-time-only comparison against a column's live issue count, never
+// display-time-only comparison against a column's live ticket count, never
 // enforced server-side (an over-limit column is highlighted, not
 // blocked).
 struct BoardColumn {

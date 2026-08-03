@@ -1,5 +1,81 @@
 # Verification record
 
+## 2026-08-03 — Full "issue" -> "ticket" terminology rename (user-requested)
+
+Requested directly by the user: "issue nahrad prosim za ticket vsude v nazvech ui i db tabulkach"
+("replace 'issue' with 'ticket' everywhere, in UI names and DB tables"). Given the scope's blast radius
+(database schema, REST API contracts, ~2500 code occurrences across ~40 files, a breaking API change), the
+user was asked one clarifying question -- whether this should also cover REST API paths
+(`/api/v1/issues`) and internal C++/CSS naming, or stay narrower -- and chose the fully comprehensive
+option ("Kompletně všude").
+
+### What changed
+
+- New migration `migrations/{sqlite,postgresql}/016_ticket_terminology.sql`: renames every `issue*`
+  table (`issues` -> `tickets`, plus `issue_history`/`issue_key_aliases`/`issue_labels`/`issue_links`/
+  `issue_statuses`/`issue_types`/`issue_votes`/`issue_watchers`), every `issue_id`/`issue_number`/
+  `issue_key`/`issue_type_id`/`parent_issue_id`/`next_issue_number` column, and every index. Pure rename,
+  no data or behavior change. SQLite auto-rewrites the `CHECK`/`FOREIGN KEY` definitions that reference a
+  renamed table/column (empirically verified against a throwaway in-memory database before writing the
+  migration); PostgreSQL's OID-based dependency tracking needs no equivalent handling. The PostgreSQL
+  migration additionally renames every auto-generated constraint name (primary keys, unique constraints,
+  foreign keys, checks) -- a table/column `RENAME` does not rename those on its own, and while no
+  application code references a constraint name, this was done anyway for full consistency with the
+  "everywhere" scope. `migrations/{sqlite,postgresql}/002_seed_demo.sql` (the mutable, non-checksummed
+  seed script) updated to insert into the renamed tables/columns; its demo prose ("recent tickets",
+  "Implement ticket creation dialog", ...) reads naturally since every occurrence was already about the
+  domain entity, not the generic English word.
+- Every C++ type, method, and identifier renamed: `Domain::Issue` -> `Domain::Ticket`,
+  `TicketService::createIssue`/`editIssue`/`deleteIssue`/... -> `createTicket`/`editTicket`/
+  `deleteTicket`/..., `IDatabase`'s issue-shaped methods, `Domain::WorkflowViolation` messages, and every
+  `issue`-named local variable/parameter/comment across `src/` and `tests/`.
+- Every REST route and JSON field renamed: `/api/v1/issues` -> `/api/v1/tickets` (and every nested route
+  under it), `issueKey` -> `ticketKey`, `parentIssueKey` -> `parentTicketKey`, `issueTypeKey` ->
+  `ticketTypeKey`, etc. This is a breaking API change -- any existing client/bookmark using the old paths
+  or field names stops working; no compatibility shim was added, consistent with this being a pre-release
+  V1 product with no external API consumers yet.
+- `web/`: every CSS class (`.issue-card` -> `.ticket-card`, etc.), `data-issue-key` -> `data-ticket-key`,
+  every function/variable name, and all user-facing text (nav items, headers, buttons, empty-state copy,
+  placeholders) renamed. `GET /browse/{key}` and its route path are unchanged, since it already used a
+  generic `{key}` term rather than "issue".
+- The rename itself was mechanical: a case-preserving substring pass (`"Issue"` -> `"Ticket"`, then
+  `"issue"` -> `"ticket"`) applied only to a fixed, pre-identified list of files known to reference the
+  domain entity -- not blindly repo-wide. This produced exactly one systematic grammar artifact, "an
+  issue" -> "an ticket" (since "ticket" doesn't take the "an" article "issue" did), found via a
+  repo-wide grep afterward and fixed to "a ticket" across every C++ comment/error string, test
+  description, doc, and the one occurrence in `web/app.js`'s user-visible text. A second grep confirmed no
+  other English words containing "issue" as a substring exist in this codebase (no "tissue", "issuer",
+  "reissue") that could have been corrupted, and no all-caps `ISSUE` tokens needed a third replacement
+  rule.
+- Documentation was split by nature, consistent with how this project has always treated its own written
+  history: `docs/SCHEMA.md`, `docs/SCOPE.md`, and the non-narrative sections of `README.md` (feature list,
+  architecture, API reference table) describe current state and were renamed in place, with a new
+  `016_ticket_terminology.sql` entry added to `docs/SCHEMA.md`'s migration list. The dated historical batch
+  narratives -- `README.md`'s "Server verification" section, `NEXT.md`, `CHANGELOG.md`, and this file --
+  describe what was literally true, and named, at the time, so they were left exactly as written; a new
+  dated entry was added to each instead (this entry; the `NEXT.md`/`CHANGELOG.md`/`PLAN.md` counterparts
+  are batch 6 of the post-V1 optional-follow-up list).
+
+### Verification
+
+- Full rebuild (`cmake --build`) with zero new warnings or errors beyond Crow's own pre-existing
+  `-Wconversion` noise; `ctest --output-on-failure`: 8/8 green.
+- Fresh `migrate` + `seed-demo` against a throwaway live PostgreSQL database (`tickethub_verify`, created
+  and dropped for this check only), followed by a direct `pg_constraint`/`pg_indexes` query confirming
+  zero remaining table, index, or constraint names containing "issue" anywhere in the schema, and a
+  `SELECT` confirming the demo data seeded correctly under the new column names.
+- The same fresh-migrate-and-seed check against a throwaway SQLite database, queried directly via
+  `sqlite_master` and `PRAGMA foreign_key_check` (zero violations, zero "issue"-named tables/indexes).
+- A live HTTP smoke test against the PostgreSQL-backed server: login via `POST /api/v1/auth/login`,
+  `GET /api/v1/tickets` returning the seeded tickets with `ticketKey`/`parentTicketKey` fields, and
+  `GET /browse/TH-1` returning the app shell.
+- A full Playwright/Chromium browser pass against the SQLite-backed server: logged in, confirmed the
+  rendered page body contains no "Issue"/"Issues" text anywhere, opened a ticket via its table row
+  (`data-ticket-key`) and confirmed the URL updated to `/browse/TH-1` and the drawer opened, navigated
+  directly to `/browse/TH-2` and confirmed the same, and created a brand-new ticket through the "+ Create"
+  modal and confirmed it appeared in the tickets table -- full create/open/deep-link CRUD path exercised
+  end-to-end after the rename, on both database backends.
+
 ## 2026-08-03 — Jira-style direct issue links (`/browse/{key}`) (user-requested)
 
 Requested directly by the user after asking whether Ticket Hub supports Jira-style `/browse/ABC-123`

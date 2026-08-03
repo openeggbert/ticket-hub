@@ -24,22 +24,22 @@ int main() {
     require(isValidProjectKey("ABCDEFGHIJKL"), "twelve-character project key is valid");
     require(!isValidProjectKey("TH-2"), "project key punctuation is rejected");
     require(!isValidProjectKey("1TH"), "project key must begin with a letter");
-    require(normalizeIssueKey(" cna-123 ") == "CNA-123", "issue key normalization");
-    require(isValidIssueKey("DX12-145"), "issue key validation");
-    require(!isValidIssueKey("DX12-0"), "issue number starts at one");
+    require(normalizeTicketKey(" cna-123 ") == "CNA-123", "ticket key normalization");
+    require(isValidTicketKey("DX12-145"), "ticket key validation");
+    require(!isValidTicketKey("DX12-0"), "ticket number starts at one");
     require(normalizeLabel(" Graphics ") == "graphics", "label normalization");
 
-    CreateIssueRequest valid;
+    CreateTicketRequest valid;
     valid.projectKey = "TH";
-    valid.summary = "Create an issue";
+    valid.summary = "Create a ticket";
     valid.labels = {"backend"};
-    require(validateCreateIssue(valid).empty(), "valid issue request");
+    require(validateCreateTicket(valid).empty(), "valid ticket request");
 
-    CreateIssueRequest invalid;
+    CreateTicketRequest invalid;
     invalid.projectKey = "1";
     invalid.summary = "";
     invalid.storyPoints = -1.0;
-    const auto errors = validateCreateIssue(invalid);
+    const auto errors = validateCreateTicket(invalid);
     require(errors.size() == 3, "invalid request reports all expected errors");
 
     require(normalizeEmail(" Demo@Ticket-Hub.Local ") == "demo@ticket-hub.local", "email normalization lowercases and trims");

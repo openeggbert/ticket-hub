@@ -15,7 +15,7 @@ INSERT INTO local_credentials(user_id, password_hash) VALUES
 ('00000000-0000-4000-8000-000000000003', '$argon2id$v=19$m=19456,t=2,p=1$dGlja2V0LWh1Yi1kZW1v$UiNKUcQUS+BCnY19q1+xT7afkIyooZ0ZM0BsJ0rK+4Q')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO issue_types(id, type_key, name, icon, color, hierarchy_level) VALUES
+INSERT INTO ticket_types(id, type_key, name, icon, color, hierarchy_level) VALUES
 ('10000000-0000-4000-8000-000000000001', 'epic', 'Epic', '◆', '#904EE2', 1),
 ('10000000-0000-4000-8000-000000000002', 'story', 'Story', '●', '#63BA3C', 0),
 ('10000000-0000-4000-8000-000000000003', 'task', 'Task', '■', '#4BADE8', 0),
@@ -23,7 +23,7 @@ INSERT INTO issue_types(id, type_key, name, icon, color, hierarchy_level) VALUES
 ('10000000-0000-4000-8000-000000000005', 'sub-task', 'Sub-task', '▪', '#4BADE8', -1)
 ON CONFLICT DO NOTHING;
 
-INSERT INTO issue_statuses(id, status_key, name, category, sort_order) VALUES
+INSERT INTO ticket_statuses(id, status_key, name, category, sort_order) VALUES
 ('20000000-0000-4000-8000-000000000001', 'backlog', 'Backlog', 'todo', 10),
 ('20000000-0000-4000-8000-000000000002', 'selected', 'Confirmed', 'todo', 20),
 ('20000000-0000-4000-8000-000000000003', 'in-progress', 'In Progress', 'in_progress', 30),
@@ -51,8 +51,8 @@ INSERT INTO priorities(id, priority_key, name, rank, color) VALUES
 ('30000000-0000-4000-8000-000000000005', 'lowest', 'Lowest', 5, '#579DFF')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO projects(id, project_key, name, description, lead_user_id, next_issue_number) VALUES
-('40000000-0000-4000-8000-000000000001', 'TH', 'Ticket Hub', 'Build the lightweight Jira-like issue tracker.', '00000000-0000-4000-8000-000000000001', 7),
+INSERT INTO projects(id, project_key, name, description, lead_user_id, next_ticket_number) VALUES
+('40000000-0000-4000-8000-000000000001', 'TH', 'Ticket Hub', 'Build the lightweight Jira-like ticket tracker.', '00000000-0000-4000-8000-000000000001', 7),
 ('40000000-0000-4000-8000-000000000002', 'WEB', 'Website', 'Public website and documentation.', '00000000-0000-4000-8000-000000000002', 3)
 ON CONFLICT DO NOTHING;
 
@@ -63,21 +63,21 @@ INSERT INTO project_members(project_id, user_id, role_key) VALUES
 ('40000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000002', 'admin')
 ON CONFLICT DO NOTHING;
 
--- `rank_order` is set explicitly (equal to `issue_number`, i.e. creation
+-- `rank_order` is set explicitly (equal to `ticket_number`, i.e. creation
 -- order within each project) because this seed file is applied outside the
 -- checksummed migration/schema_migrations flow (see discoverMigrationFiles'
 -- `_seed_` exclusion) -- it can run before or after 007_ranking.sql's
 -- backfill UPDATE, so relying on that backfill alone would leave these rows
 -- at the column's DEFAULT 0 whenever the seed runs afterward.
-INSERT INTO issues(id, project_id, issue_number, issue_key, summary, description, issue_type_id, status_id, priority_id, reporter_user_id, assignee_user_id, story_points, due_date, rank_order, created_at, updated_at) VALUES
+INSERT INTO tickets(id, project_id, ticket_number, ticket_key, summary, description, ticket_type_id, status_id, priority_id, reporter_user_id, assignee_user_id, story_points, due_date, rank_order, created_at, updated_at) VALUES
 ('50000000-0000-4000-8000-000000000001', '40000000-0000-4000-8000-000000000001', 1, 'TH-1', 'Create portable persistence layer', 'Define a database interface and independent PostgreSQL and SQLite adapters.', '10000000-0000-4000-8000-000000000003', '20000000-0000-4000-8000-000000000005', '30000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 5, NULL, 1, datetime('now', '-6 days'), datetime('now', '-1 day')),
-('50000000-0000-4000-8000-000000000002', '40000000-0000-4000-8000-000000000001', 2, 'TH-2', 'Design project dashboard', 'Create summary cards, recent issues, and project navigation.', '10000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000003', 3, NULL, 2, datetime('now', '-5 days'), datetime('now', '-2 hours')),
+('50000000-0000-4000-8000-000000000002', '40000000-0000-4000-8000-000000000001', 2, 'TH-2', 'Design project dashboard', 'Create summary cards, recent tickets, and project navigation.', '10000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000003', 3, NULL, 2, datetime('now', '-5 days'), datetime('now', '-2 hours')),
 ('50000000-0000-4000-8000-000000000003', '40000000-0000-4000-8000-000000000001', 3, 'TH-3', 'Add Kanban board', 'Render status columns and allow status changes.', '10000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000004', '30000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 8, NULL, 3, datetime('now', '-4 days'), datetime('now', '-5 hours')),
-('50000000-0000-4000-8000-000000000004', '40000000-0000-4000-8000-000000000001', 4, 'TH-4', 'Implement issue creation dialog', 'Validate required fields and return the created issue.', '10000000-0000-4000-8000-000000000003', '20000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000003', NULL, 3, NULL, 4, datetime('now', '-3 days'), datetime('now', '-1 day')),
+('50000000-0000-4000-8000-000000000004', '40000000-0000-4000-8000-000000000001', 4, 'TH-4', 'Implement ticket creation dialog', 'Validate required fields and return the created ticket.', '10000000-0000-4000-8000-000000000003', '20000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000003', NULL, 3, NULL, 4, datetime('now', '-3 days'), datetime('now', '-1 day')),
 ('50000000-0000-4000-8000-000000000005', '40000000-0000-4000-8000-000000000001', 5, 'TH-5', 'Fix mobile board overflow', 'Kanban columns should remain usable on narrow screens.', '10000000-0000-4000-8000-000000000004', '20000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000002', NULL, 2, NULL, 5, datetime('now', '-2 days'), datetime('now', '-2 days')),
 ('50000000-0000-4000-8000-000000000006', '40000000-0000-4000-8000-000000000001', 6, 'TH-6', 'Document MVP boundaries', 'State explicitly which Jira areas are not part of Ticket Hub.', '10000000-0000-4000-8000-000000000003', '20000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', 1, NULL, 6, datetime('now', '-1 day'), datetime('now', '-1 day')),
 ('50000000-0000-4000-8000-000000000007', '40000000-0000-4000-8000-000000000002', 1, 'WEB-1', 'Publish landing page', 'Prepare a simple product landing page.', '10000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000002', 5, NULL, 1, datetime('now', '-2 days'), datetime('now', '-3 hours')),
-('50000000-0000-4000-8000-000000000008', '40000000-0000-4000-8000-000000000002', 2, 'WEB-2', 'Add API documentation', 'Document health, projects, issues, status, and comments endpoints.', '10000000-0000-4000-8000-000000000003', '20000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000003', 2, NULL, 2, datetime('now', '-1 day'), datetime('now', '-7 hours'))
+('50000000-0000-4000-8000-000000000008', '40000000-0000-4000-8000-000000000002', 2, 'WEB-2', 'Add API documentation', 'Document health, projects, tickets, status, and comments endpoints.', '10000000-0000-4000-8000-000000000003', '20000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000003', 2, NULL, 2, datetime('now', '-1 day'), datetime('now', '-7 hours'))
 ON CONFLICT DO NOTHING;
 
 INSERT INTO labels(id, name, color) VALUES
@@ -87,7 +87,7 @@ INSERT INTO labels(id, name, color) VALUES
 ('60000000-0000-4000-8000-000000000004', 'bug', '#E5493A')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO issue_labels(issue_id, label_id) VALUES
+INSERT INTO ticket_labels(ticket_id, label_id) VALUES
 ('50000000-0000-4000-8000-000000000001', '60000000-0000-4000-8000-000000000001'),
 ('50000000-0000-4000-8000-000000000002', '60000000-0000-4000-8000-000000000002'),
 ('50000000-0000-4000-8000-000000000003', '60000000-0000-4000-8000-000000000002'),
@@ -95,7 +95,7 @@ INSERT INTO issue_labels(issue_id, label_id) VALUES
 ('50000000-0000-4000-8000-000000000006', '60000000-0000-4000-8000-000000000003')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO comments(id, issue_id, author_user_id, body, created_at, updated_at) VALUES
+INSERT INTO comments(id, ticket_id, author_user_id, body, created_at, updated_at) VALUES
 ('70000000-0000-4000-8000-000000000001', '50000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000003', 'The first dashboard version is ready for review.', datetime('now', '-6 hours'), datetime('now', '-6 hours')),
 ('70000000-0000-4000-8000-000000000002', '50000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002', 'Status changes are working; drag and drop remains a later enhancement.', datetime('now', '-4 hours'), datetime('now', '-4 hours'))
 ON CONFLICT DO NOTHING;
