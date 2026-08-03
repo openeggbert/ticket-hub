@@ -210,7 +210,31 @@ remains only as optional, non-roadmap follow-up.
   CSS overflow. New SQLite integration test coverage; verified end-to-end against a fresh live PostgreSQL
   database over real HTTP and a full Playwright/Chromium browser pass (11/11 checks, re-run after an
   earlier result was caught as untrustworthy due to a leftover server process).
-  **There is currently no further queued work in this batch; webhooks/email continue next.**
+- **Post-V1, batch 14.** Outbound webhooks (D39/D41) and outbound email (D52) -- items 11 and 12 from
+  batch 12's menu, both needing a durable delivery mechanism first per `CLAUDE.md`. New
+  `webhook_subscriptions`/`webhook_deliveries`/`email_deliveries` tables (migration
+  `019_outbox_delivery.sql`); request handlers only ever write a durable delivery row, and a new
+  `ticket-hub-cli process-outbox` command -- the only place in the codebase that makes an outbound network
+  call -- delivers them, matching the existing `migrate`/`backup`/`restore` "explicit admin-run CLI step"
+  pattern. Webhook payloads signed with a new hand-rolled `Common::hmacSha256Hex` (RFC 4231-verified,
+  built on the project's existing hand-rolled SHA-256 rather than a new OpenSSL dependency); a new
+  `libcurl` dependency, linked only into `ticket-hub-cli`, handles both HTTP delivery and SMTP email.
+  Fixed retry policy (10 attempts, 5 minutes apart, then permanently `failed`); a fixed webhook event
+  catalog (`ticket.created`/`ticket.status_changed`/`ticket.updated`/`comment.added`); email enqueueing
+  mirrors the existing in-app notification set one-for-one, gated on `TICKETHUB_SMTP_HOST` being
+  configured. New `GET`/`POST /api/v1/webhooks`, `DELETE /api/v1/webhooks/{id}` routes and a "Webhooks"
+  admin screen. Found and fixed a real bug during this batch's own live-delivery verification: a mixed
+  anonymous/numbered SQLite placeholder mistake in `recordWebhookDeliveryResult`/
+  `recordEmailDeliveryResult` was writing a failed delivery's own id into its `last_error` column instead
+  of the actual error message (PostgreSQL's adapter, whose placeholders are always explicit, was
+  unaffected) -- see `docs/VERIFICATION.md`'s "Errors and fixes" for the full root cause. New SQLite
+  integration and crypto test coverage (including a regression assertion added directly for the bug
+  above); verified end-to-end over real HTTP/SMTP against both a fresh SQLite and a fresh live PostgreSQL
+  database (real local HTTP/SMTP receivers, independently re-verified HMAC signature and email content)
+  and a full Playwright/Chromium browser pass of the new Webhooks screen. Docker daemon unavailable in
+  this sandbox, so the `Dockerfile`'s `libcurl` additions were reviewed by inspection only, not
+  build-tested.
+  **This closes out the entire six-item list the user picked in batch 12 (1, 3, 4, 6, 11, 12).**
 
 ## Implementation rules
 

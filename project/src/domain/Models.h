@@ -714,4 +714,65 @@ struct BoardColumn {
     std::optional<int> wipLimit;
 };
 
+// --- Durable outbox/delivery infrastructure (D39/D41 webhooks, D52 email,
+// deferred-after-V1, user-requested) ---
+// See migrations/*/019_outbox_delivery.sql for the full design rationale.
+// A delivery attempt gives up permanently (status becomes "failed", not
+// retried again) once it has been attempted this many times; each retry is
+// spaced this many minutes apart (fixed, not exponential -- the CLI-cron
+// delivery model already has coarse-grained timing, so a fancier backoff
+// buys little).
+constexpr int MaxDeliveryAttempts = 10;
+constexpr int DeliveryRetryDelayMinutes = 5;
+
+// The fixed webhook event catalog (D41 scoped down: event-type and
+// single-project filtering only, not the full standard+custom-field visual
+// filter matrix). A subscription's own `eventTypes` (empty = every type)
+// is checked against these.
+constexpr const char* WebhookEventTicketCreated = "ticket.created";
+constexpr const char* WebhookEventTicketStatusChanged = "ticket.status_changed";
+constexpr const char* WebhookEventTicketUpdated = "ticket.updated";
+constexpr const char* WebhookEventCommentAdded = "comment.added";
+
+struct WebhookSubscription {
+    std::string id;
+    std::string targetUrl;
+    // Never returned by a read endpoint after creation (D40's "reveal
+    // secret token material only once" convention, reused here) -- present
+    // in this struct because IDatabase::createWebhookSubscription's return
+    // value is the one place the caller legitimately needs it.
+    std::string secret;
+    std::vector<std::string> eventTypes;
+    std::optional<std::string> projectKey;
+    bool enabled = true;
+    std::optional<UserSummary> createdBy;
+    std::string createdAt;
+};
+
+struct CreateWebhookSubscriptionRequest {
+    std::string targetUrl;
+    std::vector<std::string> eventTypes;
+    std::optional<std::string> projectKey;
+};
+
+// One queued (subscription, event) delivery. `payload` is frozen JSON text
+// built at enqueue time (TicketService), not recomputed at send time.
+struct WebhookDelivery {
+    std::string id;
+    std::string subscriptionId;
+    std::string targetUrl;
+    std::string secret;
+    std::string eventType;
+    std::string payload;
+    int attemptCount{};
+};
+
+struct EmailDelivery {
+    std::string id;
+    std::string recipientEmail;
+    std::string subject;
+    std::string body;
+    int attemptCount{};
+};
+
 } // namespace TicketHub::Domain

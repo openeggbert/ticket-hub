@@ -187,6 +187,22 @@ public:
     std::vector<std::string> listAttachmentStorageKeysForTicket(const std::string& ticketKey) override;
     std::vector<std::string> listAttachmentStorageKeysForProject(const std::string& projectKey) override;
 
+    std::vector<Domain::WebhookSubscription> listWebhookSubscriptions() override;
+    Domain::WebhookSubscription createWebhookSubscription(const Domain::CreateWebhookSubscriptionRequest& request,
+                                                            const std::string& createdByUserId) override;
+    bool deleteWebhookSubscription(const std::string& subscriptionId) override;
+    void createWebhookDelivery(const std::string& subscriptionId, const std::string& eventType,
+                               const std::string& payload) override;
+    std::vector<Domain::WebhookDelivery> listPendingWebhookDeliveries(int limit) override;
+    void recordWebhookDeliveryResult(const std::string& deliveryId, bool success,
+                                     const std::optional<std::string>& error) override;
+
+    void createEmailDelivery(const std::string& recipientUserId, const std::string& subject,
+                             const std::string& body) override;
+    std::vector<Domain::EmailDelivery> listPendingEmailDeliveries(int limit) override;
+    void recordEmailDeliveryResult(const std::string& deliveryId, bool success,
+                                   const std::optional<std::string>& error) override;
+
 private:
     sqlite3* database_{};
     std::string migrationsDirectory_;

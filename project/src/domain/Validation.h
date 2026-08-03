@@ -51,6 +51,13 @@ std::vector<std::string> validateEditComponent(const EditComponentRequest& reque
 std::vector<std::string> validateCreateCustomField(const CreateCustomFieldRequest& request);
 std::vector<std::string> validateEditCustomField(const EditCustomFieldRequest& request);
 
+// D39/D41: targetUrl must be a plain http(s) URL (never javascript:/file:/
+// data: -- this is a server making the request, so accepting an arbitrary
+// scheme risks SSRF beyond what's already inherent to "admin-configured
+// outbound URL"); eventTypes, if any are supplied, must all be from the
+// fixed catalog (Domain::WebhookEvent*).
+std::vector<std::string> validateCreateWebhookSubscription(const CreateWebhookSubscriptionRequest& request);
+
 std::vector<std::string> validateAddWorklog(const AddWorklogRequest& request);
 std::vector<std::string> validateEditWorklog(const EditWorklogRequest& request);
 

@@ -122,15 +122,27 @@ private:
 
 } // namespace
 
-std::string sha256Hex(const std::string& input) {
+std::array<unsigned char, 32> sha256Bytes(const std::string& input) {
     Sha256Digest digest;
     digest.update(reinterpret_cast<const unsigned char*>(input.data()), input.size());
     const auto state = digest.finish();
 
+    std::array<unsigned char, 32> bytes{};
+    for (std::size_t word = 0; word < state.size(); ++word) {
+        bytes[word * 4] = static_cast<unsigned char>((state[word] >> 24U) & 0xFFU);
+        bytes[(word * 4) + 1] = static_cast<unsigned char>((state[word] >> 16U) & 0xFFU);
+        bytes[(word * 4) + 2] = static_cast<unsigned char>((state[word] >> 8U) & 0xFFU);
+        bytes[(word * 4) + 3] = static_cast<unsigned char>(state[word] & 0xFFU);
+    }
+    return bytes;
+}
+
+std::string sha256Hex(const std::string& input) {
+    const auto bytes = sha256Bytes(input);
     std::ostringstream output;
     output << std::hex << std::setfill('0');
-    for (const auto word : state) {
-        output << std::setw(8) << word;
+    for (const auto byte : bytes) {
+        output << std::setw(2) << static_cast<unsigned int>(byte);
     }
     return output.str();
 }

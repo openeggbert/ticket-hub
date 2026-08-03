@@ -1,6 +1,7 @@
 #include "infrastructure/database/PostgresDatabase.h"
 
 #include "common/FileUtil.h"
+#include "common/RandomToken.h"
 #include "common/Uuid.h"
 #include "infrastructure/database/Migration.h"
 #include "domain/Errors.h"
@@ -2992,6 +2993,202 @@ WHERE p.project_key = $1
         keys.push_back(value(result.get(), row, 0));
     }
     return keys;
+}
+
+namespace {
+std::string joinComma(const std::vector<std::string>& values) {
+    std::string joined;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            joined += ",";
+        }
+        joined += values[i];
+    }
+    return joined;
+}
+
+constexpr const char* WebhookSubscriptionSelect = R"SQL(
+SELECT w.id, w.target_url, w.secret, w.event_types, w.project_key, w.enabled,
+       u.id, u.display_name, u.email, w.created_at::text
+FROM webhook_subscriptions w
+LEFT JOIN users u ON u.id = w.created_by_user_id
+)SQL";
+
+Domain::WebhookSubscription readWebhookSubscription(PGresult* result, int row) {
+    Domain::WebhookSubscription subscription;
+    subscription.id = value(result, row, 0);
+    subscription.targetUrl = value(result, row, 1);
+    subscription.secret = value(result, row, 2);
+    subscription.eventTypes = splitLabels(value(result, row, 3));
+    subscription.projectKey = optionalValue(result, row, 4);
+    subscription.enabled = boolValue(result, row, 5);
+    if (PQgetisnull(result, row, 6) == 0) {
+        subscription.createdBy = readUserSummary(result, row, 6);
+    }
+    subscription.createdAt = value(result, row, 9);
+    return subscription;
+}
+} // namespace
+
+std::vector<Domain::WebhookSubscription> PostgresDatabase::listWebhookSubscriptions() {
+    auto connection = connect(connectionString_);
+    auto result = exec(connection.get(), std::string(WebhookSubscriptionSelect) + "ORDER BY w.created_at DESC",
+                       "List webhook subscriptions");
+    std::vector<Domain::WebhookSubscription> subscriptions;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        subscriptions.push_back(readWebhookSubscription(result.get(), row));
+    }
+    return subscriptions;
+}
+
+Domain::WebhookSubscription PostgresDatabase::createWebhookSubscription(
+    const Domain::CreateWebhookSubscriptionRequest& request, const std::string& createdByUserId) {
+    auto connection = connect(connectionString_);
+    const std::string subscriptionId = Common::uuidV4();
+    // See SqliteDatabase::createWebhookSubscription for why the secret is
+    // generated here and stored in cleartext rather than hashed.
+    const std::string secret = Common::randomTokenHex(32);
+    execParams(connection.get(), R"SQL(
+INSERT INTO webhook_subscriptions(id, target_url, secret, event_types, project_key, created_by_user_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+)SQL",
+               {subscriptionId, request.targetUrl, secret, joinComma(request.eventTypes), request.projectKey,
+                createdByUserId},
+               "Insert webhook subscription");
+
+    auto result = execParams(connection.get(), std::string(WebhookSubscriptionSelect) + "WHERE w.id = $1",
+                             {subscriptionId}, "Read created webhook subscription");
+    if (PQntuples(result.get()) != 1) {
+        throw std::runtime_error("Created webhook subscription could not be read back");
+    }
+    return readWebhookSubscription(result.get(), 0);
+}
+
+bool PostgresDatabase::deleteWebhookSubscription(const std::string& subscriptionId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "DELETE FROM webhook_subscriptions WHERE id = $1",
+                             {subscriptionId}, "Delete webhook subscription");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+void PostgresDatabase::createWebhookDelivery(const std::string& subscriptionId, const std::string& eventType,
+                                              const std::string& payload) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), R"SQL(
+INSERT INTO webhook_deliveries(id, subscription_id, event_type, payload, created_at, next_attempt_at)
+VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL",
+               {Common::uuidV4(), subscriptionId, eventType, payload}, "Insert webhook delivery");
+}
+
+std::vector<Domain::WebhookDelivery> PostgresDatabase::listPendingWebhookDeliveries(const int limit) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT d.id, d.subscription_id, w.target_url, w.secret, d.event_type, d.payload, d.attempt_count
+FROM webhook_deliveries d
+JOIN webhook_subscriptions w ON w.id = d.subscription_id
+WHERE d.status = 'pending' AND d.next_attempt_at <= CURRENT_TIMESTAMP
+ORDER BY d.created_at
+LIMIT $1::int
+)SQL",
+                             {std::to_string(limit)}, "List pending webhook deliveries");
+    std::vector<Domain::WebhookDelivery> deliveries;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        Domain::WebhookDelivery delivery;
+        delivery.id = value(result.get(), row, 0);
+        delivery.subscriptionId = value(result.get(), row, 1);
+        delivery.targetUrl = value(result.get(), row, 2);
+        delivery.secret = value(result.get(), row, 3);
+        delivery.eventType = value(result.get(), row, 4);
+        delivery.payload = value(result.get(), row, 5);
+        delivery.attemptCount = static_cast<int>(int64Value(result.get(), row, 6));
+        deliveries.push_back(std::move(delivery));
+    }
+    return deliveries;
+}
+
+void PostgresDatabase::recordWebhookDeliveryResult(const std::string& deliveryId, const bool success,
+                                                    const std::optional<std::string>& error) {
+    auto connection = connect(connectionString_);
+    if (success) {
+        execParams(connection.get(), R"SQL(
+UPDATE webhook_deliveries SET status = 'delivered', delivered_at = CURRENT_TIMESTAMP, last_error = NULL
+WHERE id = $1
+)SQL",
+                   {deliveryId}, "Record webhook delivery success");
+        return;
+    }
+    // See SqliteDatabase::recordWebhookDeliveryResult -- the CASE/increment
+    // both read the row's pre-update attempt_count, so this stays a single
+    // consistent statement.
+    execParams(connection.get(), R"SQL(
+UPDATE webhook_deliveries
+SET attempt_count = attempt_count + 1,
+    last_error = $2,
+    status = CASE WHEN attempt_count + 1 >= $3::int THEN 'failed' ELSE status END,
+    next_attempt_at = CURRENT_TIMESTAMP + ($4::int || ' minutes')::interval
+WHERE id = $1
+)SQL",
+               {deliveryId, error, std::to_string(Domain::MaxDeliveryAttempts),
+                std::to_string(Domain::DeliveryRetryDelayMinutes)},
+               "Record webhook delivery failure");
+}
+
+void PostgresDatabase::createEmailDelivery(const std::string& recipientUserId, const std::string& subject,
+                                            const std::string& body) {
+    auto connection = connect(connectionString_);
+    execParams(connection.get(), R"SQL(
+INSERT INTO email_deliveries(id, recipient_user_id, subject, body, created_at, next_attempt_at)
+VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+)SQL",
+               {Common::uuidV4(), recipientUserId, subject, body}, "Insert email delivery");
+}
+
+std::vector<Domain::EmailDelivery> PostgresDatabase::listPendingEmailDeliveries(const int limit) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT d.id, u.email, d.subject, d.body, d.attempt_count
+FROM email_deliveries d
+JOIN users u ON u.id = d.recipient_user_id
+WHERE d.status = 'pending' AND d.next_attempt_at <= CURRENT_TIMESTAMP
+ORDER BY d.created_at
+LIMIT $1::int
+)SQL",
+                             {std::to_string(limit)}, "List pending email deliveries");
+    std::vector<Domain::EmailDelivery> deliveries;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        Domain::EmailDelivery delivery;
+        delivery.id = value(result.get(), row, 0);
+        delivery.recipientEmail = value(result.get(), row, 1);
+        delivery.subject = value(result.get(), row, 2);
+        delivery.body = value(result.get(), row, 3);
+        delivery.attemptCount = static_cast<int>(int64Value(result.get(), row, 4));
+        deliveries.push_back(std::move(delivery));
+    }
+    return deliveries;
+}
+
+void PostgresDatabase::recordEmailDeliveryResult(const std::string& deliveryId, const bool success,
+                                                  const std::optional<std::string>& error) {
+    auto connection = connect(connectionString_);
+    if (success) {
+        execParams(connection.get(), R"SQL(
+UPDATE email_deliveries SET status = 'delivered', sent_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = $1
+)SQL",
+                   {deliveryId}, "Record email delivery success");
+        return;
+    }
+    execParams(connection.get(), R"SQL(
+UPDATE email_deliveries
+SET attempt_count = attempt_count + 1,
+    last_error = $2,
+    status = CASE WHEN attempt_count + 1 >= $3::int THEN 'failed' ELSE status END,
+    next_attempt_at = CURRENT_TIMESTAMP + ($4::int || ' minutes')::interval
+WHERE id = $1
+)SQL",
+               {deliveryId, error, std::to_string(Domain::MaxDeliveryAttempts),
+                std::to_string(Domain::DeliveryRetryDelayMinutes)},
+               "Record email delivery failure");
 }
 
 } // namespace TicketHub::Infrastructure::Database

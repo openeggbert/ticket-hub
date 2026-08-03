@@ -44,11 +44,13 @@ Comments/Work log/History activity section) plus a History tab exposing the prev
 `ticket_history` audit log for the first time via `GET /api/v1/tickets/{key}/history`; and, most recently,
 three items picked off a user-requested menu of possible new functionality — quick filters on Board/
 Backlog, more keyboard shortcuts (`/` search, `?` help, arrow-key row/card navigation), and D126 pagination
-extended to notifications and the admin audit log; and, most recently, custom fields (D9,
-deferred-after-V1) — admin-defined fields scoped to a project, shown on ticket create/edit/view. Two more
-items from the same menu (outbound webhooks, outbound email) are in progress — see `docs/SCOPE.md`'s
-"Deferred after V1, in progress" note. See `NEXT.md`'s "The roadmap is now complete" section for the exact
-closing detail and `docs/VERIFICATION.md` for exactly what was tested and how.
+extended to notifications and the admin audit log; then custom fields (D9, deferred-after-V1) —
+admin-defined fields scoped to a project, shown on ticket create/edit/view; and, most recently, the last
+two items from the same user-requested menu — outbound webhooks (D39/D41) and outbound email (D52),
+deferred-after-V1 — built on a new durable outbox (`webhook_deliveries`/`email_deliveries` tables) and a
+`ticket-hub-cli process-outbox` command, the only place in the app that makes an outbound network call.
+See `NEXT.md`'s "The roadmap is now complete" section for the exact closing detail and
+`docs/VERIFICATION.md` for exactly what was tested and how.
 
 Implemented now:
 
@@ -115,6 +117,14 @@ Implemented now:
   checkbox/single-select/multi-select) scoped to a project, shown on ticket create/edit/view; a project's
   Admin-or-above manages the field catalog, and a `required` field blocks a ticket create/edit that omits
   it,
+- **outbound webhooks** (D39/D41, deferred-after-V1, user-requested): global-admin-managed subscriptions
+  (target URL, optional project/event-type filter) delivered via `ticket-hub-cli process-outbox` — the
+  server itself never makes an outbound network call. Payloads are signed
+  (`X-TicketHub-Signature: sha256=<hmac>`) with a per-subscription secret shown once at creation; a fixed
+  retry policy (10 attempts, 5-minute spacing) marks a delivery permanently `failed` once exhausted,
+- **outbound email** (D52, deferred-after-V1, user-requested): a pluggable SMTP backend
+  (`TICKETHUB_SMTP_*` env vars) for the existing in-app notification set, delivered the same way as
+  webhooks — durably enqueued by the server, sent only by `process-outbox`,
 - **the fixed ticket-link catalog** (D17): `blocks`/`relates_to`/`duplicates`/`clones`, each visible from
   both linked tickets with the correct outward/inward label; creating or deleting a link requires access
   to both projects,
@@ -241,6 +251,7 @@ TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli seed-demo
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli create-user "person@example.com" "A Person" "a sufficiently long password" [--admin] [--handle=<handle>]
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli backup ./backups/2026-08-02
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli restore ./backups/2026-08-02 --yes
+TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli process-outbox
 ```
 
 `diagnostics` redacts the PostgreSQL connection string. Installed deployments should set `TICKETHUB_MIGRATIONS_ROOT` to the installed migration directory when it differs from the compiled development default.
@@ -262,6 +273,13 @@ no separate upgrade command.
 flow in V1 (`REDUCED_SCOPE_SPECIFICATION.md` section 3). The password is set directly by whoever runs
 the command; there is no forced-change-on-first-login flow. `--handle` sets the optional, unique @mention
 handle (D56/D80) -- there is no self-service profile-editing flow yet to set or change it afterward.
+
+`process-outbox` (D39/D41 webhooks, D52 email, deferred-after-V1) attempts delivery of every pending
+webhook and email row whose `next_attempt_at` has arrived, then exits -- it is not a daemon; run it on an
+admin-configured schedule (cron, systemd timer, etc.), every 1-5 minutes. This is the *only* place in the
+entire codebase that makes an outbound network call: the server and every request handler only ever write
+a durable delivery row. Requires `libcurl` (linked only into `ticket-hub-cli`, not the server). Email
+delivery is skipped with a message if `TICKETHUB_SMTP_HOST` is unset.
 
 ## Run with SQLite
 
@@ -343,6 +361,12 @@ build and run normally in any environment with ordinary Docker Hub network acces
 | `TICKETHUB_WEB_ROOT` | source `web/` | static web root |
 | `TICKETHUB_MIGRATIONS_ROOT` | source `migrations/` | backend migration root |
 | `TICKETHUB_ATTACHMENTS_DIR` | source `data/attachments/` | local filesystem attachment storage root (D15) -- point this at a persistent, backed-up volume in a real deployment |
+| `TICKETHUB_SMTP_HOST` | unset | SMTP server host for outbound email (D52); unset disables email delivery entirely -- `process-outbox` skips the email pass with a log message rather than failing |
+| `TICKETHUB_SMTP_PORT` | `587` | SMTP port |
+| `TICKETHUB_SMTP_USERNAME` | unset | SMTP auth username, if the server requires it |
+| `TICKETHUB_SMTP_PASSWORD` | unset | SMTP auth password, if the server requires it |
+| `TICKETHUB_SMTP_FROM` | unset | envelope/`From` address for outbound email |
+| `TICKETHUB_SMTP_USE_TLS` | `true` | STARTTLS on the SMTP connection |
 
 ## API
 
@@ -396,6 +420,9 @@ trip; there is no admin configuration for either limit.
 | `POST` | `/api/v1/notifications/{id}/read` | session + CSRF | scoped to the caller's own notifications |
 | `POST` | `/api/v1/notifications/read-all` | session + CSRF | scoped to the caller's own notifications |
 | `GET` | `/api/v1/admin/audit-events` | session, global admin | admin/security events (D23), newest first, paginated via `page`/`pageSize` (D126) |
+| `GET` | `/api/v1/webhooks` | session, global admin | webhook subscriptions (D39/D41); `secret` is never included |
+| `POST` | `/api/v1/webhooks` | session + CSRF, global admin | `{targetUrl, projectKey?, eventTypes?}` -> the response's `secret` is shown once, never retrievable again |
+| `DELETE` | `/api/v1/webhooks/{id}` | session + CSRF, global admin | also cascades away its queued/history deliveries |
 | `GET` | `/api/v1/projects` | session, or anon if enabled | active project summaries |
 | `POST` | `/api/v1/projects` | session + CSRF, global admin | create project |
 | `PATCH` | `/api/v1/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |

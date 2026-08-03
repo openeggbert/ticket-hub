@@ -21,6 +21,22 @@ struct AppConfig {
     // TICKETHUB_ATTACHMENTS_DIR.
     std::string attachmentsRoot;
 
+    // Outbound email (D52, deferred-after-V1): SMTP only, configured like
+    // the database connection string -- environment variables at deploy
+    // time, never an admin-editable runtime setting (the password would
+    // otherwise need to live in the database). Email delivery is enabled
+    // (TicketService::emailDeliveryEnabled_) exactly when smtpHost is
+    // non-empty; every other smtp* field is meaningless until then. See
+    // src/infrastructure/delivery/SmtpEmailSender.h for how these are used
+    // (only linked into ticket-hub-cli's `process-outbox` command -- the
+    // server itself never makes an outbound network call).
+    std::string smtpHost;
+    std::uint16_t smtpPort{587};
+    std::string smtpUsername;
+    std::string smtpPassword;
+    std::string smtpFromAddress;
+    bool smtpUseTls{true};
+
     static AppConfig fromEnvironment();
 };
 

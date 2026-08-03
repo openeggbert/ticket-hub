@@ -1,6 +1,10 @@
 #include "application/AuthService.h"
 #include "config/Config.h"
 #include "infrastructure/database/DatabaseFactory.h"
+#include "infrastructure/delivery/SmtpEmailSender.h"
+#include "infrastructure/delivery/WebhookDeliveryClient.h"
+
+#include <curl/curl.h>
 
 #include <exception>
 #include <filesystem>
@@ -36,6 +40,13 @@ void printUsage(const char* executable) {
         << "                                                ones. Destructive and irreversible; requires\n"
         << "                                                --yes. Runs pending migrations afterward. Stop\n"
         << "                                                the server first (D108).\n"
+        << "  process-outbox                               Attempt delivery of every pending webhook\n"
+        << "                                                (D39/D41) and email (D52) row whose retry\n"
+        << "                                                time has arrived. Not run automatically --\n"
+        << "                                                intended to be cron-scheduled (every 1-5\n"
+        << "                                                minutes is reasonable). The server itself\n"
+        << "                                                never makes an outbound network call; this\n"
+        << "                                                command is the only place that does.\n"
         << "  version                                      Print the Ticket Hub version.\n";
 }
 
@@ -172,6 +183,77 @@ int runRestore(const TicketHub::Config::AppConfig& config, int argc, char** argv
     return 0;
 }
 
+// Durable outbox delivery (D39/D41 webhooks, D52 email; see
+// migrations/*/019_outbox_delivery.sql). This is the ONLY place in the
+// entire application that makes an outbound network call -- the server
+// (src/main.cpp) only ever writes durable delivery rows, never sends them,
+// so a slow or unreachable external endpoint can never block a
+// request-handling thread. Intended to be cron-scheduled by the admin, the
+// same "explicit CLI step, not an automatic background job" posture
+// backup/restore/migrate already use. Processes a fixed-size batch per
+// call (rather than looping until empty) so a single invocation has a
+// predictable running time even with a large backlog -- a cron running
+// every few minutes will simply catch up over subsequent runs.
+int runProcessOutbox(const TicketHub::Config::AppConfig& config) {
+    using TicketHub::Infrastructure::Delivery::sendWebhookDelivery;
+    using TicketHub::Infrastructure::Delivery::sendEmail;
+    using TicketHub::Infrastructure::Delivery::SmtpConfig;
+
+    constexpr int BatchSize = 100;
+    auto database = TicketHub::Infrastructure::Database::createDatabase(config);
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    int webhooksDelivered = 0;
+    int webhooksFailed = 0;
+    for (const auto& delivery : database->listPendingWebhookDeliveries(BatchSize)) {
+        const auto result = sendWebhookDelivery(delivery.targetUrl, delivery.secret, delivery.payload);
+        database->recordWebhookDeliveryResult(delivery.id, result.success,
+            result.success ? std::nullopt : std::optional<std::string>(result.error));
+        if (result.success) {
+            ++webhooksDelivered;
+        } else {
+            ++webhooksFailed;
+            std::cerr << "webhook delivery " << delivery.id << " (" << delivery.eventType << ") failed: "
+                      << result.error << " (attempt " << (delivery.attemptCount + 1) << "/"
+                      << TicketHub::Domain::MaxDeliveryAttempts << ")\n";
+        }
+    }
+
+    int emailsSent = 0;
+    int emailsFailed = 0;
+    if (config.smtpHost.empty()) {
+        std::cout << "SMTP not configured (TICKETHUB_SMTP_HOST unset) -- skipping email delivery.\n";
+    } else {
+        SmtpConfig smtp;
+        smtp.host = config.smtpHost;
+        smtp.port = config.smtpPort;
+        smtp.username = config.smtpUsername;
+        smtp.password = config.smtpPassword;
+        smtp.fromAddress = config.smtpFromAddress;
+        smtp.useTls = config.smtpUseTls;
+        for (const auto& delivery : database->listPendingEmailDeliveries(BatchSize)) {
+            const auto result = sendEmail(smtp, delivery.recipientEmail, delivery.subject, delivery.body);
+            database->recordEmailDeliveryResult(delivery.id, result.success,
+                result.success ? std::nullopt : std::optional<std::string>(result.error));
+            if (result.success) {
+                ++emailsSent;
+            } else {
+                ++emailsFailed;
+                std::cerr << "email delivery " << delivery.id << " to " << delivery.recipientEmail
+                          << " failed: " << result.error << " (attempt " << (delivery.attemptCount + 1) << "/"
+                          << TicketHub::Domain::MaxDeliveryAttempts << ")\n";
+            }
+        }
+    }
+
+    curl_global_cleanup();
+
+    std::cout << "Webhooks: " << webhooksDelivered << " delivered, " << webhooksFailed << " failed this run.\n"
+              << "Email: " << emailsSent << " sent, " << emailsFailed << " failed this run.\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -211,6 +293,14 @@ int main(int argc, char** argv) {
 
         if (command == "restore") {
             return runRestore(config, argc, argv);
+        }
+
+        if (command == "process-outbox") {
+            if (argc != 2) {
+                printUsage(argv[0]);
+                return 2;
+            }
+            return runProcessOutbox(config);
         }
 
         if (argc != 2) {
