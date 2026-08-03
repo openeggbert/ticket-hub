@@ -221,7 +221,10 @@ remain as the long-term aspirational baseline only — do not build against them
   the UI was missing); the issues table gained a header "select all" checkbox, Shift+click range select,
   and Shift+ArrowDown/ArrowUp keyboard range extension. Both `web/`-only. See `docs/VERIFICATION.md` for
   detail.
-- **No further optional items remain** -- every item on the post-V1 follow-up list is done.
+- **No further items remain on the original post-V1 follow-up list** -- every one is done.
+- **Batch 5 (done): Jira-style `/browse/{key}` direct issue links** -- a new user-requested addition after
+  the original list closed. New `GET /browse/<key>` server route plus `history.pushState`/`popstate` URL
+  syncing in `web/app.js`. No backend/schema changes beyond the route. See `docs/VERIFICATION.md`.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 

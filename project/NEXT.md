@@ -36,6 +36,11 @@ again picked by explicit user choice; see "The roadmap is now complete" below fo
 driven multi-select for the issues table -- the last two items on the optional-follow-up list, both picked
 together in one go; see "The roadmap is now complete" below for detail.
 
+**Post-V1, batch 5 (done):** Jira-style `/browse/{key}` direct issue links with full browser history
+support (Back/Forward, deep links, reload-safe) -- a new user-requested addition after the original
+optional-follow-up list (batches 1-4) had already been fully closed out; see "The roadmap is now complete"
+below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -730,8 +735,9 @@ from the security self-review is either fixed or recorded as an explicit, decisi
 residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 
 **Every item identified as optional, non-roadmap follow-up when the reduced-scope V1 roadmap closed is now
-done** (post-V1 batches 1-4, below). There is currently no further work queued -- anything beyond this
-point is new scope and, per the same rule that has applied to
+done** (post-V1 batches 1-4, below). One further item was added since at explicit user request -- Jira-
+style `/browse/{key}` direct issue links (post-V1 batch 5, below). There is currently no further work
+queued -- anything beyond this point is new scope and, per the same rule that has applied to
 `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should not be started without a fresh, explicit product
 conversation.
 
@@ -808,6 +814,25 @@ pre-existing "checkbox click never opens the drawer" guard still holds. Screensh
 dark mode. Both existing browser regression scripts re-run clean. This closes out every item on the
 optional-follow-up list identified when the reduced-scope V1 roadmap closed. Full detail in
 `docs/VERIFICATION.md`.
+
+**Post-V1 batch 5 (done):** the user asked whether Ticket Hub supports Jira-style `/browse/ABC-123` direct
+issue links -- it didn't (a grep for `history.`/`pushState`/`location.` in `web/app.js` found nothing; the
+app was pure client-state with zero URL routing), so this batch added one. New `GET /browse/<string>`
+route in `src/web/HttpServer.cpp`, serving the identical `index.html` shell (and identical security
+headers) as `/`. `web/app.js` keeps the URL synced via `history.pushState` as issues open/close, guarded so
+a new history entry is only pushed when the URL doesn't already match the target issue -- the same guard
+makes it safe for every existing call site that re-opens the same issue after a mutation (edit, comment,
+watch/vote, worklog, clone, move, ...) without spamming the browser's back-button history with duplicate
+entries, and means the new `popstate` listener (for Back/Forward support) doesn't need a separate
+"don't re-push" flag either, since the browser has already updated the URL by the time it fires. The URL
+is also checked once after initial page load and once after a successful login, so a deep link works
+whether a session already existed or not (no extra code was needed for "session expired while sitting on
+`/browse/TH-5`, then logs back in" -- the URL just never changes while the login screen is up). No
+backend/schema changes beyond the one new static route. Browser-verified with Playwright/Chromium across
+every combination: logged-out direct navigation, clicking between issues, a full page reload while on a
+`/browse/{key}` URL, Back/Forward, an unknown key (shows the existing error banner, no crash), and
+confirming `history.length` doesn't grow across repeated mutations on an already-open issue. Both existing
+browser regression scripts re-run clean. Full detail in `docs/VERIFICATION.md`.
 
 ## Verification status
 

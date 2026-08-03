@@ -1,5 +1,62 @@
 # Verification record
 
+## 2026-08-03 — Jira-style direct issue links (`/browse/{key}`) (user-requested)
+
+Requested directly by the user after asking whether Ticket Hub supports Jira-style `/browse/ABC-123`
+URLs -- it didn't (the app was a pure client-state SPA with no URL routing/deep-linking at all, confirmed
+by grepping for `history.`/`pushState`/`location.` in `web/app.js` and finding nothing). This adds it.
+
+### What changed
+
+- New server route in `src/web/HttpServer.cpp`: `GET /browse/<string>` serves the exact same `index.html`
+  shell as `/` (same security headers, same CSP), so a bookmarked/shared `/browse/TH-123` link works on a
+  fresh page load or reload, not just client-side navigation. The `<string>` path segment is never
+  inspected server-side -- authorization and the actual key lookup happen through the existing
+  `GET /api/v1/issues/{key}` route, exactly as any other issue open already does.
+- `web/app.js` gained three small pieces of URL-sync plumbing around the existing `openIssue`/
+  `closeDrawer` functions (no new UI, no new API calls):
+  - `openIssue(issueKey)` now calls `history.pushState(..., /browse/{key})`, but *only* when the current
+    URL doesn't already match that key. This one guard does triple duty: a normal click/keyboard-open
+    pushes a fresh entry (the common case); every other existing call site that re-invokes
+    `openIssue(issue.key)` to refresh the drawer's content after a mutation (edit, comment, watch/vote,
+    worklog, clone, move, ...) does *not* push a duplicate entry, since the URL is already correct --
+    without this guard, every mutation on an open issue would have spammed a new, identical browser-
+    history entry; and the `popstate` handler below doesn't need a separate "don't push" flag, since by
+    the time it runs the browser has already updated the URL to match.
+  - `closeDrawer()` now pushes back to `/`, but only if the URL is currently on a `/browse/...` path (so
+    it's a no-op when the drawer was never opened from one).
+  - A new `popstate` listener reacts to the browser's Back/Forward buttons: opens the issue named in the
+    now-current URL, or closes the drawer if the URL no longer names one.
+  - `openIssueFromUrlIfAny()`, called once after the initial page-load bootstrap and once after a
+    successful login, opens whatever issue the URL names -- covering both "already has a session, loads
+    `/browse/TH-5` directly" and "session expired/never existed, shown the login screen while sitting on
+    `/browse/TH-5`, then logs in and lands on it anyway" (the login flow needed no extra code for the
+    second case: the URL never changes while the login screen is up, so the same lookup on the post-login
+    path picks it up naturally).
+- No backend/schema changes beyond the one new static route; no new API endpoints.
+
+### Verification
+
+Browser-verified with Playwright/Chromium, covering every combination:
+- Direct navigation to `/browse/TH-1` while logged out: shows the login screen (server-side auth gating
+  is unaffected, same as `/`); after logging in, the drawer opens straight to TH-1 with no extra click.
+- Clicking a different issue (TH-2) updates the URL to `/browse/TH-2`.
+- A full page reload while on `/browse/TH-2` (session cookie already present) opens directly to TH-2 with
+  no login screen flash.
+- Browser Back from `/browse/TH-3` correctly hides the drawer and returns to `/`; Forward correctly
+  reopens TH-3.
+- Two consecutive mutations on the open issue (watch/unwatch) leave `history.length` unchanged --
+  confirming the "don't push if the URL already matches" guard actually prevents history spam, not just
+  in theory.
+- An unknown issue key (`/browse/TH-9999`) shows the pre-existing "issue not found" error banner inside
+  the drawer rather than crashing or leaving the app unusable -- the existing `openIssue` error handling
+  needed no changes to cover this new entry path.
+- Confirmed the new route carries the same `Content-Security-Policy`/`X-Frame-Options` headers as `/`.
+- Re-ran both existing browser regression scripts (`login_browser_test.mjs`,
+  `reorder_move_bulk_test.mjs`) unchanged -- both passed, including the move-issue scenario that already
+  exercises `openIssue` with a freshly-changed key after a mutation.
+- `ctest --output-on-failure`: 8/8 green (no database-layer code touched).
+
 ## 2026-08-03 — Rename the "Selected" workflow status to "Confirmed" (user-requested)
 
 A pure display-label change, requested directly by the user. `002_seed_demo.sql`'s `issue_statuses` seed

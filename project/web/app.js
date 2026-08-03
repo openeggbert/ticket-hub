@@ -1652,7 +1652,34 @@ function editFieldsMarkup(issue) {
     <label class="wide">Labels<input id="edit-labels" value="${escapeHtml(issue.labels.join(', '))}"></label>`;
 }
 
+// Jira-style direct issue links (/browse/TH-123), synced via history.
+// pushState rather than a full page navigation. openIssue/closeDrawer only
+// push a new history entry when the URL doesn't already reflect the target
+// state -- this is what makes it safe to call openIssue(issue.key) after
+// every in-drawer mutation (edit, comment, watch/vote, worklog, ...) the
+// way the rest of this file already does, without spamming the browser's
+// back-button history with duplicate entries for the same issue, and what
+// makes the popstate handler below not re-push the URL it's reacting to.
+function issueUrlFor(issueKey) {
+  return `/browse/${encodeURIComponent(issueKey)}`;
+}
+
+function issueKeyFromLocation() {
+  const match = window.location.pathname.match(/^\/browse\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function openIssueFromUrlIfAny() {
+  const issueKey = issueKeyFromLocation();
+  if (issueKey) {
+    await openIssue(issueKey);
+  }
+}
+
 async function openIssue(issueKey) {
+  if (issueKeyFromLocation() !== issueKey) {
+    history.pushState({ issueKey }, '', issueUrlFor(issueKey));
+  }
   issueDrawer.classList.remove('hidden');
   drawerBackdrop.classList.remove('hidden');
   issueDrawer.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
@@ -2117,6 +2144,9 @@ function closeDrawer() {
   issueDrawer.classList.add('hidden');
   drawerBackdrop.classList.add('hidden');
   state.currentIssue = null;
+  if (issueKeyFromLocation()) {
+    history.pushState(null, '', '/');
+  }
 }
 
 // Populates the "Epic"/"Parent" picker to match the fixed hierarchy rules
@@ -2320,6 +2350,7 @@ loginForm.addEventListener('submit', async event => {
     showAppShell();
     await loadBaseData();
     await renderCurrentView();
+    await openIssueFromUrlIfAny();
   } catch (error) {
     loginError.textContent = error.message;
     loginError.classList.remove('hidden');
@@ -2333,6 +2364,21 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
     // Best-effort: show the login screen regardless of the response.
   }
   showLoginScreen();
+});
+
+// Back/forward button support for /browse/{key} links: react to the URL
+// having already changed (the browser updates it before firing popstate)
+// rather than pushing a new entry ourselves -- openIssue/closeDrawer's own
+// "only push if the URL doesn't already match" guards make this safe.
+window.addEventListener('popstate', () => {
+  if (loginScreen.classList.contains('hidden')) {
+    const issueKey = issueKeyFromLocation();
+    if (issueKey) {
+      openIssue(issueKey).catch(() => {});
+    } else if (state.currentIssue) {
+      closeDrawer();
+    }
+  }
 });
 
 document.addEventListener('keydown', event => {
@@ -2358,6 +2404,7 @@ document.addEventListener('keydown', event => {
   try {
     await loadBaseData();
     await renderDashboard();
+    await openIssueFromUrlIfAny();
   } catch (error) {
     showError(error);
   }
