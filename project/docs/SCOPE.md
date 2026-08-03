@@ -119,10 +119,13 @@ remain as the long-term aspirational baseline only — do not build against them
   `DELETE /api/v1/tokens/{id}`. Hashed storage, mandatory expiration, revocation, last-used tracking; no
   scopes/rotation/admin-configurable lifetime. `Authorization: Bearer <token>` now authenticates any
   route (mutually exclusive with the session cookie per request, D54); Bearer-authenticated requests are
-  exempt from the CSRF check. No web UI yet for managing tokens.
+  exempt from the CSRF check.
 - **Active-session list and "sign out everywhere" (Phase 6, D54):** `GET /api/v1/sessions`,
   `POST /api/v1/sessions/sign-out-others` (session-cookie-only, not usable via PAT). Keeps the caller's own
-  current session active -- a conservative default, no decision text specifies this. No web UI yet.
+  current session active -- a conservative default, no decision text specifies this.
+- **Account settings web UI (post-V1):** a new "Account" page in `web/` (create/list/revoke personal
+  access tokens, list/sign-out active sessions), the first optional follow-up item picked after V1 closed.
+  No backend or schema changes -- consumes the endpoints above, which already existed.
 - **Fixed rate limits (Phase 6, D124/D125):** a new in-memory `TicketHub::Web::RateLimiter` (fixed-window,
   no admin config) caps `/api/v1/auth/login` at 20 attempts per IP per 15 minutes (on top of, not instead of,
   the existing per-account 10-attempts/15-minutes lockout) and every write route at 120 requests per

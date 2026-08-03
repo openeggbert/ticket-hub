@@ -851,6 +851,125 @@ async function renderAttachmentRecycleBin() {
   }));
 }
 
+// Holds a just-created token's raw value across the single re-render that
+// follows creating it -- the server only ever returns the raw value once
+// (D40), so this is the one and only chance the UI has to show it. Cleared
+// as soon as it's read, so refreshing or navigating away never re-shows it.
+let revealedToken = null;
+
+// Account settings (Phase 6, D39/D40/D54): personal access tokens and
+// active sessions. Unlike the audit log/attachment recycle bin, this view
+// is visible to every authenticated user, not just admins -- both
+// resources are scoped to the caller's own account, not installation-wide.
+async function renderAccountView() {
+  content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  const [{ items: tokens }, { items: sessions }] = await Promise.all([
+    api('/api/v1/tokens'),
+    api('/api/v1/sessions')
+  ]);
+  const reveal = revealedToken;
+  revealedToken = null;
+  content.innerHTML = `
+    ${pageHeader('Account', 'Manage your personal access tokens and active sessions.', 'Account')}
+    ${reveal ? `
+    <div class="panel token-reveal-panel">
+      <strong>Copy your new token now -- it will not be shown again.</strong>
+      <div class="token-reveal-value"><code id="revealed-token-value">${escapeHtml(reveal.token)}</code><button type="button" class="secondary-button" id="copy-token-button">Copy</button></div>
+    </div>` : ''}
+    <div class="panel">
+      <div class="panel-header"><h2>Personal access tokens</h2><button type="button" class="primary-button" id="new-token-button">＋ New token</button></div>
+      <form class="form-grid hidden" id="token-form">
+        <label>Name<input name="name" required maxlength="255" placeholder="e.g. laptop CI script"></label>
+        <label>Expires in (days)<input name="expiresInDays" type="number" min="1" max="365" required value="90"></label>
+        <div class="wide modal-footer" style="padding:0"><button type="button" class="secondary-button" id="cancel-token-button">Cancel</button><button type="submit" class="primary-button">Create token</button></div>
+      </form>
+      <div id="token-error" class="form-error hidden"></div>
+      <div style="overflow-x:auto">
+        <table class="issue-table">
+          <thead><tr><th>Name</th><th>Created</th><th>Expires</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+          <tbody>${tokens.length ? tokens.map(token => `
+            <tr>
+              <td>${escapeHtml(token.name)}</td>
+              <td>${escapeHtml(relativeDate(token.createdAt))}</td>
+              <td>${escapeHtml(formatDate(token.expiresAt))}</td>
+              <td>${token.lastUsedAt ? escapeHtml(relativeDate(token.lastUsedAt)) : 'Never used'}</td>
+              <td>${token.revokedAt ? '<span class="status-chip todo">Revoked</span>' : '<span class="status-chip done">Active</span>'}</td>
+              <td>${token.revokedAt ? '' : `<button type="button" class="secondary-button" data-revoke-token="${escapeHtml(token.id)}">Revoke</button>`}</td>
+            </tr>`).join('') : '<tr><td colspan="6"><div class="empty-state">No personal access tokens yet.</div></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h2>Active sessions</h2>${sessions.length > 1 ? '<button type="button" class="secondary-button" id="sign-out-others-button">Sign out everywhere else</button>' : ''}</div>
+      <div style="overflow-x:auto">
+        <table class="issue-table">
+          <thead><tr><th>Signed in</th><th>Expires</th><th></th></tr></thead>
+          <tbody>${sessions.map(session => `
+            <tr>
+              <td>${escapeHtml(relativeDate(session.createdAt))}</td>
+              <td>${escapeHtml(formatDate(session.expiresAt))}</td>
+              <td>${session.isCurrent ? '<span class="status-chip done">This device</span>' : ''}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  document.querySelector('#new-token-button').addEventListener('click', () => {
+    document.querySelector('#token-form').classList.remove('hidden');
+    document.querySelector('#token-form input[name="name"]').focus();
+  });
+  document.querySelector('#cancel-token-button').addEventListener('click', () => {
+    document.querySelector('#token-form').classList.add('hidden');
+  });
+  document.querySelector('#token-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    const errorBox = document.querySelector('#token-error');
+    errorBox.classList.add('hidden');
+    try {
+      const created = await api('/api/v1/tokens', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: form.elements.name.value,
+          expiresInDays: Number(form.elements.expiresInDays.value)
+        })
+      });
+      revealedToken = { token: created.token };
+      showToast('Token created');
+      await renderAccountView();
+    } catch (error) {
+      errorBox.textContent = error.message;
+      errorBox.classList.remove('hidden');
+    }
+  });
+  document.querySelectorAll('[data-revoke-token]').forEach(button => button.addEventListener('click', async () => {
+    try {
+      await api(`/api/v1/tokens/${encodeURIComponent(button.dataset.revokeToken)}`, { method: 'DELETE' });
+      showToast('Token revoked');
+      await renderAccountView();
+    } catch (error) { showToast(error.message); }
+  }));
+  document.querySelector('#sign-out-others-button')?.addEventListener('click', async () => {
+    try {
+      const result = await api('/api/v1/sessions/sign-out-others', { method: 'POST' });
+      showToast(`Signed out ${result.signedOutCount} other session(s)`);
+      await renderAccountView();
+    } catch (error) { showToast(error.message); }
+  });
+  if (reveal) {
+    document.querySelector('#copy-token-button')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(reveal.token);
+        showToast('Token copied to clipboard');
+      } catch {
+        showToast('Could not copy automatically -- select and copy manually');
+      }
+    });
+  }
+}
+
 function issueFilterParams() {
   const params = new URLSearchParams();
   if (state.selectedProject) params.set('project', state.selectedProject);
@@ -1286,6 +1405,7 @@ async function renderCurrentView() {
     if (state.view === 'dashboard') await renderDashboard();
     else if (state.view === 'board') await renderBoard();
     else if (state.view === 'issues') await renderIssues();
+    else if (state.view === 'account') await renderAccountView();
     else if (state.view === 'audit') await renderAuditLog();
     else if (state.view === 'attachment-bin') await renderAttachmentRecycleBin();
     else await renderProjects();

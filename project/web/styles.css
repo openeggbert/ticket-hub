@@ -267,6 +267,10 @@ a.secondary-button { display: inline-block; text-decoration: none; cursor: point
 .form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus, .comment-form textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(12,102,228,.14); }
 .form-error { margin: 0 22px 18px; padding: 10px 12px; border-radius: 7px; background: var(--danger-bg); color: var(--danger); font-size: 13px; }
 
+.token-reveal-panel { padding: 16px 18px; background: var(--success-bg); color: var(--success-text); border-color: var(--success-text); }
+.token-reveal-value { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.token-reveal-value code { flex: 1; padding: 8px 10px; border-radius: 7px; background: var(--surface); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; overflow-x: auto; white-space: nowrap; }
+
 .issue-drawer { position: fixed; top: 0; right: 0; z-index: 90; width: min(720px, 94vw); height: 100vh; overflow-y: auto; background: var(--surface); box-shadow: -12px 0 40px rgba(9,30,66,.22); }
 .drawer-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid var(--border); background: var(--topbar-bg); backdrop-filter: blur(8px); }
 .drawer-content { padding: 24px; }

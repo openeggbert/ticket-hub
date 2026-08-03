@@ -20,8 +20,11 @@ security self-review (`docs/THREAT_MODEL.md`), which found and fixed a real brok
 bug plus four lower-severity issues (an unnecessarily session-derived CSRF cookie, a login timing side
 channel, a missing CSRF check on logout, and CSV formula injection) -- see the "Threat-model/security
 self-review" batch entry below for full detail. See "The roadmap is now complete" near the end of this
-file for what remains only as optional, non-roadmap follow-up (there is no web UI yet for managing tokens
-or sessions, for example).
+file for what remains only as optional, non-roadmap follow-up.
+
+**Post-V1, batch 1 (done):** a web UI for managing personal access tokens and active sessions -- the
+first optional item, picked by explicit user choice; see "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -715,12 +718,21 @@ from the security self-review is either fixed or recorded as an explicit, decisi
 residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 
 What's left is not roadmap work, only optional follow-up if this project continues past V1: re-typing/
-re-parenting an issue (above), the optional UX polish listed above (drag-and-drop board reordering, a
-friendlier bulk Done-status picker, keyboard multi-select), and a web UI for managing personal access
-tokens and active sessions (both already have a full REST API and CLI-equivalent story; only the `web/`
-surface is missing). None of this is required to consider V1 complete, and none of it should be started
-without a fresh, explicit product conversation -- the same rule that has applied to
-`docs/REMOVED_AND_DEFERRED_FEATURES.md` all along.
+re-parenting an issue (above) and the optional UX polish listed above (drag-and-drop board reordering, a
+friendlier bulk Done-status picker, keyboard multi-select). None of this is required to consider V1
+complete, and none of it should be started without a fresh, explicit product conversation -- the same rule
+that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along.
+
+**Post-V1 batch 1 (done):** the user was asked to pick the first piece of optional follow-up and chose a
+web UI for managing personal access tokens and active sessions -- both already had a complete REST API and
+CLI-equivalent story since Phase 6 (D39/D40/D54); only the `web/` surface was missing. New "Account" nav
+item/view in `web/index.html`/`app.js`, visible to every authenticated user: create/list/revoke personal
+access tokens (the raw token shown exactly once, per D40, then never re-shown), list active sessions with
+the current one badged, and "sign out everywhere else". No backend or schema changes -- purely a new
+consumer of existing, already-tested endpoints. Browser-verified end-to-end with Playwright/Chromium,
+including a genuine two-cookie-jar session test confirming "sign out everywhere else" actually invalidates
+the other session server-side (not just hides it in the UI) while preserving the caller's own. Full detail
+in `docs/VERIFICATION.md`.
 
 ## Verification status
 

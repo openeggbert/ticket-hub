@@ -35,8 +35,9 @@ remains only as optional, non-roadmap follow-up.
   PostgreSQL matching the exit gate exactly), the upgrade mechanism (D111, already satisfied by
   `ticket-hub-cli migrate`), structured JSON logs to stdout (D133, a new `JsonLogHandler` replacing
   Crow's default stderr logger), and an in-app admin version banner (D112, admin-configured, no outbound
-  network calls). No web UI yet for managing tokens or sessions.
-- **Milestone 4** (Phase 8: packaging and release hardening) -- **started**. Docker image + Compose
+  network calls). A web UI for managing tokens and sessions was added post-V1 as the first optional
+  follow-up item (see below).
+- **Milestone 4** (Phase 8: packaging and release hardening) -- **fully complete**. Docker image + Compose
   distribution (D50) done: a two-stage `Dockerfile` and a `ticket-hub` service added to
   `docker-compose.yml` alongside `postgres`, so `docker compose up` alone brings up the full instance.
   Verified as far as this environment's network policy allows -- `docker build --check`/
@@ -53,6 +54,11 @@ remains only as optional, non-roadmap follow-up.
   worklog/attachment mutation routes, plus four lower-severity issues (a session-derived CSRF cookie, a
   login timing side channel, a missing CSRF check on logout, and CSV formula injection). **This closes
   Phase 8, Milestone 4, and the entire roadmap.**
+- **Post-V1, optional follow-up.** The user was asked to pick the first item and chose a web UI for
+  managing personal access tokens and active sessions -- both already had a complete REST API since
+  Phase 6; only the `web/` surface was missing. Done: a new "Account" page (create/list/revoke tokens with
+  the raw value shown exactly once, list/sign-out active sessions), no backend or schema changes,
+  browser-verified end-to-end including a genuine two-session sign-out-others test.
 
 ## Implementation rules
 
