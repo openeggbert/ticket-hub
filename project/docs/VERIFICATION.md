@@ -1,5 +1,74 @@
 # Verification record
 
+## 2026-08-03 — Kanban board drag-and-drop (post-V1, user-requested)
+
+The third batch of optional, non-roadmap follow-up. The board was already usable end-to-end via the issue
+drawer's status dropdown; this adds a faster, direct way to move a card between columns without opening
+the drawer -- explicitly optional UX polish (not required by D32/D33, which only need a soft WIP-limit
+*display*), picked by explicit user choice.
+
+### What changed
+
+- `web/app.js`'s `renderBoard()`: every `.issue-card` gained `draggable="true"`; every `.board-list`
+  (the column's card container) gained `data-status-key="<status key>"` so a drop target can be resolved
+  without re-deriving it from the column header text.
+- New `bindBoardDragAndDrop()`, called after every board render (mirrors the existing pattern of re-
+  binding handlers after each `innerHTML` replacement, same as `bindIssueLinks()`): wires `dragstart`/
+  `dragend` on cards (stashes the dragged issue's key via `DataTransfer`, toggles a `.dragging` class for
+  visual feedback) and `dragover`/`dragleave`/`drop` on each column's card list (toggles a `.drag-over`
+  class while hovering, so the highlighted target is visible before the drop even lands).
+- New `handleBoardDrop(issueKey, targetStatusKey)`: a no-op if dropped on the same column; otherwise
+  resolves the dropped issue from `state.issues` (no extra fetch -- the board already holds the full list)
+  and either applies the status change directly or, if the target is a Done-category status and the issue
+  has no resolution yet, opens a resolution prompt first -- exactly the same D68-D70 rule the drawer's
+  status dropdown already enforces, just reached by a different interaction.
+- New `applyBoardStatusChange(issueKey, statusKey, resolution, expectedVersion)`: the same
+  `PATCH /api/v1/issues/{key}/status` call the drawer's `applyStatusChange` already makes, but re-renders
+  the board and shows a toast instead of opening the issue drawer afterward -- jumping into the detail
+  view is the right follow-up after a deliberate dropdown change, but not after a quick drag; a failed
+  request also re-renders the board so a stale/conflicting card doesn't linger in the wrong-looking spot.
+- New `promptBoardResolution(issue, targetStatusKey)`: a small dialog built the same way the app already
+  builds transient UI that isn't worth pre-declaring in `index.html` (e.g. the notification panel) --
+  reuses the existing `.modal-backdrop`/`.modal` CSS classes (same look as the create-issue/create-project
+  modals) rather than introducing new modal styling, with its own click-outside-to-close and Escape-to-
+  close handling (added/removed on open/close, not part of the app's shared global Escape handler, since
+  this dialog doesn't live in the static DOM).
+- New CSS: `.issue-card.dragging` (dims the source card while dragging) and `.board-list.drag-over`
+  (a dashed outline + tinted background on the column currently being hovered over), both built from
+  existing theme variables so both light and dark mode render correctly with no new color literals.
+- No backend, schema, or API changes -- this is a new client for the existing
+  `PATCH /api/v1/issues/{key}/status` route, unchanged since Phase 3.
+
+### Verification
+
+- Browser-verified with Playwright/Chromium. Playwright's built-in `locator.dragTo()` helper turned out to
+  be unreliable for longer-distance HTML5 drag simulation in headless Chromium specifically (confirmed by
+  isolating the failure: short adjacent-column drags worked consistently, but a Backlog-to-Done drag
+  consistently failed to fire `dragover` on the actual target, regardless of viewport width or retry count
+  -- a known category of Playwright/headless-Chromium limitation with native HTML5 DnD, not a bug in this
+  feature). Switched to a manual multi-step `page.mouse.move`/`down`/`up` simulation for the verification
+  script, which reproduced every scenario reliably and repeatedly:
+  - A card dragged into a different, non-Done column moves immediately, shows a confirmation toast, and
+    the board's column counts update.
+  - A card dropped back onto its own current column is a no-op: no toast, no API call.
+  - A card dragged into the Done column without an existing resolution shows the resolution prompt instead
+    of moving immediately; the card visibly stays in its original column until the prompt is resolved.
+  - Canceling the prompt leaves the card exactly where it was (no partial state change).
+  - Confirming a resolution in the prompt applies the status change, closes the prompt, shows the toast,
+    and the card appears in the Done column.
+  - Both the drag-over highlight and the resolution prompt were screenshotted in both light and dark mode
+    (`colorScheme` emulation) -- both render correctly with no unstyled elements, confirming the reused
+    `.modal-backdrop`/`.modal` classes and the new CSS variables-only drag styles theme correctly.
+- Re-ran both existing browser regression scripts (`login_browser_test.mjs`, `reorder_move_bulk_test.mjs`)
+  unchanged -- both passed, confirming no regression from the board markup/event-wiring changes.
+- `ctest --output-on-failure`: 8/8 green (no C++ source touched, only `web/`).
+
+Not attempted: a formal accessibility equivalent for the drag gesture itself (native HTML5 drag-and-drop
+has no built-in keyboard operability). This is a deliberate, documented gap, not an oversight -- moving a
+card between columns remains fully keyboard-operable via the issue drawer's status dropdown (verified as
+part of the D47 accessibility baseline pass), so drag-and-drop is an additional fast path, not the only
+path, and does not regress the baseline established there.
+
 ## 2026-08-02 — Re-typing and re-parenting an issue after creation (post-V1, user-requested)
 
 The second batch of optional, non-roadmap follow-up (see the account-settings entry below for the first),

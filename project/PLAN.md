@@ -67,6 +67,13 @@ remains only as optional, non-roadmap follow-up.
   transactionally in `IDatabase::editIssue`, the same precedent `moveIssue`'s own "has children" rule
   already established). New Type/Parent picker in the issue drawer's edit form. Verified end-to-end
   including against live PostgreSQL (both database adapters changed) and browser-verified with Playwright.
+- **Post-V1, optional follow-up (batch 3).** The user was asked to pick the next item and chose
+  drag-and-drop card movement on the Kanban board. Cards are now draggable between columns, applying the
+  same `PATCH /api/v1/issues/{key}/status` route the drawer's dropdown already uses; a Done-category drop
+  without a resolution opens a small prompt first (same D68-D70 rule). No backend/schema/API changes.
+  Browser-verified with Playwright/Chromium (a manual multi-step mouse simulation was needed for reliable
+  headless-Chromium HTML5 drag verification, since Playwright's built-in `dragTo()` proved unreliable for
+  longer drag distances specifically). The drawer's dropdown remains the keyboard-operable path.
 
 ## Implementation rules
 
