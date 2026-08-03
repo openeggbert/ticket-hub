@@ -1259,9 +1259,9 @@ async function renderBoard() {
           </div>
         </div>
         ${wipEditor}
-        <div class="board-list">
+        <div class="board-list" data-status-key="${escapeHtml(status.key)}">
           ${issues.length ? issues.map(issue => `
-            <article class="issue-card" data-issue-key="${escapeHtml(issue.key)}">
+            <article class="issue-card" draggable="true" data-issue-key="${escapeHtml(issue.key)}">
               <div class="issue-type"><span style="color:${escapeHtml(issue.type.color)}">${escapeHtml(issue.type.icon)}</span><span class="issue-key">${escapeHtml(issue.key)}</span></div>
               <div class="card-summary">${escapeHtml(issue.summary)}</div>
               <div class="issue-card-labels">${labelsMarkup(issue.labels)}</div>
@@ -1292,7 +1292,117 @@ async function renderBoard() {
       await renderBoard();
     } catch (error) { showToast(error.message); }
   }));
+  bindBoardDragAndDrop();
   bindIssueLinks();
+}
+
+// Drag-and-drop card movement between board columns (optional UX polish --
+// not required by D32/D33, which only need a soft WIP-limit *display*; the
+// board is already fully usable via the drawer's status dropdown, which
+// remains the keyboard-operable path since native HTML5 drag-and-drop has
+// no built-in keyboard equivalent). Dropping onto the same column a card is
+// already in is a no-op; dropping onto a Done-category column without an
+// existing resolution prompts for one first (D68-D70), exactly like the
+// drawer's status-select already does for the same case.
+function bindBoardDragAndDrop() {
+  document.querySelectorAll('.issue-card[draggable]').forEach(card => {
+    card.addEventListener('dragstart', event => {
+      event.dataTransfer.setData('text/plain', card.dataset.issueKey);
+      event.dataTransfer.effectAllowed = 'move';
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+  document.querySelectorAll('.board-list[data-status-key]').forEach(list => {
+    list.addEventListener('dragover', event => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      list.classList.add('drag-over');
+    });
+    list.addEventListener('dragleave', () => list.classList.remove('drag-over'));
+    list.addEventListener('drop', event => {
+      event.preventDefault();
+      list.classList.remove('drag-over');
+      const issueKey = event.dataTransfer.getData('text/plain');
+      handleBoardDrop(issueKey, list.dataset.statusKey);
+    });
+  });
+}
+
+function handleBoardDrop(issueKey, targetStatusKey) {
+  const issue = state.issues.find(candidate => candidate.key === issueKey);
+  if (!issue || issue.status.key === targetStatusKey) {
+    return;
+  }
+  const targetStatus = STATUSES.find(status => status.key === targetStatusKey);
+  if (targetStatus?.category === 'done' && !issue.resolution) {
+    promptBoardResolution(issue, targetStatusKey);
+    return;
+  }
+  applyBoardStatusChange(issue.key, targetStatusKey, null, issue.version);
+}
+
+// Same request as applyStatusChange (used by the drawer's status select),
+// but stays on the board and re-renders it instead of opening the drawer --
+// jumping into the detail view is the right follow-up after a deliberate
+// dropdown change, but not after a quick drag-and-drop card move.
+async function applyBoardStatusChange(issueKey, statusKey, resolution, expectedVersion) {
+  try {
+    const payload = { statusKey, expectedVersion };
+    if (resolution) payload.resolution = resolution;
+    await api(`/api/v1/issues/${encodeURIComponent(issueKey)}/status`, { method: 'PATCH', body: JSON.stringify(payload) });
+    const statusName = STATUSES.find(status => status.key === statusKey)?.name || statusKey;
+    showToast(`${issueKey} moved to ${statusName}`);
+    await renderBoard();
+  } catch (error) {
+    showToast(error.message);
+    await renderBoard();
+  }
+}
+
+// A minimal dynamically-created dialog (reuses the existing .modal-backdrop/
+// .modal styling, same as the create-issue/create-project modals, but not
+// pre-declared in index.html since it only ever exists transiently) --
+// mirrors the drawer's inline resolution picker for the one case drag-and-
+// drop can't skip: a Done-category status requires a resolution.
+function promptBoardResolution(issue, targetStatusKey) {
+  const targetStatus = STATUSES.find(status => status.key === targetStatusKey);
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.setAttribute('role', 'dialog');
+  backdrop.setAttribute('aria-modal', 'true');
+  backdrop.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <div><span class="eyebrow">${escapeHtml(issue.key)}</span><h2>Resolve issue</h2></div>
+        <button type="button" class="icon-button" id="board-resolution-close" aria-label="Close">×</button>
+      </div>
+      <div class="form-grid">
+        <label class="wide">Moving to ${escapeHtml(targetStatus?.name || targetStatusKey)} requires a resolution
+          <select id="board-resolution-select">${RESOLUTIONS.map(resolution => `<option value="${resolution.key}">${resolution.name}</option>`).join('')}</select>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="secondary-button" id="board-resolution-cancel">Cancel</button>
+        <button type="button" class="primary-button" id="board-resolution-confirm">Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const onKeydown = event => { if (event.key === 'Escape') close(); };
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKeydown);
+  };
+  document.addEventListener('keydown', onKeydown);
+  backdrop.querySelector('#board-resolution-close').addEventListener('click', close);
+  backdrop.querySelector('#board-resolution-cancel').addEventListener('click', close);
+  backdrop.addEventListener('click', event => { if (event.target === backdrop) close(); });
+  backdrop.querySelector('#board-resolution-confirm').addEventListener('click', async () => {
+    const resolution = backdrop.querySelector('#board-resolution-select').value;
+    close();
+    await applyBoardStatusChange(issue.key, targetStatusKey, resolution, issue.version);
+  });
+  backdrop.querySelector('#board-resolution-select').focus();
 }
 
 async function renderProjects() {

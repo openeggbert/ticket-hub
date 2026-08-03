@@ -29,6 +29,9 @@ first optional item, picked by explicit user choice; see "The roadmap is now com
 creation -- the one deliberate gap left open since Phase 3, closed as the second optional item, again
 picked by explicit user choice; see "The roadmap is now complete" below for detail.
 
+**Post-V1, batch 3 (done):** drag-and-drop card movement on the Kanban board -- the third optional item,
+again picked by explicit user choice; see "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -685,10 +688,10 @@ left:
 
 1. **Milestones 1-4, i.e. the entire reduced-scope V1 roadmap, are now fully complete** per
    `docs/REDUCED_SCOPE_ROADMAP.md` -- see "The roadmap is now complete" below.
-2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop reordering on
-   the Board view (not required by D32 or D33; the board is already usable end-to-end via click-to-drawer
-   status changes); a friendlier bulk-status picker that also supports Done-category statuses by prompting
-   for a shared resolution; keyboard-driven multi-select.
+2. Optional UX polish that was never part of the write-route coverage goal: drag-and-drop card movement on
+   the Board view is now done (post-V1 batch 3 -- see "The roadmap is now complete" below); still open: a
+   friendlier bulk-status picker that also supports Done-category statuses by prompting for a shared
+   resolution, and keyboard-driven multi-select.
 3. Re-typing (`issueTypeKey`) and re-parenting (`parentIssueKey`) an issue after creation, previously the
    one item left deliberately unimplemented, is now done (post-V1 batch 2 -- see "The roadmap is now
    complete" below), including a Type/Parent picker in the issue drawer's edit form.
@@ -722,11 +725,12 @@ SQLite-only, and PostgreSQL-only configurations all compile and their test suite
 from the security self-review is either fixed or recorded as an explicit, decision-consistent accepted
 residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 
-What's left is not roadmap work, only optional follow-up if this project continues past V1: the optional
-UX polish listed above (drag-and-drop board reordering, a friendlier bulk Done-status picker, keyboard
-multi-select). None of this is required to consider V1 complete, and none of it should be started without
-a fresh, explicit product conversation -- the same rule that has applied to
-`docs/REMOVED_AND_DEFERRED_FEATURES.md` all along.
+What's left is not roadmap work, only optional follow-up if this project continues past V1: a friendlier
+bulk-status picker that also supports Done-category statuses by prompting for a shared resolution, and
+keyboard-driven multi-select (drag-and-drop board reordering is now done -- post-V1 batch 3, below). None
+of this is required to consider V1 complete, and none of it should be started without a fresh, explicit
+product conversation -- the same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all
+along.
 
 **Post-V1 batch 1 (done):** the user was asked to pick the first piece of optional follow-up and chose a
 web UI for managing personal access tokens and active sessions -- both already had a complete REST API and
@@ -759,6 +763,25 @@ Epic with a child and confirmed the cross-level retype was rejected, then re-par
 Epic and confirmed both new history rows via `psql`. Browser-verified with Playwright/Chromium including
 the server-rejection path (error banner shown, edit form stays open, no silent data loss). Full detail in
 `docs/VERIFICATION.md`.
+
+**Post-V1 batch 3 (done):** the user was asked to pick the next piece of optional follow-up and chose
+drag-and-drop card movement on the Kanban board -- previously the board could only change an issue's
+status via the drawer's dropdown. New `bindBoardDragAndDrop()`/`handleBoardDrop()`/
+`applyBoardStatusChange()` in `web/app.js`: cards are `draggable`, columns are drop targets keyed by
+`data-status-key`; dropping on a different column applies the status change directly (via the existing
+`PATCH /api/v1/issues/{key}/status` route, unchanged); dropping on the same column is a no-op; dropping on
+a Done-category column without an existing resolution opens a small dynamically-built dialog (reusing the
+existing `.modal-backdrop`/`.modal` styling) prompting for one first, mirroring the same D68-D70 rule the
+drawer's status dropdown already enforces. No backend, schema, or API changes. Verified with Playwright/
+Chromium; discovered along the way that Playwright's built-in `dragTo()` helper is unreliable for longer-
+distance HTML5 drag simulation specifically in headless Chromium (short adjacent-column drags worked,
+longer ones consistently failed to fire `dragover` on the target regardless of viewport size) -- switched
+to a manual multi-step mouse simulation for the verification script, which reliably reproduced every
+scenario: direct move, same-column no-op, Done-column resolution prompt (shown, cancelable without side
+effects, confirmable). Screenshotted in both light and dark mode. Both existing browser regression scripts
+re-run clean. Native HTML5 drag-and-drop has no keyboard equivalent; the drawer's status dropdown remains
+the keyboard-operable path (verified as part of the earlier D47 accessibility pass), so this adds a faster
+mouse-only option rather than replacing the accessible one. Full detail in `docs/VERIFICATION.md`.
 
 ## Verification status
 

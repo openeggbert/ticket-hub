@@ -12,11 +12,11 @@ original full Jira-like plan in `SPECIFICATION.md`, which remains only as a long
 reference. **The entire reduced-scope V1 roadmap is now complete** (`docs/REDUCED_SCOPE_ROADMAP.md`,
 Milestones 1-4 / Phases 1-8), including Docker/Compose packaging, light/dark theme, an accessibility
 baseline pass, and a threat-model/security self-review (`docs/THREAT_MODEL.md`) that found and fixed a
-real access-control bug. Two batches of optional, non-roadmap follow-up have been added since: a web UI
-for managing personal access tokens/active sessions, and re-typing/re-parenting an issue after creation
-(the one gap left open since Phase 3). See `NEXT.md`'s "The roadmap is now complete" section for the exact
-closing detail, `docs/VERIFICATION.md` for exactly what was tested and how, and a short list of remaining
-optional, non-roadmap follow-up items.
+real access-control bug. Three batches of optional, non-roadmap follow-up have been added since: a web UI
+for managing personal access tokens/active sessions, re-typing/re-parenting an issue after creation (the
+one gap left open since Phase 3), and Kanban board drag-and-drop. See `NEXT.md`'s "The roadmap is now
+complete" section for the exact closing detail, `docs/VERIFICATION.md` for exactly what was tested and
+how, and a short list of remaining optional, non-roadmap follow-up items.
 
 Implemented now:
 
@@ -1066,6 +1066,22 @@ confirmed a cross-level retype was rejected for an Epic with a child, re-parente
 Epic, and confirmed both changes landed correctly in `issue_history` via `psql`. Browser-verified with
 Playwright/Chromium, including the server-rejection path (the exact error message surfaces in the edit
 form without losing the in-progress edit).
+
+A third post-V1 batch added **drag-and-drop card movement on the Kanban board** -- the board was already
+fully usable via the drawer's status dropdown; this adds a faster direct path. Cards are now `draggable`
+and each column's card list is a drop target keyed by its status; dropping on a different column applies
+the status change through the same `PATCH /api/v1/issues/{key}/status` route the dropdown already uses,
+dropping on the same column is a no-op, and dropping on a Done-category column without an existing
+resolution opens a small dynamically-built dialog (reusing the existing `.modal-backdrop`/`.modal` styling
+rather than introducing new modal CSS) prompting for one first -- the same D68-D70 rule enforced either
+way. No backend, schema, or API changes. Browser-verified with Playwright/Chromium; along the way,
+Playwright's built-in `dragTo()` helper turned out to be unreliable for longer-distance HTML5 drag
+simulation specifically in headless Chromium (short adjacent-column drags worked consistently, longer ones
+consistently failed to fire `dragover` on the target), so verification switched to a manual multi-step
+mouse simulation, which reliably reproduced every scenario -- direct move, same-column no-op, and the
+Done-column resolution prompt (shown, cancelable without side effects, confirmable) -- in both light and
+dark mode. Native HTML5 drag-and-drop has no keyboard equivalent; the drawer's status dropdown remains the
+keyboard-operable path verified as part of the earlier D47 accessibility baseline pass.
 
 What **was** compiled and tested in this environment, with all warnings enabled
 (`-Wall -Wextra -Wpedantic -Wconversion -Wshadow`), for both SQLite and PostgreSQL build configurations:

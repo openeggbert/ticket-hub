@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — Kanban board drag-and-drop (post-V1)
+
+- **Drag-and-drop card movement** between board columns: dropping a card on a different column applies
+  the status change immediately; dropping on a Done-category column without an existing resolution opens
+  a small prompt for one first (same D68-D70 rule the drawer's status dropdown already enforces). Dropping
+  a card back on its own column is a no-op.
+- Purely a new client for the existing `PATCH /api/v1/issues/{key}/status` route -- no backend, schema, or
+  API changes.
+- The board's status dropdown in the issue drawer remains the keyboard-operable path; native HTML5 drag-
+  and-drop has no built-in keyboard equivalent, and this is documented as a deliberate gap, not a
+  regression of the earlier accessibility baseline pass.
+- The third item of optional, non-roadmap follow-up, picked by explicit user choice.
+
 ## Unreleased — Re-typing and re-parenting an issue after creation (post-V1)
 
 - **Full-replacement issue edit now covers `issueTypeKey`/`parentIssueKey`**: closes the one remaining

@@ -212,8 +212,11 @@ remain as the long-term aspirational baseline only — do not build against them
   Phase 3. `editIssue` now edits `issueTypeKey`/`parentIssueKey` too, re-validating the fixed hierarchy
   shape and rejecting a hierarchy-level retype while the issue has children (checked transactionally,
   same precedent as `moveIssue`'s own "has children" rule). See `docs/VERIFICATION.md` for detail.
-- Remaining optional items, not yet started: drag-and-drop board reordering, a friendlier bulk Done-status
-  picker, keyboard multi-select.
+- **Batch 3 (done): Kanban board drag-and-drop** -- cards can now be dragged directly between columns
+  instead of only via the drawer's status dropdown, which remains the keyboard-operable path (native HTML5
+  drag-and-drop has none). A Done-category drop without an existing resolution opens a small prompt first,
+  same D68-D70 rule as the dropdown. No backend/schema/API changes. See `docs/VERIFICATION.md` for detail.
+- Remaining optional items, not yet started: a friendlier bulk Done-status picker, keyboard multi-select.
 
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
