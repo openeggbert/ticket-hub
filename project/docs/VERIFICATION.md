@@ -1,5 +1,31 @@
 # Verification record
 
+## 2026-08-03 — Rename the "Selected" workflow status to "Confirmed" (user-requested)
+
+A pure display-label change, requested directly by the user. `002_seed_demo.sql`'s `issue_statuses` seed
+row for `status_key = 'selected'` had `name = 'Selected'`; changed to `name = 'Confirmed'` in both the
+SQLite and PostgreSQL seed files. `status_key` (the internal identifier used throughout application logic,
+filters, and tests) is unchanged -- only the human-facing label changed. `web/app.js`'s client-side
+`STATUSES` constant (used to populate status dropdowns/filters without a round-trip) was updated to match.
+
+This seed file is explicitly documented (`docs/SCHEMA.md`) as "an explicitly invoked, idempotent
+development seed rather than a schema migration" -- filenames containing `_seed_` are excluded from the
+checksummed `schema_migrations` tracking (`discoverMigrationFiles` in `Migration.cpp` skips them
+outright), and the file has been edited directly at every phase that needed new seed rows throughout this
+project's history. CLAUDE.md's "never edit an applied migration" rule targets the checksummed schema
+migrations that rule protects; it does not apply to this file, consistent with established practice.
+
+### Verification
+
+- Reseeded a fresh SQLite database and confirmed via a direct API read (`GET /api/v1/issues`) that the
+  `selected`-status issue now reports `name: "Confirmed"`.
+- Browser-verified: the Kanban board's column header now reads "CONFIRMED" (was "SELECTED"), and the
+  issues-list status filter dropdown's option text is "Confirmed".
+- Reseeded a fresh **live PostgreSQL** database (this touches seed data shared by both database adapters)
+  and confirmed via `psql` that `issue_statuses` now has `name = 'Confirmed'` for `status_key = 'selected'`.
+- `ctest --output-on-failure`: 8/8 green (no test asserts on this status's specific display name; only its
+  key, which is unchanged).
+
 ## 2026-08-03 — Bulk Done-status picker and keyboard multi-select (post-V1, user-requested)
 
 The fourth batch of optional, non-roadmap follow-up, and the last two items on the remaining-work list --
