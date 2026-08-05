@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Fix: every lead/assignee picker was hardcoded to the three demo accounts
+
+- **Bug fix**: every user-picking `<select>` in the web UI (Components' Lead/Default assignee, ticket
+  Assignee on create and edit, bulk assign, the Tickets/Backlog assignee filters) hardcoded the same three
+  seeded demo accounts (`demo`/`alex`/`sam@ticket-hub.local`) instead of the real user directory. No other
+  account — including a real administrator's own — could ever be selected anywhere in the app, even though
+  `GET /api/v1/users` (already fetched into `state.users` for @mention autocomplete) had the correct data
+  all along.
+- Replaced the hardcoded `DEMO_USERS` constant and five separately-duplicated inline `<option>` lists with
+  one shared `userSelectOptions(selectedEmail, emptyLabel)` helper built from `state.users`. The
+  create-ticket modal's assignee `<select>` (static markup in `index.html`, so it can't read `state.users`
+  at parse time) is now populated by the same helper each time the modal opens.
+- Verified end-to-end over real HTTP: created a new admin account via `ticket-hub-cli create-user`,
+  confirmed it appears in `GET /api/v1/users`, and set it as a project component's `leadEmail` through the
+  real API — the write path always accepted any valid user, only the picker UI was missing the option.
+  Full rebuild and `ctest` clean (8/8); no C++ changed, this batch is frontend-only.
+
 ## Unreleased — Fix: no way to view or unarchive an archived project (D87)
 
 - **Bug fix**: archiving a project made it disappear from the web UI with no way back. `GET

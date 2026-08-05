@@ -1409,12 +1409,7 @@ async function renderTicketsView(showingDeleted) {
           <option value="low" ${state.filterPriority === 'low' ? 'selected' : ''}>Low</option>
           <option value="lowest" ${state.filterPriority === 'lowest' ? 'selected' : ''}>Lowest</option>
         </select>
-        <select id="ticket-assignee-filter">
-          <option value="">Any assignee</option>
-          <option value="demo@ticket-hub.local" ${state.filterAssignee === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
-          <option value="alex@ticket-hub.local" ${state.filterAssignee === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
-          <option value="sam@ticket-hub.local" ${state.filterAssignee === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
-        </select>
+        <select id="ticket-assignee-filter">${userSelectOptions(state.filterAssignee, 'Any assignee')}</select>
         <input id="ticket-label-filter" value="${escapeHtml(state.filterLabel)}" placeholder="Label" style="width:110px">
         <input id="ticket-component-filter" value="${escapeHtml(state.filterComponent)}" placeholder="Component" style="width:110px">
         <select id="ticket-epic-filter">
@@ -1430,12 +1425,7 @@ async function renderTicketsView(showingDeleted) {
         <select id="bulk-status-select">${bulkStatusOptions}</select>
         <select id="bulk-resolution-select" class="hidden" title="Required to move to a Done-category status">${bulkResolutionOptions}</select>
         <button type="button" class="secondary-button" id="bulk-status-apply">Set status</button>
-        <select id="bulk-assignee-select">
-          <option value="">Unassigned</option>
-          <option value="demo@ticket-hub.local">Demo User</option>
-          <option value="alex@ticket-hub.local">Alex Morgan</option>
-          <option value="sam@ticket-hub.local">Sam Lee</option>
-        </select>
+        <select id="bulk-assignee-select">${userSelectOptions('', 'Unassigned')}</select>
         <button type="button" class="secondary-button" id="bulk-assign-apply">Assign</button>
         <input id="bulk-label-input" placeholder="label" style="width:120px">
         <button type="button" class="secondary-button" id="bulk-label-apply">Add label</button>
@@ -1861,12 +1851,7 @@ async function renderBacklog() {
           <option value="low" ${state.filterPriority === 'low' ? 'selected' : ''}>Low</option>
           <option value="lowest" ${state.filterPriority === 'lowest' ? 'selected' : ''}>Lowest</option>
         </select>
-        <select id="backlog-assignee-filter">
-          <option value="">Any assignee</option>
-          <option value="demo@ticket-hub.local" ${state.filterAssignee === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
-          <option value="alex@ticket-hub.local" ${state.filterAssignee === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
-          <option value="sam@ticket-hub.local" ${state.filterAssignee === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
-        </select>
+        <select id="backlog-assignee-filter">${userSelectOptions(state.filterAssignee, 'Any assignee')}</select>
         <input id="backlog-label-filter" value="${escapeHtml(state.filterLabel)}" placeholder="Label" style="width:110px">
         <input id="backlog-component-filter" value="${escapeHtml(state.filterComponent)}" placeholder="Component" style="width:110px">
         <input id="backlog-search-filter" type="search" value="${escapeHtml(state.search)}" placeholder="Filter by key, summary, or description">
@@ -2122,23 +2107,16 @@ function showConflictDialog(ticketKey) {
   backdrop.querySelector('#conflict-reload').focus();
 }
 
-// Project components (D19, KEEP_FOR_V1): a dynamically-created dialog, same
-// pattern as promptBoardResolution above -- listing, adding, and deleting a
-// project's components. Create/edit/delete require project-Admin-or-above
-// server-side (TicketService::createComponent/editComponent/
-// deleteComponent); a non-admin's attempt just surfaces the resulting 403
-// as a toast, the same convention every other write in this app follows.
-// The demo user list mirrors every other lead/assignee picker in this file
-// (there is no generic user-search picker anywhere in the app).
-const DEMO_USERS = [
-  ['demo@ticket-hub.local', 'Demo User'],
-  ['alex@ticket-hub.local', 'Alex Morgan'],
-  ['sam@ticket-hub.local', 'Sam Lee'],
-];
-
-function userSelectOptions(selectedEmail) {
-  return '<option value="">None</option>' + DEMO_USERS.map(([email, name]) =>
-    `<option value="${escapeHtml(email)}" ${email === selectedEmail ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+// Every lead/assignee <select> in the app (Components, ticket assignee edit,
+// bulk assign, the assignee filters, the create-ticket modal) is built from
+// this one helper over the real `state.users` directory (populated once in
+// loadBaseData() from GET /api/v1/users) instead of each hardcoding its own
+// option list -- previously every one of those pickers hardcoded the same
+// three seeded demo accounts, so no other user (including a real admin's own
+// account) could ever be selected anywhere in the app.
+function userSelectOptions(selectedEmail, emptyLabel) {
+  return `<option value="">${escapeHtml(emptyLabel)}</option>` + state.users.map(user =>
+    `<option value="${escapeHtml(user.email)}" ${user.email === selectedEmail ? 'selected' : ''}>${escapeHtml(user.displayName)}</option>`).join('');
 }
 
 async function openComponentsModal(projectKey) {
@@ -2181,8 +2159,8 @@ async function openComponentsModal(projectKey) {
         <form class="form-grid" id="component-add-form" style="margin-top:16px">
           <label class="wide">Name<input name="name" maxlength="160" required placeholder="e.g. Backend"></label>
           <label class="wide">Description<input name="description" placeholder="Optional"></label>
-          <label>Lead<select name="leadEmail">${userSelectOptions('')}</select></label>
-          <label>Default assignee<select name="defaultAssigneeEmail">${userSelectOptions('')}</select></label>
+          <label>Lead<select name="leadEmail">${userSelectOptions('', 'None')}</select></label>
+          <label>Default assignee<select name="defaultAssigneeEmail">${userSelectOptions('', 'None')}</select></label>
         </form>
         <div id="component-error" class="form-error hidden"></div>
         <div class="modal-footer">
@@ -2662,12 +2640,7 @@ function editFieldsMarkup(ticket) {
     <label class="wide">Summary<input id="edit-summary" value="${escapeHtml(ticket.summary)}" maxlength="255" required></label>
     <label class="wide">Description<textarea id="edit-description" rows="6">${escapeHtml(ticket.description)}</textarea></label>
     <label>Priority<select id="edit-priority">${['highest', 'high', 'medium', 'low', 'lowest'].map(key => `<option value="${key}" ${key === ticket.priority.key ? 'selected' : ''}>${key[0].toUpperCase()}${key.slice(1)}</option>`).join('')}</select></label>
-    <label>Assignee<select id="edit-assignee">
-      <option value="">Unassigned</option>
-      <option value="demo@ticket-hub.local" ${ticket.assignee?.email === 'demo@ticket-hub.local' ? 'selected' : ''}>Demo User</option>
-      <option value="alex@ticket-hub.local" ${ticket.assignee?.email === 'alex@ticket-hub.local' ? 'selected' : ''}>Alex Morgan</option>
-      <option value="sam@ticket-hub.local" ${ticket.assignee?.email === 'sam@ticket-hub.local' ? 'selected' : ''}>Sam Lee</option>
-    </select></label>
+    <label>Assignee<select id="edit-assignee">${userSelectOptions(ticket.assignee?.email || '', 'Unassigned')}</select></label>
     <label>Story points<input id="edit-story-points" type="number" min="0" max="10000" step="0.5" value="${ticket.storyPoints ?? ''}"></label>
     <label>Due date<input id="edit-due-date" type="date" value="${ticket.dueDate ?? ''}"></label>
     <label class="wide">Labels<input id="edit-labels" value="${escapeHtml(ticket.labels.join(', '))}"></label>
@@ -3447,6 +3420,7 @@ async function refreshCreateCustomFieldOptions() {
 function openCreateModal() {
   document.querySelector('#create-error').classList.add('hidden');
   if (state.selectedProject) document.querySelector('#create-project').value = state.selectedProject;
+  createModal.querySelector('[name="assigneeEmail"]').innerHTML = userSelectOptions('', 'Unassigned');
   createModal.classList.remove('hidden');
   refreshCreateParentOptions().catch(() => {});
   refreshCreateComponentOptions().catch(() => {});

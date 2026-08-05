@@ -141,6 +141,14 @@ admin-gated like the recycle bin) and fixed `projectJson()` never serializing `a
 existing per-card Unarchive button was dead code as a result. `web/`'s Projects page gained an "📦
 Archived" toggle with a working Unarchive button. See "The roadmap is now complete" below for detail.
 
+**Post-V1, batch 17 (done, 2026-08-05):** bug fix, user-reported -- every lead/assignee picker in the web
+UI (Components, ticket assignee, bulk assign, the Tickets/Backlog assignee filters, create-ticket) was
+hardcoded to the same three seeded demo accounts, so no other user -- including a real administrator's own
+account -- could ever be selected. Replaced six duplicated hardcoded option lists with one
+`userSelectOptions()` helper built from the real `state.users` directory (`GET /api/v1/users`, already
+fetched but previously unused by these pickers). Frontend-only, no C++/schema change. See "The roadmap is
+now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -836,10 +844,10 @@ residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 
 **Every item identified as optional, non-roadmap follow-up when the reduced-scope V1 roadmap closed is now
 done** (post-V1 batches 1-4, below). One further item was added since at explicit user request -- Jira-
-style `/browse/{key}` direct issue links (post-V1 batch 5, below). Post-V1 batch 16 (below) was a bug fix,
-not new scope. There is currently no further work queued -- anything beyond this point is new scope and,
-per the same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should not be
-started without a fresh, explicit product conversation.
+style `/browse/{key}` direct issue links (post-V1 batch 5, below). Post-V1 batches 16 and 17 (below) were
+bug fixes, not new scope. There is currently no further work queued -- anything beyond this point is new
+scope and, per the same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should
+not be started without a fresh, explicit product conversation.
 
 **Post-V1 batch 1 (done):** the user was asked to pick the first piece of optional follow-up and chose a
 web UI for managing personal access tokens and active sessions -- both already had a complete REST API and
@@ -1473,6 +1481,36 @@ unarchive" -- "where do I find archived projects and how do I unarchive one").
   `archived:true`; unarchiving reversed both; a non-admin user got `403` archiving a project they don't
   administer but `200` (not `403`) reading the archived list, confirming the read-access-not-admin-gated
   design over the wire, not just in the unit test. Full detail in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 17 (done, 2026-08-05):** bug fix, user-reported ("proc nemohu dat sebe jako lead nebo
+default assignee v Componenets a vidim tam tri ucty ktere jsem nezakladat" -- "why can't I set myself as
+lead or default assignee in Components, and I see three accounts I didn't create").
+
+- **The bug.** Every user-picking `<select>` in the web UI hardcoded the same three seeded demo accounts
+  (`demo`/`alex`/`sam@ticket-hub.local`): a `DEMO_USERS` constant feeding the Components Lead/Default-
+  assignee pickers, plus five more places that each separately duplicated the identical three `<option>`
+  elements inline -- the ticket-edit Assignee select, the bulk-assign select, the Tickets/Backlog assignee
+  filters, and the create-ticket modal's Assignee select in `index.html`. None of them read `state.users`,
+  the real user directory already fetched via `GET /api/v1/users` in `loadBaseData()` and already used
+  elsewhere (the @mention autocomplete). Any account beyond the three demo users -- including a real
+  administrator's own -- could never be selected anywhere in the app. Purely client-side: the backend write
+  paths (`createComponent`/`editTicket`/bulk-assign) already accepted any valid user email; the picker UI
+  just never offered one.
+- **The fix.** One shared `userSelectOptions(selectedEmail, emptyLabel)` helper, built from `state.users`,
+  replaces the hardcoded constant and all five duplicated inline lists -- the empty-option label is now a
+  parameter since callers previously used different wording ("None" for Components, "Unassigned" for
+  assignee pickers, "Any assignee" for the filters). The create-ticket modal's assignee `<select>` is
+  static HTML with no `state.users` available at page-parse time, so `index.html` now ships it with just an
+  "Unassigned" placeholder and `openCreateModal()` repopulates it via the same helper every time the modal
+  opens -- the same pattern already used there for parent/component/custom-field options.
+- **Verified:** no C++ changed (frontend-only); full rebuild and `ctest` clean (8/8) as a sanity check.
+  Live end-to-end over real HTTP against the actual compiled server and the local dev SQLite database (the
+  Chrome extension was still not connected, so `curl` again): created a new admin account via
+  `ticket-hub-cli create-user`, confirmed `GET /api/v1/users` returned it alongside the three demo users,
+  confirmed the served `/app.js` has zero remaining hardcoded demo-account strings, and proved the full
+  path end-to-end (not just data availability) by setting that new account as a project component's
+  `leadEmail` through the real API and confirming it stuck -- exactly what the user reported being unable
+  to do. Cleaned up the throwaway component/user afterward. Full detail in `docs/VERIFICATION.md`.
 
 ## Verification status
 

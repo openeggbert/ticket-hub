@@ -676,6 +676,33 @@ remain as the long-term aspirational baseline only — do not build against them
   unarchive; a non-admin got `403` archiving a project they don't administer but `200` reading the archived
   list, confirming the read-access-not-admin-gated design over the wire. See `docs/VERIFICATION.md`.
 
+- **Batch 17 (done): fix -- every lead/assignee picker was hardcoded to the three demo accounts** --
+  user-reported bug, not new scope ("proc nemohu dat sebe jako lead nebo default assignee v Componenets a
+  vidim tam tri ucty ktere jsem nezakladat" -- "why can't I set myself as lead or default assignee in
+  Components, and I see three accounts I didn't create"). Every user-picking `<select>` in the web UI --
+  Components' Lead/Default assignee, ticket Assignee on create and edit, bulk assign, the Tickets/Backlog
+  assignee filters -- hardcoded the same three seeded demo accounts (`demo`/`alex`/`sam@ticket-hub.local`)
+  across a `DEMO_USERS` constant plus five separately-duplicated inline `<option>` lists, instead of the
+  real user directory (`GET /api/v1/users`, already fetched into `state.users` for @mention autocomplete
+  but unused by any of these pickers). No account beyond the three demo users -- including a real
+  administrator's own -- could ever be selected anywhere in the app; purely client-side, since the backend
+  write paths already accepted any valid user email.
+  - **Frontend.** One shared `userSelectOptions(selectedEmail, emptyLabel)` helper built from `state.users`
+    replaces the hardcoded constant and all five duplicated lists (the empty-option label is now a
+    parameter -- "None" for Components, "Unassigned" for assignee pickers, "Any assignee" for the filters).
+    The create-ticket modal's assignee `<select>` is static HTML in `index.html` (no `state.users` at
+    page-parse time), so it now ships with just an "Unassigned" placeholder and `openCreateModal()`
+    repopulates it via the same helper on every open, matching the pattern already used there for
+    parent/component/custom-field options.
+
+  No C++/schema change -- frontend-only. Verified: full rebuild and `ctest` clean (8/8) as a sanity check.
+  Live-verified end-to-end over real HTTP (the Chrome browser extension was still not connected, so `curl`
+  again): created a new admin account via `ticket-hub-cli create-user`, confirmed `GET /api/v1/users`
+  returned it, confirmed the served `/app.js` has zero remaining hardcoded demo-account strings, and proved
+  the full path -- not just data availability -- by setting the new account as a project component's
+  `leadEmail` through the real API and confirming it stuck. Cleaned up the throwaway component/user
+  afterward. See `docs/VERIFICATION.md`.
+
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
 - Phases 1-8 (the entire reduced-scope V1 roadmap) are complete -- nothing remains in this category.

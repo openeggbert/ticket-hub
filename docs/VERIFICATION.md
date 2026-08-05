@@ -1,5 +1,52 @@
 # Verification record
 
+## 2026-08-05 — Fix: every lead/assignee picker hardcoded to the three demo accounts, user-reported bug
+
+User asked why they couldn't set themselves as a component's Lead or Default assignee despite being a
+global administrator, and pointed out they were only ever offered three accounts they didn't create
+("proc nemohu dat sebe jako lead nebo default assignee v Componenets a vidim tam tri ucty ktere jsem
+nezakladat").
+
+### What changed
+
+- **The bug.** `web/app.js` had a `DEMO_USERS` constant (`demo`/`alex`/`sam@ticket-hub.local`) used by a
+  `userSelectOptions()` helper for the Components Lead/Default-assignee pickers, plus five more places that
+  each duplicated the exact same three hardcoded `<option>` elements inline: the ticket-edit Assignee
+  select, the bulk-assign select, the Tickets and Backlog views' assignee filters, and the create-ticket
+  modal's Assignee select in `index.html`. None of these read `state.users` -- the real user directory
+  already fetched via `GET /api/v1/users` in `loadBaseData()` and already used elsewhere (the @mention
+  autocomplete). Any account beyond the three seeded demo users, including a real admin's own, could never
+  be selected anywhere in the app -- a purely client-side bug; the backend write paths
+  (`createComponent`/`editTicket`/bulk-assign) already accepted any valid user email.
+- **The fix.** `userSelectOptions(selectedEmail, emptyLabel)` now maps `state.users` instead of the
+  hardcoded constant, with the empty-option label parameterized (`"None"` for Components, `"Unassigned"`
+  for assignee pickers, `"Any assignee"` for the filters) since callers previously used different wording.
+  All six locations now call this one helper. The create-ticket modal's assignee `<select>` is static HTML
+  (no `state.users` available at page-parse time), so `index.html` now ships it with just an "Unassigned"
+  placeholder option and `openCreateModal()` repopulates it via the same helper every time the modal opens
+  -- the same pattern already used there for parent/component/custom-field options.
+
+### How it was verified
+
+No C++ changed -- this batch is frontend-only (`web/app.js`, `web/index.html`). Full rebuild and
+`ctest --output-on-failure` clean (8/8) as a sanity check that nothing else regressed.
+
+Live end-to-end over real HTTP against the actual compiled server and the local dev SQLite database (the
+Chrome browser extension needed for a Playwright pass was still not connected in this environment, so
+`curl` was used again): created a new admin account via `ticket-hub-cli create-user
+"verify-fix-test@example.invalid" "Verify Fix Test" "..." --admin`; confirmed `GET /api/v1/users` (the
+exact endpoint `state.users` is populated from) returned all four users including the new one, alphabetical
+by display name; confirmed the served `/app.js` contains the new `userSelectOptions` helper and zero
+remaining hardcoded demo-account email strings; confirmed the served `/` (`index.html`) create-ticket
+Assignee select now ships with only an "Unassigned" placeholder. Then proved the full path end-to-end, not
+just data availability: `POST /api/v1/projects/TH/components` with `leadEmail` set to the new test admin's
+email succeeded (`201`) and the component's `lead` in the response/subsequent list was exactly that
+account -- confirming a real administrator account genuinely can be set as a component lead once the
+picker offers it, which is exactly what the user reported being unable to do. Cleaned up afterward: deleted
+the throwaway component via the real `DELETE` route, removed the throwaway user's `local_credentials`/
+`users` rows directly (no CLI `delete-user` command exists), and confirmed the dev database was back to
+its original three demo users and zero components before stopping the server.
+
 ## 2026-08-05 — Fix: no way to view or unarchive an archived project (D87), user-reported bug
 
 User asked where to find archived projects and how to unarchive one ("kde najdu archived projects a jak
