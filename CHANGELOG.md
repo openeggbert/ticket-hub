@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — Web admin user management (D2/D53/D57), user-requested
+
+- **New "Users" admin page**: global-administrator-only, alongside Webhooks/Audit log/Attachment recycle
+  bin. There is still no self-registration or invitation flow (D2) -- this is the web counterpart to
+  `ticket-hub-cli create-user`, plus three actions the CLI still cannot do at all: deactivate/reactivate an
+  account (D57 -- deactivation only, no anonymize/merge), grant or revoke global-administrator privileges,
+  and an admin-performed password reset that generates a fresh temporary password shown once (D53 --
+  replaces the original email-based reset, which Decisions 2/52 made moot by removing both public
+  registration and email).
+- New `AuthService::adminListUsers`/`adminCreateUser`/`adminSetUserActive`/`adminSetUserAdmin`/
+  `adminResetPassword`, each actor-checked (`Domain::Forbidden` -> 403, same as every other admin-gated
+  action). Deactivating a user or resetting their password immediately invalidates every one of their
+  existing sessions, not just future logins. Two self-protection rules with no decision text covering them
+  explicitly, added as conservative defaults: an administrator can never deactivate or remove their own
+  admin privileges through this action (`std::invalid_argument` -> 400) -- both would risk a self-lockout.
+- New `IDatabase::setUserActive`/`setUserAdmin`/`setPasswordHash`/`deleteAllSessionsForUser` on SQLite and
+  PostgreSQL -- no migration needed, `users.active`/`is_admin` already existed in the schema and were
+  simply never exposed for editing after account creation.
+- New `GET`/`POST /api/v1/admin/users`, `PATCH /api/v1/admin/users/{id}/active`,
+  `PATCH /api/v1/admin/users/{id}/admin`, `POST /api/v1/admin/users/{id}/reset-password`.
+- New authorization-integration-test coverage: every admin action rejected for a non-admin actor, both
+  self-protection rules, session invalidation on deactivate/reset, a deactivated account failing login, and
+  the temporary password actually working for a fresh login.
+- Verified: full rebuild and `ctest` clean (8/8) in the SQLite + Crow-server configuration; PostgreSQL still
+  could not be compiled in this environment (`libpq-dev` not installed). Live-verified end-to-end over real
+  HTTP against the running server (create, list, self-deactivate/self-demote rejection, deactivate ->
+  login fails, reset -> old password fails/new one works, non-admin gets 403 throughout).
+
 ## Unreleased — Fix: every lead/assignee picker was hardcoded to the three demo accounts
 
 - **Bug fix**: every user-picking `<select>` in the web UI (Components' Lead/Default assignee, ticket

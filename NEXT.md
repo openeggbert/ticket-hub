@@ -149,6 +149,14 @@ account -- could ever be selected. Replaced six duplicated hardcoded option list
 fetched but previously unused by these pickers). Frontend-only, no C++/schema change. See "The roadmap is
 now complete" below for detail.
 
+**Post-V1, batch 18 (done, 2026-08-05):** web admin user management, user-requested after asking where to
+manage accounts as an admin. Not new scope -- a decided-but-never-implemented gap (Decisions 2/53/56/57),
+same class of finding as post-V1 batch 8. New admin-only "Users" page: the web counterpart to
+`ticket-hub-cli create-user`, plus deactivate/reactivate (D57), grant/revoke global-admin, and an
+admin-performed temporary-password reset (D53) -- none of which the CLI could do at all before this batch.
+No migration needed (`users.active`/`is_admin` already existed and were already enforced at login, just
+never exposed for editing). See "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -845,9 +853,19 @@ residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 **Every item identified as optional, non-roadmap follow-up when the reduced-scope V1 roadmap closed is now
 done** (post-V1 batches 1-4, below). One further item was added since at explicit user request -- Jira-
 style `/browse/{key}` direct issue links (post-V1 batch 5, below). Post-V1 batches 16 and 17 (below) were
-bug fixes, not new scope. There is currently no further work queued -- anything beyond this point is new
-scope and, per the same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should
-not be started without a fresh, explicit product conversation.
+bug fixes; batch 18 was a decided-but-never-implemented gap closure (Decisions 2/53/56/57), same class as
+batch 8 -- neither is new scope. **Three items are queued next, all from explicit user requests during
+this same session, not yet built:** (1) Kanban board drag-and-drop currently only moves a card between
+columns (a status change) -- dropping a card back into its own column to reorder it within that column is
+a no-op; manual reordering (D31, the same `rankOrder`/`reorderTicket` the Tickets/Backlog ↑/↓ buttons
+already use) needs extending to the board's drag gesture too. (2) The Story Points field is a free number
+with no explanation of what it represents; user wants something closer to Jira's fixed-value picker (a
+reference screenshot was shared) but said this can be discussed further before implementation -- do not
+build until that follow-up conversation happens. (3) The ticket detail drawer's width is fixed; user wants
+it resizable (remembered across sessions, likely `localStorage` rather than an actual cookie) plus a
+full-screen expand option -- not yet designed. Beyond these three, anything else is new scope and, per the
+same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should not be started
+without a fresh, explicit product conversation.
 
 **Post-V1 batch 1 (done):** the user was asked to pick the first piece of optional follow-up and chose a
 web UI for managing personal access tokens and active sessions -- both already had a complete REST API and
@@ -1511,6 +1529,53 @@ lead or default assignee in Components, and I see three accounts I didn't create
   path end-to-end (not just data availability) by setting that new account as a project component's
   `leadEmail` through the real API and confirming it stuck -- exactly what the user reported being unable
   to do. Cleaned up the throwaway component/user afterward. Full detail in `docs/VERIFICATION.md`.
+
+**Post-V1 batch 18 (done, 2026-08-05):** web admin user management -- user asked, right after batch 17,
+where they could manage accounts as an admin; answer was "nowhere, `create-user` is the entire CLI story
+and it can't even list/deactivate/reset anyone." User confirmed the proposed design and asked for it to be
+built.
+
+- **Not new scope.** Checked `docs/REDUCED_SCOPE_DECISIONS.md` first, per `CLAUDE.md`'s rule against
+  building anything from the removed/deferred list without a fresh conversation. This is a
+  decided-but-never-implemented gap, same class as batch 8's five-decision audit: Decision 2 (admin-created
+  accounts only, preserved -- this adds no new way for an account to exist except an admin creating one),
+  Decision 53 ("replace email-based reset with admin-performed reset, sets a temporary password" -- exactly
+  what was built), Decision 57 ("deactivation only, no anonymize/merge" -- exactly what was built). The
+  `users.active`/`is_admin` columns already existed (since Phase 1) and were already enforced at login --
+  simply never exposed for editing. No migration needed.
+- **Backend.** `IDatabase::setUserActive`/`setUserAdmin`/`setPasswordHash`/`deleteAllSessionsForUser` on
+  both adapters. `AuthService` gained a private `requireGlobalAdmin` (mirroring `TicketService`'s) and five
+  public methods: `adminListUsers`, `adminCreateUser` (shares `createUser`'s validation via a refactored
+  free function, now attributing the audit event to the acting admin), `adminSetUserActive`,
+  `adminSetUserAdmin`, `adminResetPassword` (generates and returns a fresh temporary password, shown once,
+  like a PAT's raw token). New `GET`/`POST /api/v1/admin/users`, `PATCH .../active`, `PATCH .../admin`,
+  `POST .../reset-password` routes and an `adminUserJson()` serializer (the existing `userDirectoryJson`
+  deliberately stays narrower -- it backs the @mention/assignee-picker directory every reader can see, not
+  an admin view).
+- **Two conservative defaults, undecided by any existing decision text:** an administrator can never
+  deactivate their own account or remove their own admin privileges through this action (`400`, not merely
+  discouraged -- both risk a self-lockout); the reset-generated temporary password is auto-generated and
+  shown once rather than admin-typed, matching the existing PAT/webhook-secret pattern. Documented here per
+  this project's established convention of recording undecided-default choices directly in
+  `docs/VERIFICATION.md`/`NEXT.md` rather than a separate ADR file (none has ever existed in this repo).
+- **Frontend.** New admin-only "Users" nav item and `renderUsersAdmin()` view (mirrors `renderWebhooks`'s
+  list + create-form + reveal-once-banner structure). Deactivate/Remove-admin buttons are disabled
+  client-side for the caller's own row too, matching the server-side rules.
+- **Tests.** New `tests/authorization_integration_tests.cpp` coverage: every action rejected for a
+  non-admin actor, both self-protection rules, not-found returns `false`/`nullopt` rather than throwing,
+  deactivation and password reset each immediately invalidating an already-issued session (not just future
+  logins), a deactivated account failing login, and the new temporary password actually working.
+- **Verified:** full rebuild and `ctest` clean (8/8) in the SQLite + Crow-server configuration; PostgreSQL
+  still could not be compiled here (`libpq-dev` missing; a `sudo apt-get install libpq-dev` attempt failed
+  non-interactively -- this sandbox's `sudo` needs a password with no terminal/askpass available). Live
+  end-to-end over real HTTP (Chrome extension still not connected, `curl` again): listed all three seeded
+  accounts as `demo`; created a throwaway account; confirmed self-deactivate and self-demote each return
+  `400` with the expected message; deactivated the throwaway account and confirmed its login attempt then
+  returns `401`; reset its password and got a temporary password back; confirmed `alex` (non-admin) gets
+  `403` on the admin routes; confirmed the served `/app.js`/`/` contain the new UI wiring. Cleaned up the
+  throwaway account directly via SQLite afterward (no delete-user route exists by design -- deactivation,
+  not deletion, per D57) and confirmed the dev database matched its original seeded state. Full detail in
+  `docs/VERIFICATION.md`.
 
 ## Verification status
 

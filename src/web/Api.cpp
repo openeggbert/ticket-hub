@@ -426,6 +426,21 @@ crow::json::wvalue userDirectoryJson(const Domain::User& user) {
     return json;
 }
 
+// The admin user-management counterpart to userDirectoryJson above --
+// includes active/isAdmin/createdAt, which only an administrator managing
+// accounts needs to see.
+crow::json::wvalue adminUserJson(const Domain::User& user) {
+    crow::json::wvalue json;
+    json["id"] = user.id;
+    json["displayName"] = user.displayName;
+    json["email"] = user.email;
+    json["handle"] = user.handle ? crow::json::wvalue(*user.handle) : crow::json::wvalue(nullptr);
+    json["active"] = user.active;
+    json["isAdmin"] = user.isAdmin;
+    json["createdAt"] = user.createdAt;
+    return json;
+}
+
 crow::json::wvalue notificationJson(const Domain::Notification& notification) {
     crow::json::wvalue json;
     json["id"] = notification.id;
@@ -3057,6 +3072,176 @@ void registerApiRoutes(crow::SimpleApp& app,
             crow::json::wvalue body;
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Administrator-only account management (D2/D53/D57): the web
+    // counterpart to `ticket-hub-cli create-user`, plus deactivate/
+    // reactivate, admin-flag toggle, and admin-performed password reset --
+    // none of which the CLI can do at all. Every route resolves the
+    // caller's own Principal and lets AuthService::admin* enforce the
+    // global-admin check (Domain::Forbidden -> 403), matching every other
+    // admin-gated route in this file rather than checking principal->isAdmin
+    // here directly.
+    CROW_ROUTE(app, "/api/v1/admin/users")
+    .methods(crow::HTTPMethod::Get)([authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& user : authService->adminListUsers(*principal)) {
+                items.emplace_back(adminUserJson(user));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/admin/users")
+    .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            Domain::CreateUserRequest create;
+            create.email = requiredString(body, "email");
+            create.displayName = requiredString(body, "displayName");
+            create.password = requiredString(body, "password");
+            create.handle = optionalString(body, "handle");
+            create.isAdmin = body.has("isAdmin") && body["isAdmin"].t() == crow::json::type::True;
+            const auto created = authService->adminCreateUser(std::move(create), *principal);
+            return jsonResponse(201, adminUserJson(created));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/admin/users/<string>/active")
+    .methods(crow::HTTPMethod::Patch)([authService](const crow::request& request, const std::string& userId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body || !body.has("active") || (body["active"].t() != crow::json::type::True
+                                                && body["active"].t() != crow::json::type::False)) {
+                return errorResponse(400, "active must be a boolean");
+            }
+            if (!authService->adminSetUserActive(userId, body["active"].b(), *principal)) {
+                return errorResponse(404, "User not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/admin/users/<string>/admin")
+    .methods(crow::HTTPMethod::Patch)([authService](const crow::request& request, const std::string& userId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body || !body.has("isAdmin") || (body["isAdmin"].t() != crow::json::type::True
+                                                 && body["isAdmin"].t() != crow::json::type::False)) {
+                return errorResponse(400, "isAdmin must be a boolean");
+            }
+            if (!authService->adminSetUserAdmin(userId, body["isAdmin"].b(), *principal)) {
+                return errorResponse(404, "User not found");
+            }
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/admin/users/<string>/reset-password")
+    .methods(crow::HTTPMethod::Post)([authService](const crow::request& request, const std::string& userId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            const auto temporaryPassword = authService->adminResetPassword(userId, *principal);
+            if (!temporaryPassword) {
+                return errorResponse(404, "User not found");
+            }
+            crow::json::wvalue responseBody;
+            // Only this response ever includes the raw temporary password
+            // (same "reveal secret material only once" convention as PATs/
+            // webhook signing secrets) -- only its hash is ever stored.
+            responseBody["temporaryPassword"] = *temporaryPassword;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

@@ -753,6 +753,45 @@ UPDATE users SET time_zone = ?, clock_format = ?, updated_at = CURRENT_TIMESTAMP
     expectDone(database_, statement, "Update user preferences");
 }
 
+bool SqliteDatabase::setUserActive(const std::string& userId, const bool active) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "UPDATE users SET active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+    statement.bind(1, static_cast<std::int64_t>(active ? 1 : 0));
+    statement.bind(2, userId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+bool SqliteDatabase::setUserAdmin(const std::string& userId, const bool isAdmin) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "UPDATE users SET is_admin = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+    statement.bind(1, static_cast<std::int64_t>(isAdmin ? 1 : 0));
+    statement.bind(2, userId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+bool SqliteDatabase::setPasswordHash(const std::string& userId, const std::string& passwordHash) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+UPDATE local_credentials
+SET password_hash = ?, failed_login_count = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE user_id = ?
+)SQL");
+    statement.bind(1, passwordHash);
+    statement.bind(2, userId);
+    statement.step();
+    return sqlite3_changes(database_) > 0;
+}
+
+int SqliteDatabase::deleteAllSessionsForUser(const std::string& userId) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "DELETE FROM sessions WHERE user_id = ?");
+    statement.bind(1, userId);
+    statement.step();
+    return sqlite3_changes(database_);
+}
+
 void SqliteDatabase::recordFailedLogin(const std::string& userId) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, R"SQL(

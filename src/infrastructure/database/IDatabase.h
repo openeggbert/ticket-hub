@@ -52,6 +52,25 @@ public:
     // there is no cross-user preference management.
     virtual void updateUserPreferences(const std::string& userId, const Domain::UpdatePreferencesRequest& request) = 0;
 
+    // Administrator-only account management (D2/D53/D57), exposed via
+    // AuthService::admin* -- every actor/self-protection check happens
+    // there; these adapter methods carry no authorization themselves. Each
+    // returns false if userId does not resolve to an existing user (or, for
+    // setPasswordHash, has no local_credentials row, which should not
+    // happen in V1 since there is no OIDC).
+    virtual bool setUserActive(const std::string& userId, bool active) = 0;
+    virtual bool setUserAdmin(const std::string& userId, bool isAdmin) = 0;
+    // Also clears any existing failed-login lockout (D53's admin-performed
+    // reset should not leave the account still locked out afterward).
+    virtual bool setPasswordHash(const std::string& userId, const std::string& passwordHash) = 0;
+    // Unlike deleteOtherSessionsForUser (D54's "sign out everywhere else",
+    // which keeps the caller's own current session), this deletes every
+    // session for userId unconditionally -- used after an admin-performed
+    // password reset or deactivation (D53/D57) so the old credential/access
+    // cannot keep an existing browser session alive. Returns the number of
+    // sessions removed.
+    virtual int deleteAllSessionsForUser(const std::string& userId) = 0;
+
     // Minimal login-attempt tracking (Phase 1). The full configurable
     // lockout policy rides along with REST rate limiting in Phase 6; see
     // docs/REDUCED_SCOPE_ROADMAP.md.

@@ -82,6 +82,13 @@ Current schema migrations:
 to change it afterward. Always stored lowercase (`Domain::normalizeHandle`), same normalization style as
 email.
 
+`active` and `is_admin` were already enforced (a deactivated user cannot log in or validate a session/PAT)
+but, until D2/D53/D57's web admin user management was built, had no editing path at all beyond account
+creation. `IDatabase::setUserActive`/`setUserAdmin` (via `AuthService::adminSetUserActive`/
+`adminSetUserAdmin`, `PATCH /api/v1/admin/users/{id}/active`/`.../admin`) now expose them, global-admin-only,
+with two conservative self-protection rules with no decision text covering them: an admin cannot deactivate
+or demote their own account through this action.
+
 `time_zone` (default `UTC`) and `clock_format` (default `24h`) are self-service (D45): `PATCH
 /api/v1/account/preferences` (`IDatabase::updateUserPreferences`) lets a logged-in user set both directly,
 validated by `Domain::validateUpdatePreferences` (non-empty IANA-style zone name up to 80 characters,

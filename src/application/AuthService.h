@@ -65,7 +65,50 @@ public:
     std::vector<Domain::Session> listActiveSessions(const std::string& userId);
     int signOutOtherSessions(const std::string& userId, const std::string& currentSessionId);
 
+    // Administrator-only account management (D2/D53/D57): there is still no
+    // self-service registration/invitation/reset-by-email in V1 -- these are
+    // the same create/deactivate/reset actions the CLI already performs
+    // (createUser above; ticket-hub-cli has no deactivate/reset equivalent
+    // yet), now reachable by a logged-in global administrator over the web,
+    // with the actor checked here rather than in the Crow route (this
+    // codebase centralizes authorization in the service layer). Every
+    // method throws Domain::Forbidden if `actor` is not a global admin,
+    // exactly like TicketService::requireGlobalAdmin-gated actions, so the
+    // existing Api.cpp `catch (const Domain::Forbidden&)` -> 403 pattern
+    // applies unchanged.
+    std::vector<Domain::User> adminListUsers(const Domain::Principal& actor);
+    // Same validation/duplicate-email/handle checks as createUser (shares
+    // its implementation) but attributes the audit event to `actor` instead
+    // of leaving it actor-less like the CLI path.
+    Domain::User adminCreateUser(Domain::CreateUserRequest request, const Domain::Principal& actor);
+    // False if userId does not resolve to an existing user. Throws
+    // std::invalid_argument if userId == actor.userId -- an admin
+    // deactivating their own account is never useful and risks a confusing
+    // self-lockout, so it is rejected outright rather than merely
+    // discouraged. Deactivating also kills every existing session for that
+    // user (D57's deactivation should take effect immediately, not just on
+    // their next session validation).
+    bool adminSetUserActive(const std::string& userId, bool active, const Domain::Principal& actor);
+    // False if userId does not resolve to an existing user. Throws
+    // std::invalid_argument if userId == actor.userId and isAdmin is false
+    // -- an admin can promote anyone (including making a second admin) but
+    // can never demote themselves through this action, the same
+    // never-lock-yourself-out reasoning as adminSetUserActive.
+    bool adminSetUserAdmin(const std::string& userId, bool isAdmin, const Domain::Principal& actor);
+    // D53: "admin-performed reset (sets a temporary password)" -- replaces
+    // the email-based reset original scope assumed self-service email
+    // (Decisions 2/52 removed both). Generates and returns a fresh random
+    // temporary password (shown to the calling admin exactly once, like a
+    // PAT's raw token -- it is never stored or retrievable again, only its
+    // hash), clears any failed-login lockout, and invalidates every
+    // existing session for that user (session invalidation after a
+    // password change, also part of D53). Returns nullopt if userId does
+    // not resolve to an existing user.
+    std::optional<std::string> adminResetPassword(const std::string& userId, const Domain::Principal& actor);
+
 private:
+    void requireGlobalAdmin(const Domain::Principal& actor) const;
+
     std::shared_ptr<Infrastructure::Database::IDatabase> database_;
 };
 

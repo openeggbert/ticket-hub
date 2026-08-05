@@ -723,6 +723,40 @@ UPDATE users SET time_zone = $1, clock_format = $2, updated_at = CURRENT_TIMESTA
                {request.timeZone, request.clockFormat, userId}, "Update user preferences");
 }
 
+bool PostgresDatabase::setUserActive(const std::string& userId, const bool active) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(),
+        "UPDATE users SET active = $1::boolean, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+        {active ? std::string("true") : std::string("false"), userId}, "Set user active");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool PostgresDatabase::setUserAdmin(const std::string& userId, const bool isAdmin) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(),
+        "UPDATE users SET is_admin = $1::boolean, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+        {isAdmin ? std::string("true") : std::string("false"), userId}, "Set user admin");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+bool PostgresDatabase::setPasswordHash(const std::string& userId, const std::string& passwordHash) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+UPDATE local_credentials
+SET password_hash = $1, failed_login_count = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE user_id = $2
+)SQL",
+        {passwordHash, userId}, "Set password hash");
+    return std::string(PQcmdTuples(result.get())) != "0";
+}
+
+int PostgresDatabase::deleteAllSessionsForUser(const std::string& userId) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), "DELETE FROM sessions WHERE user_id = $1",
+                             {userId}, "Delete all sessions for user");
+    return std::stoi(PQcmdTuples(result.get()));
+}
+
 void PostgresDatabase::recordFailedLogin(const std::string& userId) {
     auto connection = connect(connectionString_);
     execParams(connection.get(), R"SQL(

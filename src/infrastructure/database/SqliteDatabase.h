@@ -30,6 +30,10 @@ public:
     std::vector<Domain::User> listUsers() override;
     std::optional<std::string> findPasswordHash(const std::string& userId) override;
     void updateUserPreferences(const std::string& userId, const Domain::UpdatePreferencesRequest& request) override;
+    bool setUserActive(const std::string& userId, bool active) override;
+    bool setUserAdmin(const std::string& userId, bool isAdmin) override;
+    bool setPasswordHash(const std::string& userId, const std::string& passwordHash) override;
+    int deleteAllSessionsForUser(const std::string& userId) override;
     void recordFailedLogin(const std::string& userId) override;
     void resetFailedLogin(const std::string& userId) override;
     bool isLoginLocked(const std::string& userId) override;

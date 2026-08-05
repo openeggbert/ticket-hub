@@ -66,8 +66,10 @@ Implemented now:
   browser-verified with Playwright/Chromium, see "Server verification" below) plus a simple Kanban board,
 - **local accounts: Argon2id password hashing, server-side sessions, minimal login-attempt lockout**
   (`AuthService` — Phase 1 of `docs/REDUCED_SCOPE_ROADMAP.md`),
-- **administrator-only account creation via `ticket-hub-cli create-user`** — there is no
-  self-registration or invitation flow in V1,
+- **administrator-only account creation via `ticket-hub-cli create-user` or the web "Users" admin page**
+  (D2/D53/D57) — there is no self-registration or invitation flow in V1; the web page additionally offers
+  deactivate/reactivate, grant/revoke global-admin, and an admin-performed temporary-password reset, none
+  of which the CLI can do,
 - **fixed project roles (Viewer/Member/Admin) and a global administrator flag, enforced on every ticket
   and project write** (`TicketService::requireProjectRole`/`requireGlobalAdmin` — Phase 2 of
   `docs/REDUCED_SCOPE_ROADMAP.md`),
@@ -439,6 +441,11 @@ protect against, so a retry with the same key after a validation error simply ru
 | `GET` | `/api/v1/board-columns` | session, or anon if enabled | one entry per fixed workflow status with its optional soft WIP limit (D32/D33) |
 | `PUT` | `/api/v1/board-columns/{statusKey}` | session + CSRF, global admin | `{wipLimit}` (number or null); installation-wide, not per-project |
 | `GET` | `/api/v1/users` | session | user directory (id/displayName/email/handle) for @mention autocomplete (D80) |
+| `GET` | `/api/v1/admin/users` | session, global admin | full account list (adds `active`/`isAdmin`/`createdAt` beyond the directory above) (D2/D53/D57) |
+| `POST` | `/api/v1/admin/users` | session + CSRF, global admin | `{email, displayName, password, isAdmin?, handle?}` -> same validation as `ticket-hub-cli create-user` |
+| `PATCH` | `/api/v1/admin/users/{id}/active` | session + CSRF, global admin | `{active}` -> deactivating kills every session for that user; an admin cannot deactivate themselves |
+| `PATCH` | `/api/v1/admin/users/{id}/admin` | session + CSRF, global admin | `{isAdmin}` -> an admin cannot remove their own admin privileges |
+| `POST` | `/api/v1/admin/users/{id}/reset-password` | session + CSRF, global admin | sets and returns a fresh temporary password, shown once; kills every session for that user |
 | `GET` | `/api/v1/notifications` | session | `?unread=true` filters; fixed set (D14); paginated via `page`/`pageSize` (D126) |
 | `GET` | `/api/v1/notifications/unread-count` | session | `{count}` |
 | `POST` | `/api/v1/notifications/{id}/read` | session + CSRF | scoped to the caller's own notifications |

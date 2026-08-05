@@ -1,3 +1,4 @@
+#include "application/AuthService.h"
 #include "application/TicketService.h"
 #include "domain/Errors.h"
 #include "domain/Validation.h"
@@ -55,10 +56,13 @@ bool throwsForbidden(Action action) {
 int main() {
     namespace fs = std::filesystem;
     using TicketHub::Application::TicketService;
+    using TicketHub::Domain::AuthenticationFailed;
     using TicketHub::Domain::CreateTicketRequest;
     using TicketHub::Domain::CreateProjectRequest;
+    using TicketHub::Domain::CreateUserRequest;
     using TicketHub::Domain::EditTicketRequest;
     using TicketHub::Domain::Forbidden;
+    using TicketHub::Domain::LoginRequest;
     using TicketHub::Domain::Principal;
     using TicketHub::Infrastructure::Database::SqliteDatabase;
 
@@ -86,6 +90,7 @@ int main() {
     fs::remove_all(attachmentsRoot, removeError);
 
     TicketService tickets(database, attachmentsRoot.string());
+    TicketHub::Application::AuthService auth(database);
 
     // --- Fixed project roles gate ticket writes (D3) ---
     {
@@ -914,6 +919,104 @@ SELECT id, '00000000-0000-4000-8000-000000000002', 'admin' FROM projects WHERE p
                             [](const auto& ticket) { return ticket.key == "TH-2"; }),
                "the watched-tickets widget reflects a newly watched ticket");
         require(tickets.unwatchTicket("TH-2", alex), "cleanup: alex unwatches TH-2");
+    }
+
+    // --- Administrator-only account management (D2/D53/D57) ---
+    {
+        require(throwsForbidden([&] { auth.adminListUsers(alex); }),
+               "listing users for admin management is global-administrator-only");
+        const auto seededUsers = auth.adminListUsers(demo);
+        require(seededUsers.size() == 3, "adminListUsers sees the three seeded demo accounts");
+        require(std::any_of(seededUsers.begin(), seededUsers.end(),
+                            [](const auto& user) { return user.email == "alex@ticket-hub.local" && user.active && !user.isAdmin; }),
+               "adminListUsers reports alex as active and non-admin, matching seed state");
+
+        // -- Create --
+        CreateUserRequest newUserRequest;
+        newUserRequest.email = "taylor@ticket-hub.local";
+        newUserRequest.displayName = "Taylor Admin-Created";
+        newUserRequest.password = "a sufficiently long password";
+        require(throwsForbidden([&] { auth.adminCreateUser(newUserRequest, alex); }),
+               "creating a user via the admin action is global-administrator-only");
+        const auto created = auth.adminCreateUser(newUserRequest, demo);
+        require(created.email == "taylor@ticket-hub.local" && created.active && !created.isAdmin,
+               "adminCreateUser creates an active, non-admin account by default, same as the CLI");
+        require(auth.adminListUsers(demo).size() == 4, "the newly created account now appears in adminListUsers");
+
+        // -- Deactivate / reactivate, with self-protection and session invalidation --
+        auto alexSession = auth.login(LoginRequest{"alex@ticket-hub.local", "demo12345"});
+        require(auth.validateSession(alexSession.sessionToken).has_value(),
+               "alex's freshly created session is valid before deactivation");
+        require(throwsForbidden([&] { auth.adminSetUserActive("00000000-0000-4000-8000-000000000002", false, alex); }),
+               "deactivating a user is global-administrator-only");
+        bool selfDeactivateRejected = false;
+        try {
+            auth.adminSetUserActive(demo.userId, false, demo);
+        } catch (const std::invalid_argument&) {
+            selfDeactivateRejected = true;
+        }
+        require(selfDeactivateRejected, "an administrator cannot deactivate their own account");
+        require(auth.adminSetUserActive("00000000-0000-4000-8000-000000000002", true, demo),
+               "deactivating (then reactivating below) returns true for a real user id");
+        require(auth.adminSetUserActive("00000000-0000-4000-8000-000000000002", false, demo),
+               "the global administrator can deactivate alex's account");
+        require(!auth.validateSession(alexSession.sessionToken).has_value(),
+               "deactivation immediately invalidates alex's existing session, not just future logins");
+        bool deactivatedLoginRejected = false;
+        try {
+            auth.login(LoginRequest{"alex@ticket-hub.local", "demo12345"});
+        } catch (const AuthenticationFailed&) {
+            deactivatedLoginRejected = true;
+        }
+        require(deactivatedLoginRejected, "a deactivated account cannot log in");
+        require(!auth.adminSetUserActive("unknown-user-id", true, demo),
+               "adminSetUserActive returns false for an unknown user id rather than throwing");
+        require(auth.adminSetUserActive("00000000-0000-4000-8000-000000000002", true, demo),
+               "the global administrator can reactivate alex's account");
+        alexSession = auth.login(LoginRequest{"alex@ticket-hub.local", "demo12345"});
+        require(auth.validateSession(alexSession.sessionToken).has_value(), "alex can log in again after reactivation");
+
+        // -- Admin-flag toggle, with self-protection --
+        require(throwsForbidden([&] { auth.adminSetUserAdmin("00000000-0000-4000-8000-000000000003", true, alex); }),
+               "granting administrator privileges is itself global-administrator-only");
+        bool selfDemoteRejected = false;
+        try {
+            auth.adminSetUserAdmin(demo.userId, false, demo);
+        } catch (const std::invalid_argument&) {
+            selfDemoteRejected = true;
+        }
+        require(selfDemoteRejected, "an administrator cannot remove their own administrator privileges");
+        require(auth.adminSetUserAdmin("00000000-0000-4000-8000-000000000003", true, demo),
+               "the global administrator can promote sam to administrator");
+        require(auth.adminListUsers(demo).end() != std::find_if(auth.adminListUsers(demo).begin(), auth.adminListUsers(demo).end(),
+                    [](const auto& user) { return user.email == "sam@ticket-hub.local" && user.isAdmin; }),
+               "sam is now reported as an administrator");
+        require(auth.adminSetUserAdmin("00000000-0000-4000-8000-000000000003", false, demo),
+               "cleanup: sam's administrator privileges are removed again");
+
+        // -- Admin-performed password reset (D53), with session invalidation --
+        require(throwsForbidden([&] { auth.adminResetPassword("00000000-0000-4000-8000-000000000002", alex); }),
+               "resetting another user's password is global-administrator-only");
+        require(!auth.adminResetPassword("unknown-user-id", demo).has_value(),
+               "adminResetPassword returns nullopt for an unknown user id rather than throwing");
+        require(auth.validateSession(alexSession.sessionToken).has_value(),
+               "alex's session is still valid immediately before the reset below");
+        const auto temporaryPassword = auth.adminResetPassword("00000000-0000-4000-8000-000000000002", demo);
+        require(temporaryPassword.has_value() && temporaryPassword->size() >= 10,
+               "adminResetPassword returns a temporary password meeting the normal minimum length");
+        require(!auth.validateSession(alexSession.sessionToken).has_value(),
+               "the password reset immediately invalidates alex's existing session");
+        bool oldPasswordRejected = false;
+        try {
+            auth.login(LoginRequest{"alex@ticket-hub.local", "demo12345"});
+        } catch (const AuthenticationFailed&) {
+            oldPasswordRejected = true;
+        }
+        require(oldPasswordRejected, "alex's original password no longer works after the reset");
+        const auto sessionWithTemporaryPassword = auth.login(LoginRequest{"alex@ticket-hub.local", *temporaryPassword});
+        require(auth.validateSession(sessionWithTemporaryPassword.sessionToken).has_value(),
+               "alex can log in with the new temporary password");
+        auth.logout(sessionWithTemporaryPassword.sessionToken);
     }
 
     fs::remove(databasePath, removeError);

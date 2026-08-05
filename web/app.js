@@ -597,6 +597,7 @@ function showLoginScreen() {
   document.querySelector('#nav-audit').classList.add('hidden');
   document.querySelector('#nav-attachment-bin').classList.add('hidden');
   document.querySelector('#nav-webhooks').classList.add('hidden');
+  document.querySelector('#nav-users').classList.add('hidden');
   appShell.classList.add('hidden');
   loginScreen.classList.remove('hidden');
   loginForm.querySelector('input[name="email"]').focus();
@@ -620,6 +621,10 @@ function renderCurrentUser() {
   // Webhooks (D39/D41): global-admin-only, same installation-level
   // administration tier as the audit log/attachment recycle bin.
   document.querySelector('#nav-webhooks').classList.toggle('hidden', !principal.isAdmin);
+  // User management (D2/D53/D57): same tier again -- there is still no
+  // self-registration, so account creation/deactivation/password reset is
+  // administrator-only.
+  document.querySelector('#nav-users').classList.toggle('hidden', !principal.isAdmin);
 }
 
 // D45's "browser auto-detect" is a per-browser concern, not a per-account
@@ -1100,6 +1105,109 @@ async function renderWebhooks(revealSecret = null) {
       });
       showToast('Webhook added');
       await renderWebhooks(created.secret);
+    } catch (error) {
+      errorElement.textContent = error.message;
+      errorElement.classList.remove('hidden');
+    }
+  });
+}
+
+// Administrator-only account management (D2/D53/D57): global-admin-only,
+// same installation-level tier as webhooks/audit log. There is still no
+// self-registration or invitation flow -- every account is created here
+// (or via `ticket-hub-cli create-user`) by an existing administrator.
+// `revealTempPassword` mirrors renderWebhooks' `revealSecret` -- shown
+// exactly once, right after a create or a password reset, then gone on the
+// next re-render (the server never returns it again either).
+async function renderUsersAdmin(revealTempPassword = null) {
+  content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  const { items: users } = await api('/api/v1/admin/users');
+  const isSelf = user => user.id === state.principal?.userId;
+  content.innerHTML = `
+    ${pageHeader('Users', 'Administrator-only account management. There is no self-registration in V1 -- create every account here.', 'Administration')}
+    <div id="user-secret-banner">${revealTempPassword ? `
+      <div class="panel" style="padding:16px;margin-bottom:16px;border-color:var(--primary)">
+        <strong>Temporary password (shown once — copy it and share it with the user now):</strong>
+        <div style="font-family:monospace;word-break:break-all;margin-top:6px;user-select:all">${escapeHtml(revealTempPassword)}</div>
+      </div>` : ''}</div>
+    <div class="panel">
+      <div class="panel-header"><h2>Accounts</h2><span class="eyebrow">${users.length} total</span></div>
+      <div style="overflow-x:auto">
+        <table class="ticket-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Handle</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody>${users.length ? users.map(user => `
+            <tr>
+              <td>${escapeHtml(user.displayName)}${isSelf(user) ? ' <span class="assignee-cell">(you)</span>' : ''}</td>
+              <td>${escapeHtml(user.email)}</td>
+              <td>${user.handle ? escapeHtml(user.handle) : '<span class="assignee-cell">—</span>'}</td>
+              <td>${user.isAdmin ? '<span class="label-chip">Admin</span>' : '<span class="assignee-cell">Member</span>'}</td>
+              <td>${user.active ? '<span class="assignee-cell">Active</span>' : '<span class="label-chip">Deactivated</span>'}</td>
+              <td class="ticket-timestamp">${escapeHtml(relativeDate(user.createdAt))}</td>
+              <td><div class="project-card-actions">
+                <button type="button" class="secondary-button" data-toggle-admin="${escapeHtml(user.id)}" data-is-admin="${user.isAdmin}" ${isSelf(user) && user.isAdmin ? 'disabled title="You cannot remove your own administrator privileges"' : ''}>${user.isAdmin ? 'Remove admin' : 'Make admin'}</button>
+                <button type="button" class="secondary-button" data-toggle-active="${escapeHtml(user.id)}" data-active="${user.active}" ${isSelf(user) ? 'disabled title="You cannot deactivate your own account"' : ''}>${user.active ? 'Deactivate' : 'Activate'}</button>
+                <button type="button" class="secondary-button" data-reset-password="${escapeHtml(user.id)}">Reset password</button>
+              </div></td>
+            </tr>`).join('') : '<tr><td colspan="7"><div class="empty-state">No users yet.</div></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <form class="form-grid" id="user-add-form" style="margin-top:16px">
+        <label>Display name<input name="displayName" maxlength="160" required placeholder="e.g. Jordan Rivera"></label>
+        <label>Email<input name="email" type="email" required placeholder="jordan@example.com"></label>
+        <label>Password<input name="password" type="password" required minlength="10" placeholder="At least 10 characters"></label>
+        <label>Handle (optional)<input name="handle" placeholder="jordan"></label>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400"><input type="checkbox" name="isAdmin" style="width:auto">Global administrator</label>
+      </form>
+      <div id="user-error" class="form-error hidden"></div>
+      <div class="modal-footer" style="padding:16px 0 0">
+        <button type="submit" form="user-add-form" class="primary-button">Create user</button>
+      </div>
+    </div>`;
+
+  document.querySelectorAll('[data-toggle-admin]').forEach(button => button.addEventListener('click', async () => {
+    const userId = button.dataset.toggleAdmin;
+    const isAdmin = button.dataset.isAdmin !== 'true';
+    try {
+      await api(`/api/v1/admin/users/${encodeURIComponent(userId)}/admin`, { method: 'PATCH', body: JSON.stringify({ isAdmin }) });
+      showToast(isAdmin ? 'Granted administrator privileges' : 'Removed administrator privileges');
+      await renderUsersAdmin();
+    } catch (error) { showToast(error.message); }
+  }));
+  document.querySelectorAll('[data-toggle-active]').forEach(button => button.addEventListener('click', async () => {
+    const userId = button.dataset.toggleActive;
+    const active = button.dataset.active !== 'true';
+    try {
+      await api(`/api/v1/admin/users/${encodeURIComponent(userId)}/active`, { method: 'PATCH', body: JSON.stringify({ active }) });
+      showToast(active ? 'Account activated' : 'Account deactivated');
+      await renderUsersAdmin();
+    } catch (error) { showToast(error.message); }
+  }));
+  document.querySelectorAll('[data-reset-password]').forEach(button => button.addEventListener('click', async () => {
+    try {
+      const result = await api(`/api/v1/admin/users/${encodeURIComponent(button.dataset.resetPassword)}/reset-password`, { method: 'POST' });
+      showToast('Password reset');
+      await renderUsersAdmin(result.temporaryPassword);
+    } catch (error) { showToast(error.message); }
+  }));
+  document.querySelector('#user-add-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const errorElement = document.querySelector('#user-error');
+    try {
+      await api('/api/v1/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          displayName: formData.get('displayName').trim(),
+          email: formData.get('email').trim(),
+          password: formData.get('password'),
+          handle: formData.get('handle').trim() || null,
+          isAdmin: formData.get('isAdmin') === 'on',
+        }),
+      });
+      showToast('User created');
+      await renderUsersAdmin();
     } catch (error) {
       errorElement.textContent = error.message;
       errorElement.classList.remove('hidden');
@@ -2538,6 +2646,7 @@ async function renderCurrentView() {
     else if (state.view === 'audit') await renderAuditLog();
     else if (state.view === 'attachment-bin') await renderAttachmentRecycleBin();
     else if (state.view === 'webhooks') await renderWebhooks();
+    else if (state.view === 'users') await renderUsersAdmin();
     else await renderProjects();
   } catch (error) {
     showError(error);

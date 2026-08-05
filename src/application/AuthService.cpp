@@ -54,7 +54,10 @@ AuthService::AuthService(std::shared_ptr<Infrastructure::Database::IDatabase> da
     }
 }
 
-Domain::User AuthService::createUser(Domain::CreateUserRequest request) {
+namespace {
+Domain::User createUserAs(Infrastructure::Database::IDatabase& database,
+                          Domain::CreateUserRequest request,
+                          std::optional<std::string> actorUserId) {
     request.email = Domain::normalizeEmail(request.email);
     if (request.handle) {
         request.handle = Domain::normalizeHandle(*request.handle);
@@ -63,16 +66,21 @@ Domain::User AuthService::createUser(Domain::CreateUserRequest request) {
     if (!errors.empty()) {
         throwValidationErrors(errors);
     }
-    if (database_->findUserByEmail(request.email).has_value()) {
+    if (database.findUserByEmail(request.email).has_value()) {
         throw std::invalid_argument("Email is already in use: " + request.email);
     }
-    if (request.handle && database_->findUserByHandle(*request.handle).has_value()) {
+    if (request.handle && database.findUserByHandle(*request.handle).has_value()) {
         throw std::invalid_argument("Handle is already in use: " + *request.handle);
     }
     const std::string passwordHash = Common::hashPassword(request.password);
-    const auto user = database_->createUser(request, passwordHash);
-    database_->recordAuditEvent("identity", "user.created", std::nullopt, std::string("user"), user.id, std::nullopt);
+    const auto user = database.createUser(request, passwordHash);
+    database.recordAuditEvent("identity", "user.created", actorUserId, std::string("user"), user.id, std::nullopt);
     return user;
+}
+} // namespace
+
+Domain::User AuthService::createUser(Domain::CreateUserRequest request) {
+    return createUserAs(*database_, std::move(request), std::nullopt);
 }
 
 Domain::AuthenticatedSession AuthService::login(Domain::LoginRequest request) {
@@ -189,6 +197,62 @@ std::vector<Domain::Session> AuthService::listActiveSessions(const std::string& 
 
 int AuthService::signOutOtherSessions(const std::string& userId, const std::string& currentSessionId) {
     return database_->deleteOtherSessionsForUser(userId, currentSessionId);
+}
+
+void AuthService::requireGlobalAdmin(const Domain::Principal& actor) const {
+    if (!actor.isAdmin) {
+        throw Domain::Forbidden("This action requires global administrator privileges");
+    }
+}
+
+std::vector<Domain::User> AuthService::adminListUsers(const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->listUsers();
+}
+
+Domain::User AuthService::adminCreateUser(Domain::CreateUserRequest request, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return createUserAs(*database_, std::move(request), actor.userId);
+}
+
+bool AuthService::adminSetUserActive(const std::string& userId, const bool active, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    if (userId == actor.userId) {
+        throw std::invalid_argument("You cannot deactivate your own account");
+    }
+    const bool changed = database_->setUserActive(userId, active);
+    if (changed) {
+        database_->deleteAllSessionsForUser(userId);
+        database_->recordAuditEvent("identity", active ? "user.activated" : "user.deactivated", actor.userId,
+                                    std::string("user"), userId, std::nullopt);
+    }
+    return changed;
+}
+
+bool AuthService::adminSetUserAdmin(const std::string& userId, const bool isAdmin, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    if (userId == actor.userId && !isAdmin) {
+        throw std::invalid_argument("You cannot remove your own global administrator privileges");
+    }
+    const bool changed = database_->setUserAdmin(userId, isAdmin);
+    if (changed) {
+        database_->recordAuditEvent("identity", isAdmin ? "user.admin_granted" : "user.admin_revoked", actor.userId,
+                                    std::string("user"), userId, std::nullopt);
+    }
+    return changed;
+}
+
+std::optional<std::string> AuthService::adminResetPassword(const std::string& userId, const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    if (!database_->findUserById(userId).has_value()) {
+        return std::nullopt;
+    }
+    const std::string temporaryPassword = Common::randomTokenHex(16);
+    database_->setPasswordHash(userId, Common::hashPassword(temporaryPassword));
+    database_->deleteAllSessionsForUser(userId);
+    database_->recordAuditEvent("identity", "user.password_reset_by_admin", actor.userId, std::string("user"), userId,
+                                std::nullopt);
+    return temporaryPassword;
 }
 
 } // namespace TicketHub::Application

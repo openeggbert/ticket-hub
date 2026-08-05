@@ -703,6 +703,45 @@ remain as the long-term aspirational baseline only — do not build against them
   `leadEmail` through the real API and confirming it stuck. Cleaned up the throwaway component/user
   afterward. See `docs/VERIFICATION.md`.
 
+- **Batch 18 (done): web admin user management (D2/D53/D57)** -- user-requested, asked right after batch 17
+  where accounts could be managed as an admin. Not new scope: a decided-but-never-implemented gap, same
+  class as batch 8's five-decision audit. Decision 2 (admin-created accounts only, no self-registration)
+  preserved; Decision 53 ("admin-performed reset, sets a temporary password") and Decision 57
+  ("deactivation only, no anonymize/merge") implemented for the first time. `users.active`/`is_admin`
+  already existed in the schema and were already enforced at login (`AuthService::login`/`validateSession`
+  already reject a deactivated user) -- simply never exposed for editing after account creation, so no
+  migration was needed.
+  - **Backend.** `IDatabase::setUserActive`/`setUserAdmin`/`setPasswordHash`/`deleteAllSessionsForUser` on
+    both adapters. `AuthService` gained a private `requireGlobalAdmin` and five public methods:
+    `adminListUsers`, `adminCreateUser` (shares `createUser`'s validation via a refactored free function,
+    now attributing the audit event to the acting admin instead of leaving it actor-less), `adminSetUserActive`,
+    `adminSetUserAdmin`, `adminResetPassword` (returns a fresh temporary password, shown once, like a PAT's
+    raw token; also clears any failed-login lockout and invalidates every existing session for that user).
+    New `GET`/`POST /api/v1/admin/users`, `PATCH .../active`, `PATCH .../admin`,
+    `POST .../reset-password` routes and an `adminUserJson()` serializer (the pre-existing
+    `userDirectoryJson` stays narrower -- it backs the @mention/assignee-picker directory every reader can
+    see, not an admin view).
+  - **Two conservative defaults, undecided by any existing decision text** (documented here rather than a
+    separate ADR -- this project has never used standalone ADR files, following the same convention as
+    D54's "sign out everywhere" default): an administrator can never deactivate their own account or remove
+    their own admin privileges through this action (`400`, not merely discouraged); the reset-generated
+    temporary password is auto-generated and shown once rather than admin-typed, matching the existing
+    PAT/webhook-secret pattern.
+  - **Frontend.** New admin-only "Users" nav item and `renderUsersAdmin()` view, mirroring `renderWebhooks`'s
+    list + create-form + reveal-once-banner structure; Deactivate/Remove-admin buttons are disabled
+    client-side for the caller's own row too, matching the server-side rules.
+
+  New authorization-integration-test coverage: every action rejected for a non-admin actor, both
+  self-protection rules, not-found returns `false`/`nullopt` rather than throwing, deactivation and
+  password reset each immediately invalidating an already-issued session, a deactivated account failing
+  login, and the new temporary password actually working for a fresh login. Verified: full rebuild and
+  `ctest` clean (8/8) in the SQLite + Crow-server configuration; PostgreSQL still could not be compiled here
+  (`libpq-dev` missing). Live-verified end-to-end over real HTTP: created/listed accounts, confirmed both
+  self-protection `400`s, deactivated an account and confirmed its subsequent login attempt returns `401`,
+  reset its password and confirmed a fresh temporary password was returned, and confirmed a non-admin gets
+  `403` on every admin route. Cleaned up the throwaway account directly via SQLite afterward (no delete-user
+  route exists by design -- deactivation, not deletion, per D57). See `docs/VERIFICATION.md`.
+
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
 - Phases 1-8 (the entire reduced-scope V1 roadmap) are complete -- nothing remains in this category.

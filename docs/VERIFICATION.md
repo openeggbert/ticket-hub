@@ -1,5 +1,95 @@
 # Verification record
 
+## 2026-08-05 — Web admin user management (D2/D53/D57), user-requested
+
+User asked, after the picker-hardcoding fix above, where they could manage user accounts as an admin. The
+answer at the time was "nowhere -- `ticket-hub-cli create-user` is the entire story, and it can't even list/
+deactivate/reset anyone." User confirmed the design proposed in chat (list, create, deactivate/reactivate,
+promote/demote admin, admin-performed password reset, grounded in the existing decision register rather
+than a bespoke design) and asked for it to be built.
+
+### Design grounding
+
+Checked `docs/REDUCED_SCOPE_DECISIONS.md` before writing any code, since `CLAUDE.md` requires an explicit
+product conversation before new scope and forbids building anything on
+`docs/REMOVED_AND_DEFERRED_FEATURES.md` without one. Found this was **not** new scope at all -- it is a
+decided-but-never-implemented gap, the same class of finding as post-V1 batch 8's five-decision audit:
+
+- **Decision 2 (Registration modes):** admin-created accounts only, no self-registration/invitation --
+  preserved; this feature adds no new way for an account to come into existence except an existing admin
+  creating one, whether via CLI or the new web page.
+- **Decision 53 (Password security):** "replace email-based reset with admin-performed reset (sets a
+  temporary password)" -- exactly what `adminResetPassword` implements. Keeps Argon2id, rate limiting,
+  lockout, and adds the "session invalidation after password change" the original decision also called for.
+- **Decision 56 (User identity fields):** immutable UUID, unique email, optional unique handle -- untouched;
+  no editing of identity fields was added.
+- **Decision 57 (User departure/duplicates):** "Deactivation only; no anonymization, no account merge" --
+  exactly what `adminSetUserActive` implements; no delete/anonymize/merge action exists or was considered.
+- `docs/REMOVED_AND_DEFERRED_FEATURES.md` has no entry blocking any of this -- only D52 (outbound email) is
+  mentioned, and only to note it's superseded by Decision 53's admin-performed reset.
+- The `users.active`/`is_admin` columns already existed in the schema (provisioned since Phase 1) and were
+  already enforced at the auth layer (`AuthService::login`/`validateSession`/`validatePersonalAccessToken`
+  already reject a deactivated user) -- they were simply never exposed for editing after account creation.
+  No migration was needed.
+- Two implementation choices have no decision text covering them, so conservative defaults were chosen and
+  are recorded here rather than in a separate ADR (this project has never used standalone ADR files --
+  every prior undecided-default choice, e.g. D54's "sign out everywhere keeps the caller's own session,"
+  was documented directly in this file, so the same convention is followed here): (1) an administrator can
+  never deactivate their own account or remove their own admin privileges through this UI/API -- both risk
+  a confusing self-lockout, rejected with `400` rather than merely discouraged; (2) the temporary password
+  from an admin-performed reset is auto-generated and shown exactly once, matching this codebase's existing
+  PAT-token/webhook-secret "reveal material only once" pattern, rather than letting the admin type one --
+  removes the chance of a weak admin-chosen password and needed no new validation code.
+
+### What changed
+
+- **Backend.** `IDatabase::setUserActive`/`setUserAdmin`/`setPasswordHash`/`deleteAllSessionsForUser` on
+  both SQLite and PostgreSQL (`setPasswordHash` also clears any existing failed-login lockout, since a
+  reset account should not still be locked out afterward). `AuthService` gained a private
+  `requireGlobalAdmin` (mirroring `TicketService`'s own) and five public `admin*` methods:
+  `adminListUsers`, `adminCreateUser` (shares its validation/duplicate-checking implementation with the
+  existing CLI-facing `createUser`, refactored into a shared free function so the audit event can be
+  attributed to the acting admin instead of staying actor-less), `adminSetUserActive`, `adminSetUserAdmin`,
+  `adminResetPassword`. New `GET`/`POST /api/v1/admin/users`, `PATCH /api/v1/admin/users/{id}/active`,
+  `PATCH /api/v1/admin/users/{id}/admin`, `POST /api/v1/admin/users/{id}/reset-password` in `Api.cpp`, and
+  a new `adminUserJson()` serializer (the existing `userDirectoryJson` deliberately omits
+  `active`/`isAdmin`/`createdAt` -- it backs the @mention/assignee-picker directory available to every
+  reader, not an admin view).
+- **Frontend.** New admin-only "Users" nav item and `renderUsersAdmin()` view in `web/app.js` (mirrors
+  `renderWebhooks`'s list + create-form + reveal-once-banner structure). Each row's Deactivate/Remove-admin
+  buttons are disabled client-side for the caller's own row, matching the server-side self-protection
+  rules -- both layers, same as the disabled-button pattern already used for the sign-out-everywhere flow.
+- **Tests.** Extended `tests/authorization_integration_tests.cpp` with a full admin-user-management block:
+  every action rejected (`Domain::Forbidden`) for a non-admin actor; both self-protection rules
+  (`std::invalid_argument`); `adminSetUserActive`/`adminResetPassword` returning `false`/`nullopt` for an
+  unknown user id instead of throwing; deactivation and password reset each immediately invalidating an
+  already-issued session (checked via `validateSession`, not just a fresh login attempt); a deactivated
+  account failing login with the same generic message as a wrong password; and the new temporary password
+  actually working for a fresh login while the old password no longer does.
+
+### How it was verified
+
+Full rebuild and `ctest --output-on-failure` clean (8/8) in the SQLite + Crow-server configuration
+(`build/`, incremental, `-j3`, ccache). PostgreSQL still could not be compiled in this environment
+(`libpq-dev` not installed, only the runtime `libpq5` -- unchanged since the archived-projects fix earlier
+today; a `sudo apt-get install libpq-dev` attempt failed non-interactively, since this sandbox's `sudo`
+requires a password with no terminal/askpass available).
+
+Live end-to-end over real HTTP against the actual compiled server and the local dev SQLite database (the
+Chrome extension was still not connected): logged in as `demo` (admin) and confirmed `GET
+/api/v1/admin/users` listed all three seeded accounts with `active`/`isAdmin` correctly reported; created a
+throwaway account via `POST /api/v1/admin/users` (`201`); confirmed a self-deactivate attempt on `demo`'s
+own id returned `400` with the expected message; deactivated the throwaway account (`200`) and confirmed a
+login attempt for it then returned `401` "Invalid email or password" (indistinguishable from a wrong
+password, matching the existing security convention); confirmed a self-demote attempt on `demo`'s own admin
+flag returned `400`; reset the (still-deactivated) throwaway account's password and got a fresh temporary
+password back; logged in separately as `alex` (non-admin) and confirmed `GET /api/v1/admin/users` returned
+`403` "This action requires global administrator privileges". Confirmed the served `/app.js` and `/`
+(`index.html`) contain the new admin UI wiring (`renderUsersAdmin`, the hidden-by-default `#nav-users` nav
+item). Cleaned up the throwaway account directly via SQLite afterward (no delete-user route exists by
+design -- deactivation, not deletion, per D57) and confirmed the dev database was back to exactly its
+original three seeded accounts before stopping the server.
+
 ## 2026-08-05 — Fix: every lead/assignee picker hardcoded to the three demo accounts, user-reported bug
 
 User asked why they couldn't set themselves as a component's Lead or Default assignee despite being a
