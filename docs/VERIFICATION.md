@@ -1,5 +1,53 @@
 # Verification record
 
+## 2026-08-05 — Kanban board: drag-and-drop reordering within a column, user-requested
+
+User asked why they couldn't reorder tickets on the board ("proc nemohu zmenit poradi ticketu na
+boardu?"). Investigation found the board's existing drag-and-drop (added earlier as post-V1 batch 3)
+explicitly no-ops a drop back into the ticket's own column -- only cross-column drags (status changes)
+were ever handled; `handleBoardDrop` returned immediately when `ticket.status.key === targetStatusKey`.
+Manual reordering (D31) already existed and already worked, just only via ↑/↓ buttons on the Tickets and
+Backlog screens, never on the board itself. User confirmed they wanted this added.
+
+### What changed
+
+- `renderBoard()`'s per-column ticket list is now sorted by `rankOrder` (`tickets.filter(...).sort((a, b)
+  => a.rankOrder - b.rankOrder)`), matching the sort the Tickets/Backlog screens already apply -- without
+  this, a column had no stable order for a drop position to be computed against, and any reorder would
+  appear to silently revert on the next render (`fetchBoardTickets` requests the API's default
+  `updated_at DESC` order, not rank order).
+- New `boardDropInsertionBeforeKey(list, clientY, draggedTicketKey)`: walks the target column's cards
+  (excluding the one being dragged) and returns the key of the first card whose vertical midpoint is below
+  the drop's `clientY` -- the same "insert before this key" meaning `reorderTicket`'s `beforeTicketKey`
+  already has, so it can call the exact endpoint the ↑/↓ buttons use. Returns `null` (append to the end)
+  once the cursor is past every card.
+- `handleBoardDrop` now branches on whether the drop's target column matches the ticket's current status:
+  a different column still runs the existing status-change path unchanged (including the Done-category
+  resolution prompt, D68-D70); the *same* column now computes a `beforeTicketKey` and calls a new
+  `applyBoardReorder(ticketKey, beforeTicketKey)`, which posts to `/api/v1/tickets/{key}/reorder` and
+  re-renders the board -- no new backend route, this reuses D31's existing one. A drop computed to land at
+  the card's current position (compared against the column's actual current order, not just "did the
+  column change") is skipped rather than sent as a no-op API call.
+- No new keyboard path was added -- reordering was already keyboard-operable via the Tickets/Backlog ↑/↓
+  buttons (native HTML5 drag-and-drop itself still has no keyboard equivalent), the same reasoning already
+  documented for the pre-existing cross-column drag.
+
+### How it was verified
+
+No C++ changed -- frontend-only (`web/app.js`). Full rebuild and `ctest --output-on-failure` clean (8/8)
+as a sanity check that nothing else regressed.
+
+Live end-to-end over real HTTP against the actual compiled server and the local dev SQLite database (the
+Chrome browser extension needed to simulate an actual mouse drag was still not connected in this
+environment, so the exact request the new drop handler computes and sends was issued directly instead):
+seeded tickets TH-5 (`rankOrder` 5) and TH-6 (`rankOrder` 6) both sit in the `backlog` column. Sent `POST
+/api/v1/tickets/TH-6/reorder {"beforeTicketKey": "TH-5"}` -- exactly what dropping TH-6 just above TH-5
+would compute -- and confirmed via a fresh `GET .../tickets?project=TH&status=backlog&sort=rank` that the
+order became `[TH-6, TH-5]`, i.e. the swap actually persisted and would survive a re-render (not just a
+one-time response). Reordered back to the original `[TH-5, TH-6]` afterward. Confirmed the served `/app.js`
+contains `boardDropInsertionBeforeKey`/`applyBoardReorder`. Confirmed the dev database matched its original
+seeded rank order before stopping the server.
+
 ## 2026-08-05 — Web admin user management (D2/D53/D57), user-requested
 
 User asked, after the picker-hardcoding fix above, where they could manage user accounts as an admin. The

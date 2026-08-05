@@ -157,6 +157,12 @@ admin-performed temporary-password reset (D53) -- none of which the CLI could do
 No migration needed (`users.active`/`is_admin` already existed and were already enforced at login, just
 never exposed for editing). See "The roadmap is now complete" below for detail.
 
+**Post-V1, batch 19 (done, 2026-08-05):** Kanban board drag-and-drop now reorders a card within its
+column (D31) instead of no-op'ing when dropped back where it started -- only cross-column drags (status
+changes) worked before. User-requested ("proc nemohu zmenit poradi ticketu na boardu?"). Reuses the
+existing `POST /api/v1/tickets/{key}/reorder` route the Tickets/Backlog ↑/↓ buttons already call; no new
+backend code. See "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -852,18 +858,15 @@ residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 
 **Every item identified as optional, non-roadmap follow-up when the reduced-scope V1 roadmap closed is now
 done** (post-V1 batches 1-4, below). One further item was added since at explicit user request -- Jira-
-style `/browse/{key}` direct issue links (post-V1 batch 5, below). Post-V1 batches 16 and 17 (below) were
-bug fixes; batch 18 was a decided-but-never-implemented gap closure (Decisions 2/53/56/57), same class as
-batch 8 -- neither is new scope. **Three items are queued next, all from explicit user requests during
-this same session, not yet built:** (1) Kanban board drag-and-drop currently only moves a card between
-columns (a status change) -- dropping a card back into its own column to reorder it within that column is
-a no-op; manual reordering (D31, the same `rankOrder`/`reorderTicket` the Tickets/Backlog ↑/↓ buttons
-already use) needs extending to the board's drag gesture too. (2) The Story Points field is a free number
-with no explanation of what it represents; user wants something closer to Jira's fixed-value picker (a
+style `/browse/{key}` direct issue links (post-V1 batch 5, below). Post-V1 batches 16, 17, and 19 (below)
+were bug fixes/UX gaps; batch 18 was a decided-but-never-implemented gap closure (Decisions 2/53/56/57),
+same class as batch 8 -- none of these four is new scope. **Two items remain queued, both from explicit
+user requests during this same session, not yet built:** (1) The Story Points field is a free number with
+no explanation of what it represents; user wants something closer to Jira's fixed-value picker (a
 reference screenshot was shared) but said this can be discussed further before implementation -- do not
-build until that follow-up conversation happens. (3) The ticket detail drawer's width is fixed; user wants
+build until that follow-up conversation happens. (2) The ticket detail drawer's width is fixed; user wants
 it resizable (remembered across sessions, likely `localStorage` rather than an actual cookie) plus a
-full-screen expand option -- not yet designed. Beyond these three, anything else is new scope and, per the
+full-screen expand option -- not yet designed. Beyond these two, anything else is new scope and, per the
 same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should not be started
 without a fresh, explicit product conversation.
 
@@ -1575,6 +1578,35 @@ built.
   `403` on the admin routes; confirmed the served `/app.js`/`/` contain the new UI wiring. Cleaned up the
   throwaway account directly via SQLite afterward (no delete-user route exists by design -- deactivation,
   not deletion, per D57) and confirmed the dev database matched its original seeded state. Full detail in
+  `docs/VERIFICATION.md`.
+
+**Post-V1 batch 19 (done, 2026-08-05):** Kanban board drag-and-drop reordering within a column --
+user-requested ("proc nemohu zmenit poradi ticketu na boardu?" -- "why can't I change ticket order on the
+board?"). The board's existing cross-column drag (post-V1 batch 3) explicitly no-op'd a drop back into the
+ticket's own column; manual reordering (D31) already existed and worked, just only via the Tickets/Backlog
+screens' ↑/↓ buttons, never on the board.
+
+- Board columns are now sorted by `rankOrder` client-side in `renderBoard()`, matching the Tickets/Backlog
+  screens' own sort -- without it there was no stable per-column order for a drop position to be computed
+  against, and `fetchBoardTickets` requests the API's default `updated_at DESC` order, not rank order.
+- New `boardDropInsertionBeforeKey(list, clientY, draggedTicketKey)` walks a column's cards (excluding the
+  dragged one) and returns the key of the first card whose vertical midpoint sits below the drop's
+  `clientY` -- the same "insert before this key" meaning `reorderTicket`'s `beforeTicketKey` already has.
+  `handleBoardDrop` now branches: a different target column still runs the existing status-change path
+  unchanged; the *same* column computes a `beforeTicketKey` and calls a new
+  `applyBoardReorder(ticketKey, beforeTicketKey)`, reusing the existing `POST /api/v1/tickets/{key}/reorder`
+  route -- no new backend code at all. A drop landing back at the card's actual current position is
+  detected and skipped rather than sent as a no-op request.
+- No new keyboard path needed -- reordering was already keyboard-operable via the Tickets/Backlog ↑/↓
+  buttons, the same reasoning already documented for the pre-existing cross-column drag (native HTML5
+  drag-and-drop itself still has no keyboard equivalent).
+- **Verified:** no C++ changed (frontend-only); full rebuild and `ctest` clean (8/8) as a sanity check. The
+  Chrome extension needed to simulate an actual mouse drag was still not connected, so the exact request the
+  new handler computes was sent directly instead: seeded `TH-5`/`TH-6` both sit in the `backlog` column
+  (`rankOrder` 5/6); `POST /api/v1/tickets/TH-6/reorder {"beforeTicketKey": "TH-5"}` -- exactly what
+  dropping `TH-6` just above `TH-5` computes -- produced the order `[TH-6, TH-5]` on a fresh fetch,
+  confirming the reorder persists rather than just affecting the one response. Reordered back to
+  `[TH-5, TH-6]` afterward. Confirmed the served `/app.js` contains the new functions. Full detail in
   `docs/VERIFICATION.md`.
 
 ## Verification status

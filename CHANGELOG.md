@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Kanban board: drag-and-drop reordering within a column
+
+- **Feature**: dropping a card back into the column it's already in used to be a no-op -- the board's
+  drag-and-drop only ever changed status (moved between columns). Dropping now reorders the card within
+  its column, computed from where the cursor is relative to the other cards' vertical midpoints and sent
+  to the same `POST /api/v1/tickets/{key}/reorder` endpoint the Tickets/Backlog screens' ↑/↓ buttons
+  already use (D31) -- no new API. A drop back at the card's existing position is a no-op (detected
+  client-side before calling the API).
+- Board columns are now sorted by `rankOrder` client-side (matching the Tickets/Backlog screens' own
+  sort), not left in the API's default `updated_at DESC` order -- needed so a column has a stable position
+  for a drop to be computed against and so the result survives a re-render.
+- Reordering within a column stays keyboard-operable via the existing Tickets/Backlog ↑/↓ buttons (native
+  HTML5 drag-and-drop has no keyboard equivalent, same reasoning already applied to cross-column drags).
+- Verified: no C++ changed (frontend-only). Live-verified the exact request the new drop handler sends,
+  over real HTTP against the running server: reordered two same-status seeded tickets, confirmed their
+  `rankOrder` swapped and the new order persisted through a fresh fetch, then restored the original order.
+
 ## Unreleased — Web admin user management (D2/D53/D57), user-requested
 
 - **New "Users" admin page**: global-administrator-only, alongside Webhooks/Audit log/Attachment recycle

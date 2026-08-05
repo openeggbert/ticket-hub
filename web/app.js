@@ -1824,7 +1824,13 @@ async function renderBoard() {
   const selected = state.projects.find(project => project.key === state.selectedProject);
   const visibleTickets = applyQuickFilters(state.tickets);
   const columns = BOARD_STATUSES.map(status => {
-    const tickets = visibleTickets.filter(ticket => ticket.status.key === status.key);
+    // Sorted by rankOrder (D31), same as the Tickets/Backlog screens'
+    // ↑/↓-orderable view, so a column's card order matches what
+    // reorderTicket actually stores and survives a re-render -- without
+    // this, drag-reordering within a column (bindBoardDragAndDrop below)
+    // would have no stable order to compute a drop position against.
+    const tickets = visibleTickets.filter(ticket => ticket.status.key === status.key)
+      .sort((a, b) => a.rankOrder - b.rankOrder);
     // Kanban WIP limits (D32/D33): a single flat, installation-wide limit
     // per fixed workflow status -- soft and display-time-only, an
     // over-limit column is highlighted, never blocked from receiving more
@@ -2066,10 +2072,13 @@ async function renderBacklog() {
 // not required by D32/D33, which only need a soft WIP-limit *display*; the
 // board is already fully usable via the drawer's status dropdown, which
 // remains the keyboard-operable path since native HTML5 drag-and-drop has
-// no built-in keyboard equivalent). Dropping onto the same column a card is
-// already in is a no-op; dropping onto a Done-category column without an
-// existing resolution prompts for one first (D68-D70), exactly like the
-// drawer's status-select already does for the same case.
+// no built-in keyboard equivalent -- reordering stays keyboard-operable too,
+// via the Tickets/Backlog screens' ↑/↓ buttons, which write to the same
+// rankOrder/reorderTicket this drop handler does). Dropping onto a
+// Done-category column without an existing resolution prompts for one first
+// (D68-D70), exactly like the drawer's status-select already does for the
+// same case. Dropping back into the ticket's own column reorders it within
+// that column (D31) instead of being a no-op.
 function bindBoardDragAndDrop() {
   document.querySelectorAll('.ticket-card[draggable]').forEach(card => {
     card.addEventListener('dragstart', event => {
@@ -2090,22 +2099,64 @@ function bindBoardDragAndDrop() {
       event.preventDefault();
       list.classList.remove('drag-over');
       const ticketKey = event.dataTransfer.getData('text/plain');
-      handleBoardDrop(ticketKey, list.dataset.statusKey);
+      handleBoardDrop(ticketKey, list.dataset.statusKey, list, event.clientY);
     });
   });
 }
 
-function handleBoardDrop(ticketKey, targetStatusKey) {
+// Finds which card in `list` (already sorted by rankOrder, per column, in
+// renderBoard) the cursor is currently above the vertical midpoint of --
+// same "insert before this key" semantics `reorderTicket`'s beforeTicketKey
+// already uses, so this can feed the same endpoint the ↑/↓ buttons call.
+// Returns null (append to the end) once the cursor is below every card's
+// midpoint, including when the column is empty.
+function boardDropInsertionBeforeKey(list, clientY, draggedTicketKey) {
+  const cards = [...list.querySelectorAll('.ticket-card[data-ticket-key]')]
+    .filter(card => card.dataset.ticketKey !== draggedTicketKey);
+  for (const card of cards) {
+    const rect = card.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      return card.dataset.ticketKey;
+    }
+  }
+  return null;
+}
+
+function handleBoardDrop(ticketKey, targetStatusKey, list, clientY) {
   const ticket = state.tickets.find(candidate => candidate.key === ticketKey);
-  if (!ticket || ticket.status.key === targetStatusKey) {
+  if (!ticket) {
     return;
   }
-  const targetStatus = STATUSES.find(status => status.key === targetStatusKey);
-  if (targetStatus?.category === 'done' && !ticket.resolution) {
-    promptBoardResolution(ticket, targetStatusKey);
+  if (ticket.status.key !== targetStatusKey) {
+    const targetStatus = STATUSES.find(status => status.key === targetStatusKey);
+    if (targetStatus?.category === 'done' && !ticket.resolution) {
+      promptBoardResolution(ticket, targetStatusKey);
+      return;
+    }
+    applyBoardStatusChange(ticket.key, targetStatusKey, null, ticket.version);
     return;
   }
-  applyBoardStatusChange(ticket.key, targetStatusKey, null, ticket.version);
+
+  const columnTickets = applyQuickFilters(state.tickets)
+    .filter(candidate => candidate.status.key === targetStatusKey)
+    .sort((a, b) => a.rankOrder - b.rankOrder);
+  const currentIndex = columnTickets.findIndex(candidate => candidate.key === ticketKey);
+  const currentNextKey = currentIndex === -1 ? undefined : (columnTickets[currentIndex + 1]?.key ?? null);
+  const beforeTicketKey = boardDropInsertionBeforeKey(list, clientY, ticketKey);
+  if (beforeTicketKey === currentNextKey) {
+    return; // Dropped back at the position the card was already in.
+  }
+  applyBoardReorder(ticketKey, beforeTicketKey);
+}
+
+async function applyBoardReorder(ticketKey, beforeTicketKey) {
+  try {
+    await api(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ beforeTicketKey }),
+    });
+    await renderBoard();
+  } catch (error) { showToast(error.message); }
 }
 
 // Same request as applyStatusChange (used by the drawer's status select),

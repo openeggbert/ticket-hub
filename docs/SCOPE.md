@@ -742,6 +742,25 @@ remain as the long-term aspirational baseline only — do not build against them
   `403` on every admin route. Cleaned up the throwaway account directly via SQLite afterward (no delete-user
   route exists by design -- deactivation, not deletion, per D57). See `docs/VERIFICATION.md`.
 
+- **Batch 19 (done): Kanban board drag-and-drop reordering within a column** -- user-requested ("proc
+  nemohu zmenit poradi ticketu na boardu?"). The board's cross-column drag (batch 3) explicitly no-op'd a
+  drop back into the ticket's own column; manual reordering (D31) already existed but only via the
+  Tickets/Backlog screens' ↑/↓ buttons.
+  - Board columns are now sorted by `rankOrder` client-side, matching Tickets/Backlog's own sort -- needed
+    for a stable per-column drop position (the board's fetch uses the API's default `updated_at DESC`
+    order, not rank).
+  - New `boardDropInsertionBeforeKey()` computes a `beforeTicketKey` from where the cursor sits relative to
+    the column's cards; a same-column drop now calls the existing `POST /api/v1/tickets/{key}/reorder`
+    route (D31) via a new `applyBoardReorder()` -- no new backend code. A drop landing at the card's actual
+    current position is detected and skipped.
+  - No new keyboard path needed -- the Tickets/Backlog ↑/↓ buttons already cover it, same reasoning as the
+    pre-existing cross-column drag.
+
+  No C++/schema change -- frontend-only. Verified: full rebuild and `ctest` clean (8/8) as a sanity check.
+  Live-verified the exact request the new handler sends, over real HTTP: reordered two same-status seeded
+  tickets (`TH-5`/`TH-6`), confirmed the swap persisted through a fresh fetch, restored the original order.
+  See `docs/VERIFICATION.md`.
+
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
 - Phases 1-8 (the entire reduced-scope V1 roadmap) are complete -- nothing remains in this category.
