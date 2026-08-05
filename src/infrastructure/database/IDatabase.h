@@ -121,6 +121,11 @@ public:
     virtual bool restoreProject(const std::string& projectKey) = 0;
     virtual std::vector<Domain::Project> listDeletedProjects() = 0;
     virtual bool permanentlyDeleteProject(const std::string& projectKey) = 0;
+    // Archived (but not soft-deleted) projects, with Domain::Project::archived
+    // set true on every result -- the counterpart to listProjects(), which
+    // excludes them (D87: archiving "leaves active lists" but the project
+    // stays viewable/restorable, unlike the recycle bin).
+    virtual std::vector<Domain::Project> listArchivedProjects() = 0;
 
     // Tiny generic key/value store for the handful of installation-level
     // toggles that survived scope reduction (e.g. anonymous read access,

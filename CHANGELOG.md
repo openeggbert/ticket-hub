@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — Fix: no way to view or unarchive an archived project (D87)
+
+- **Bug fix**: archiving a project made it disappear from the web UI with no way back. `GET
+  /api/v1/projects` (the only project list the UI ever fetched) excludes archived projects by design
+  (D87), and there was no substitute view for them — the recycle bin only holds soft-deleted projects.
+  Compounding it, `projectJson()` never serialized the `archived` field at all, so the existing per-card
+  Archive/Unarchive button always rendered "Archive" and its toggle logic was effectively dead code.
+- Added `IDatabase::listArchivedProjects()` (SQLite and PostgreSQL, mirroring the existing
+  `listDeletedProjects()`/`ProjectSelectSql` pattern), `TicketService::listArchivedProjects` — same
+  read-access rule as the active list, i.e. any authenticated reader (or anonymous if that toggle is on),
+  not global-admin-only like the recycle bin, since an archived project stays viewable per D87 — and a new
+  `GET /api/v1/projects/archived` route.
+- `projectJson()` now includes `archived`.
+- Web UI: the Projects page gained a "📦 Archived" toggle (visible to any reader, alongside the existing
+  admin-only "🗑 Recycle bin" toggle) that lists archived projects with a working Unarchive button.
+- New authorization-integration-test coverage: a non-admin reader sees an archived project via
+  `listArchivedProjects` with `archived=true`, and unarchiving it removes it from that list again.
+- Verified: full rebuild and `ctest` clean (all 8 suites) in the SQLite + Crow-server configuration. The
+  PostgreSQL configuration could not be compiled/verified in this environment (`libpq-dev` is not
+  installed, only the runtime `libpq5`) — the `PostgresDatabase::listArchivedProjects` change mirrors the
+  exact existing `listDeletedProjects`/`readProject` pattern in `PostgresDatabase.cpp` byte-for-byte in
+  structure, but is unverified by a real compile here.
+
 ## Unreleased — REST write idempotency keys (D128)
 
 - **Idempotency keys**: an optional `Idempotency-Key` request header on five POST routes that create a new,

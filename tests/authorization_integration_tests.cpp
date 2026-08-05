@@ -725,7 +725,23 @@ int main() {
                                              [](const auto& project) { return project.key == "QA"; });
             require(match == projects.end(), "archiving QA removes it from the active project list");
         }
+        {
+            // Unlike the recycle bin (listDeletedProjects, below), an archived
+            // project stays viewable by any authenticated reader -- not just a
+            // global administrator (D87).
+            const auto archived = tickets.listArchivedProjects(alex);
+            const auto match = std::find_if(archived.begin(), archived.end(),
+                                             [](const auto& project) { return project.key == "QA"; });
+            require(match != archived.end() && match->archived,
+                   "a non-admin reader sees archived QA via listArchivedProjects, with archived=true");
+        }
         require(tickets.setProjectArchived("QA", false, demo), "QA can be unarchived");
+        {
+            const auto archived = tickets.listArchivedProjects(demo);
+            const auto match = std::find_if(archived.begin(), archived.end(),
+                                             [](const auto& project) { return project.key == "QA"; });
+            require(match == archived.end(), "unarchiving QA removes it from listArchivedProjects");
+        }
         {
             const auto projects = tickets.listProjects(demo);
             const auto match = std::find_if(projects.begin(), projects.end(),

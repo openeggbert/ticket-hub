@@ -104,6 +104,7 @@ crow::json::wvalue projectJson(const Domain::Project& project) {
     json["description"] = project.description;
     json["ticketCount"] = project.ticketCount;
     json["openTicketCount"] = project.openTicketCount;
+    json["archived"] = project.archived;
     if (project.lead) {
         json["lead"] = userJson(*project.lead);
     } else {
@@ -1444,6 +1445,26 @@ void registerApiRoutes(crow::SimpleApp& app,
             return jsonResponse(200, std::move(body));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Archived (but not soft-deleted) projects -- listProjects() above
+    // excludes them (D87), and unlike the recycle bin this list is not
+    // global-administrator-only, since an archived project stays viewable.
+    CROW_ROUTE(app, "/api/v1/projects/archived")
+    .methods(crow::HTTPMethod::Get)([service, authService](const crow::request& request) {
+        try {
+            crow::json::wvalue::list items;
+            for (const auto& project : service->listArchivedProjects(resolvePrincipal(request, authService))) {
+                items.emplace_back(projectJson(project));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::AuthenticationRequired& error) {
+            return errorResponse(401, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

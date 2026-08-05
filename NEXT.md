@@ -133,6 +133,14 @@ invisible until this batch became the first caller ever to do so, at which point
 started failing with a spurious 403. See `docs/SCOPE.md`'s "Batch 15" entry and the detailed section below
 for full detail.
 
+**Post-V1, batch 16 (done, 2026-08-05):** bug fix, user-reported -- archiving a project made it disappear
+from the web UI with no way back (the recycle bin only holds soft-deleted projects, and `GET
+/api/v1/projects` excludes archived ones by design, D87). Added `listArchivedProjects` (`IDatabase`/
+`TicketService`/`GET /api/v1/projects/archived`, same read-access rule as the active list, not
+admin-gated like the recycle bin) and fixed `projectJson()` never serializing `archived` at all -- the
+existing per-card Unarchive button was dead code as a result. `web/`'s Projects page gained an "📦
+Archived" toggle with a working Unarchive button. See "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -828,10 +836,10 @@ residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 
 **Every item identified as optional, non-roadmap follow-up when the reduced-scope V1 roadmap closed is now
 done** (post-V1 batches 1-4, below). One further item was added since at explicit user request -- Jira-
-style `/browse/{key}` direct issue links (post-V1 batch 5, below). There is currently no further work
-queued -- anything beyond this point is new scope and, per the same rule that has applied to
-`docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should not be started without a fresh, explicit product
-conversation.
+style `/browse/{key}` direct issue links (post-V1 batch 5, below). Post-V1 batch 16 (below) was a bug fix,
+not new scope. There is currently no further work queued -- anything beyond this point is new scope and,
+per the same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should not be
+started without a fresh, explicit product conversation.
 
 **Post-V1 batch 1 (done):** the user was asked to pick the first piece of optional follow-up and chose a
 web UI for managing personal access tokens and active sessions -- both already had a complete REST API and
@@ -1430,6 +1438,41 @@ failed-attempts-are-never-cached case. A full Playwright/Chromium browser pass a
 database exercised all five wired UI actions end-to-end with no console errors and no duplicate records,
 confirmed the submit-button-disabled behavior, and is what caught the `api()` bug above. Full detail in
 `docs/VERIFICATION.md`.
+
+**Post-V1 batch 16 (done, 2026-08-05):** bug fix, user-reported ("kde najdu archived projects a jak udelat
+unarchive" -- "where do I find archived projects and how do I unarchive one").
+
+- **The bug.** Archiving a project made it disappear from the web UI with no way back. `GET
+  /api/v1/projects` -- the only project list the UI ever fetched -- excludes archived projects by design
+  (D87, correct behavior), but there was no substitute view anywhere: the recycle bin only holds
+  soft-deleted projects, not archived ones, and there was no second API route for archived projects
+  (unlike the recycle bin's `/api/v1/projects/deleted`). Compounding it, `projectJson()` never serialized
+  the `archived` field at all, so the pre-existing per-card Archive/Unarchive button's `project.archived`
+  check was always `undefined` client-side -- dead code even before the missing-view problem.
+- **Backend.** New `IDatabase::listArchivedProjects()` on both `SqliteDatabase`/`PostgresDatabase`,
+  mirroring the existing `listDeletedProjects()`/shared `ProjectSelectSql` pattern. New
+  `TicketService::listArchivedProjects(actor)` uses `requireReadAccess` -- the same rule as `listProjects`
+  (any authenticated reader, or anonymous if that toggle is on) -- deliberately not
+  `requireGlobalAdmin` like `listDeletedProjects`, since D87 says archiving "leaves active lists" but the
+  project stays viewable, unlike the recycle bin. New `GET /api/v1/projects/archived` route.
+  `projectJson()` now includes `archived`.
+- **Frontend.** `web/app.js`'s `renderProjectsView` changed from a `showingDeleted` boolean to a
+  `viewMode` string (`'active' | 'archived' | 'deleted'`). The Projects page gained a "📦 Archived" toggle
+  next to the existing admin-only "🗑 Recycle bin" toggle (visible to any reader, matching the new route's
+  access rule); archived-view cards show a working "Unarchive" button.
+- **Tests.** Extended the existing D87 block in `tests/authorization_integration_tests.cpp`: a non-admin
+  reader sees an archived project via `listArchivedProjects` with `archived == true`; unarchiving removes
+  it from that list again.
+- **Verified:** full rebuild and `ctest` clean (8/8) in the SQLite + Crow-server configuration. PostgreSQL
+  could not be compiled in this environment (only the runtime `libpq5` package is installed, not
+  `libpq-dev`) -- the Postgres change mirrors the existing pattern structurally but is unverified by a real
+  compile here. Live end-to-end over real HTTP against the actual compiled server and a demo-seeded SQLite
+  database (the Chrome browser extension needed for a Playwright pass was not connected in this
+  environment, so `curl` was used instead against the same routes the UI calls): archiving a project
+  removed it from `GET /api/v1/projects` and surfaced it in `GET /api/v1/projects/archived` with
+  `archived:true`; unarchiving reversed both; a non-admin user got `403` archiving a project they don't
+  administer but `200` (not `403`) reading the archived list, confirming the read-access-not-admin-gated
+  design over the wire, not just in the unit test. Full detail in `docs/VERIFICATION.md`.
 
 ## Verification status
 

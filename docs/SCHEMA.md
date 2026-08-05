@@ -128,9 +128,12 @@ The application allocates ticket numbers transactionally. PostgreSQL locks the p
 
 Archiving (D87) and the recycle bin (D88/D89) are now enforced at the application layer, not just schema
 columns: `listProjects` excludes both archived and soft-deleted projects from the active list;
-`listDeletedProjects` purges anything with `deleted_at` older than 90 days before returning results (no
-background job -- purge happens on next access); the project key stays reserved (the `project_key`
-column keeps its `UNIQUE` constraint across soft-deleted rows) until `permanentlyDeleteProject` (D90).
+`listArchivedProjects` (`GET /api/v1/projects/archived`) is the substitute view for the ones `listProjects`
+excludes -- any authenticated reader, not admin-gated like the recycle bin, since D87 says archiving
+"leaves active lists" but the project stays viewable; `listDeletedProjects` purges anything with
+`deleted_at` older than 90 days before returning results (no background job -- purge happens on next
+access); the project key stays reserved (the `project_key` column keeps its `UNIQUE` constraint across
+soft-deleted rows) until `permanentlyDeleteProject` (D90).
 
 ### `project_key_aliases`
 

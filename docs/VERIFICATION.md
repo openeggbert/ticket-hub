@@ -1,5 +1,58 @@
 # Verification record
 
+## 2026-08-05 — Fix: no way to view or unarchive an archived project (D87), user-reported bug
+
+User asked where to find archived projects and how to unarchive one ("kde najdu archived projects a jak
+udelat unarchive"). Investigation found that `GET /api/v1/projects` (the only project list the web UI
+ever fetched) excludes archived projects by design (D87 -- correct), but there was no substitute view for
+them anywhere: not in the UI, not as a second API route (unlike the recycle bin, which has
+`/api/v1/projects/deleted`). Compounding it, `projectJson()` never serialized the `archived` field at all,
+so the pre-existing per-card Archive/Unarchive button's `project.archived` check was always `undefined`
+client-side -- dead code even if an archived project had somehow reached the grid.
+
+### What changed
+
+- **Backend.** `IDatabase::listArchivedProjects()` on both `SqliteDatabase` and `PostgresDatabase`,
+  mirroring the existing `listDeletedProjects()`/shared `ProjectSelectSql` pattern -- same column set,
+  filtered to `archived = 1/TRUE AND deleted_at IS NULL` instead of `deleted_at IS NOT NULL`.
+  `TicketService::listArchivedProjects(actor)` uses `requireReadAccess`, the same rule as `listProjects`
+  (any authenticated reader, or anonymous if that installation toggle is on) -- deliberately *not*
+  `requireGlobalAdmin` like `listDeletedProjects`, since D87 says an archived project "leaves active
+  lists" but stays viewable, unlike the recycle bin. New `GET /api/v1/projects/archived` route in
+  `src/web/Api.cpp`, same shape as the existing `/api/v1/projects` route. `projectJson()` now includes
+  `archived`.
+- **Frontend.** `web/app.js`'s `renderProjectsView` changed from a `showingDeleted` boolean to a
+  `viewMode` string (`'active' | 'archived' | 'deleted'`). The Projects page gained a "📦 Archived" toggle
+  next to the existing admin-only "🗑 Recycle bin" toggle (visible to any reader, matching the new route's
+  access rule); archived-view cards show only a working "Unarchive" button.
+- **Tests.** Extended the existing D87 block in `tests/authorization_integration_tests.cpp`: after
+  archiving QA, a non-admin (`alex`) sees it via `listArchivedProjects` with `archived == true`; after
+  unarchiving, it no longer appears there.
+
+### How it was verified
+
+- Full rebuild and `ctest --output-on-failure` clean (8/8) in the SQLite + Crow-server configuration
+  (`build/`, reused/incremental, `-j3`, ccache). The PostgreSQL configuration could not be compiled here --
+  this environment has only the runtime `libpq5` package, not `libpq-dev`/`libpq-fe.h`, so
+  `cmake -DTICKETHUB_WITH_POSTGRES=ON` fails at `find_package(PostgreSQL REQUIRED)` before reaching any of
+  this change's code. The `PostgresDatabase::listArchivedProjects` addition mirrors
+  `listDeletedProjects`/`readProject` in the same file structurally but is unverified by a real compile.
+- **Live end-to-end over real HTTP**, against the actual compiled server (`build/ticket-hub`) and the
+  local dev SQLite database (`ticket-hub.db`, demo-seeded): the Chrome browser extension needed for a
+  Playwright-style pass was not connected in this environment, so verification was done with `curl`
+  directly instead, exercising the exact same routes the UI calls. Logged in as `demo` (global admin):
+  `GET /api/v1/projects` showed `TH`/`WEB` both `archived:false`; `PATCH /api/v1/projects/WEB/archived
+  {"archived":true}` returned `200`; `GET /api/v1/projects` afterward showed only `TH` (`WEB` gone, exactly
+  the pre-existing D87 behavior); `GET /api/v1/projects/archived` showed exactly `WEB` with
+  `archived:true`. `PATCH .../archived {"archived":false}` then returned `WEB` to the active list and
+  emptied the archived list. Logged in separately as `alex` (non-admin, no role on `TH`): archiving `TH`
+  correctly returned `403` ("Actor lacks the required role on project TH"), while `GET
+  /api/v1/projects/archived` returned `200` with an empty list rather than `403` -- confirming the
+  read-access-not-admin-gated design actually holds over the wire, not just in the unit test. Confirmed
+  `build/ticket-hub`'s served `/app.js` contains the new `toggle-archived` UI wiring (i.e. the running
+  server is serving the edited file, not a stale copy). Database left in its original state (`WEB`
+  unarchived, `TH` never archived) after the pass; server process stopped afterward.
+
 ## 2026-08-03 — REST write idempotency keys (D128), user-requested, deferred-after-V1
 
 Requested from a follow-up menu offered after the webhooks/email batch closed the original six-item list

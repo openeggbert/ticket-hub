@@ -645,6 +645,37 @@ remain as the long-term aspirational baseline only — do not build against them
   submit-button-disabled-during-request behavior, and is what caught the `api()` spread-order bug above
   before it could ship. See `docs/VERIFICATION.md`.
 
+- **Batch 16 (done): fix -- no way to view or unarchive an archived project (D87)** -- user-reported bug,
+  not new scope ("kde najdu archived projects a jak udelat unarchive" -- "where do I find archived
+  projects and how do I unarchive one"). Archiving a project removed it from `GET /api/v1/projects` (the
+  only project list the UI ever fetched, correctly excluding archived projects per D87) with no substitute
+  view anywhere -- the recycle bin only holds soft-deleted projects, and there was no second API route for
+  archived ones. `projectJson()` also never serialized `archived`, so the pre-existing per-card
+  Archive/Unarchive button's client-side check was always `undefined` -- dead code independent of the
+  missing-view problem.
+  - **Backend.** New `IDatabase::listArchivedProjects()` (SQLite and PostgreSQL, mirroring the existing
+    `listDeletedProjects()`/`ProjectSelectSql` pattern) and `TicketService::listArchivedProjects(actor)` --
+    `requireReadAccess`, the same rule as `listProjects` (any authenticated reader, or anonymous if that
+    installation toggle is on), deliberately not `requireGlobalAdmin` like the recycle bin's
+    `listDeletedProjects`, since D87 says an archived project stays viewable even though it "leaves active
+    lists." New `GET /api/v1/projects/archived` route. `projectJson()` now includes `archived`.
+  - **Frontend.** `renderProjectsView` changed from a `showingDeleted` boolean to a `viewMode` string
+    (`'active' | 'archived' | 'deleted'`); the Projects page gained a "📦 Archived" toggle (visible to any
+    reader, alongside the existing admin-only "🗑 Recycle bin" toggle) whose cards show a working
+    "Unarchive" button.
+
+  New test coverage: `tests/authorization_integration_tests.cpp`'s existing D87 block gained a check that a
+  non-admin reader sees an archived project via `listArchivedProjects` with `archived == true`, and that
+  unarchiving removes it from that list again. Verified: full rebuild and `ctest` clean (8/8) in the
+  SQLite + Crow-server configuration; PostgreSQL could not be compiled in this environment (`libpq-dev` is
+  not installed, only the runtime `libpq5`) -- the Postgres change mirrors the same existing pattern
+  structurally but is unverified by a real compile here. Live-verified end-to-end over real HTTP against
+  the actual compiled server and a demo-seeded SQLite database (the Chrome browser extension needed for a
+  Playwright pass was not connected in this environment, so `curl` was used against the same routes the UI
+  calls instead): archiving moved a project from the active list to the archived list and back on
+  unarchive; a non-admin got `403` archiving a project they don't administer but `200` reading the archived
+  list, confirming the read-access-not-admin-gated design over the wire. See `docs/VERIFICATION.md`.
+
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
 - Phases 1-8 (the entire reduced-scope V1 roadmap) are complete -- nothing remains in this category.

@@ -1107,6 +1107,18 @@ std::vector<Domain::Project> PostgresDatabase::listDeletedProjects() {
     return projects;
 }
 
+std::vector<Domain::Project> PostgresDatabase::listArchivedProjects() {
+    auto connection = connect(connectionString_);
+    auto result = exec(connection.get(),
+                       std::string(ProjectSelectSql) + " WHERE p.archived = TRUE AND p.deleted_at IS NULL ORDER BY p.name",
+                       "List archived projects");
+    std::vector<Domain::Project> projects;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        projects.push_back(readProject(result.get(), row));
+    }
+    return projects;
+}
+
 bool PostgresDatabase::permanentlyDeleteProject(const std::string& projectKey) {
     auto connection = connect(connectionString_);
     auto result = execParams(connection.get(), "DELETE FROM projects WHERE project_key = $1 AND deleted_at IS NOT NULL",

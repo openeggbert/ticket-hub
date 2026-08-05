@@ -191,6 +191,11 @@ std::vector<Domain::Project> TicketService::listProjects(const std::optional<Dom
     return database_->listProjects();
 }
 
+std::vector<Domain::Project> TicketService::listArchivedProjects(const std::optional<Domain::Principal>& actor) {
+    requireReadAccess(actor);
+    return database_->listArchivedProjects();
+}
+
 std::vector<Domain::Ticket> TicketService::listTickets(const Domain::TicketFilter& filter,
                                                       const std::optional<Domain::Principal>& actor) {
     requireReadAccess(actor);

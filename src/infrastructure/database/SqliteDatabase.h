@@ -62,6 +62,7 @@ public:
     bool restoreProject(const std::string& projectKey) override;
     std::vector<Domain::Project> listDeletedProjects() override;
     bool permanentlyDeleteProject(const std::string& projectKey) override;
+    std::vector<Domain::Project> listArchivedProjects() override;
 
     std::optional<std::string> getSetting(const std::string& key) override;
     void setSetting(const std::string& key, const std::string& value) override;

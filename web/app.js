@@ -2406,7 +2406,7 @@ async function openRenameProjectKeyModal(projectKey) {
         state.selectedProject = newKey;
       }
       await loadBaseData();
-      await renderProjectsView(false);
+      await renderProjectsView('active');
     } catch (error) {
       errorElement.textContent = error.message;
       errorElement.classList.remove('hidden');
@@ -2416,36 +2416,53 @@ async function openRenameProjectKeyModal(projectKey) {
 }
 
 async function renderProjects() {
-  await renderProjectsView(false);
+  await renderProjectsView('active');
 }
 
-// `showingDeleted` toggles between the active project grid and the recycle
-// bin (D88/D89: global-administrator-only to view/restore/purge). Archiving
-// and moving to the recycle bin require project-admin-or-above; the server
-// is the actual authorization check -- a non-admin's click just surfaces the
-// resulting 403 as a toast, same pattern as every other write in this app.
-async function renderProjectsView(showingDeleted) {
+// `viewMode` selects between the active project grid, the archived-projects
+// list (D87: archiving "leaves active lists" but the project stays viewable
+// by anyone with read access -- no admin gate, unlike the recycle bin), and
+// the recycle bin (D88/D89: global-administrator-only to view/restore/purge).
+// Archiving/unarchiving and moving to the recycle bin require
+// project-admin-or-above; the server is the actual authorization check -- a
+// non-admin's click just surfaces the resulting 403 as a toast, same pattern
+// as every other write in this app.
+async function renderProjectsView(viewMode) {
   content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
   let projects = state.projects;
-  if (showingDeleted) {
+  if (viewMode === 'deleted' || viewMode === 'archived') {
     try {
-      projects = (await api('/api/v1/projects/deleted')).items;
+      projects = (await api(`/api/v1/projects/${viewMode}`)).items;
     } catch (error) {
       showError(error);
       return;
     }
   }
   const isAdmin = Boolean(state.principal?.isAdmin);
+  const titles = { active: 'Projects', archived: 'Archived projects', deleted: 'Project recycle bin' };
+  const subtitles = {
+    active: 'Choose a project to see its tickets and board.',
+    archived: 'Read-only projects, hidden from the active list. Unarchive to make one active again.',
+    deleted: 'Projects moved to the recycle bin (90-day retention).',
+  };
+  const emptyMessages = {
+    active: 'No projects yet.',
+    archived: 'No archived projects.',
+    deleted: 'The recycle bin is empty.',
+  };
   content.innerHTML = `
     <div class="page-header">
       <div>
         <span class="eyebrow">Workspace</span>
-        <h1>${showingDeleted ? 'Project recycle bin' : 'Projects'}</h1>
-        <p>${showingDeleted ? 'Projects moved to the recycle bin (90-day retention).' : 'Choose a project to see its tickets and board.'}</p>
+        <h1>${titles[viewMode]}</h1>
+        <p>${subtitles[viewMode]}</p>
       </div>
       <div class="page-actions">
-        ${isAdmin ? `<button type="button" class="secondary-button" id="toggle-recycle-bin">${showingDeleted ? '← Back to projects' : '🗑 Recycle bin'}</button>` : ''}
-        ${showingDeleted ? '' : '<button type="button" class="primary-button" id="new-project-button">＋ New project</button>'}
+        ${viewMode !== 'active' ? '<button type="button" class="secondary-button" id="back-to-projects">← Back to projects</button>' : `
+          <button type="button" class="secondary-button" id="toggle-archived">📦 Archived</button>
+          ${isAdmin ? '<button type="button" class="secondary-button" id="toggle-recycle-bin">🗑 Recycle bin</button>' : ''}
+          <button type="button" class="primary-button" id="new-project-button">＋ New project</button>
+        `}
       </div>
     </div>
     <div class="project-grid">
@@ -2454,10 +2471,12 @@ async function renderProjectsView(showingDeleted) {
           <div class="project-card-head"><span class="project-avatar">${escapeHtml(project.key.slice(0, 2))}</span><div><h3>${escapeHtml(project.name)}</h3><span class="ticket-key">${escapeHtml(project.key)}</span></div></div>
           <p>${escapeHtml(project.description)}</p>
           <div class="project-card-stats"><div><strong>${project.ticketCount}</strong><span>Total tickets</span></div><div><strong>${project.openTicketCount}</strong><span>Open tickets</span></div><div><strong>${escapeHtml(project.lead?.displayName || '—')}</strong><span>Lead</span></div></div>
-          <div class="project-card-actions">${showingDeleted
+          <div class="project-card-actions">${viewMode === 'deleted'
             ? `<button type="button" class="secondary-button" data-restore-project="${escapeHtml(project.key)}">Restore</button><button type="button" class="secondary-button" data-permanent-project="${escapeHtml(project.key)}">Delete permanently</button>`
+            : viewMode === 'archived'
+            ? `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="true">Unarchive</button>`
             : `<button type="button" class="secondary-button" data-archive-project="${escapeHtml(project.key)}" data-archived="${project.archived}">${project.archived ? 'Unarchive' : 'Archive'}</button><button type="button" class="secondary-button" data-components-project="${escapeHtml(project.key)}">Components</button><button type="button" class="secondary-button" data-custom-fields-project="${escapeHtml(project.key)}">Custom fields</button><button type="button" class="secondary-button" data-rename-key-project="${escapeHtml(project.key)}">Rename key</button><button type="button" class="secondary-button" data-delete-project="${escapeHtml(project.key)}">Delete</button>`}</div>
-        </article>`).join('') : `<div class="empty-state">${showingDeleted ? 'The recycle bin is empty.' : 'No projects yet.'}</div>`}
+        </article>`).join('') : `<div class="empty-state">${emptyMessages[viewMode]}</div>`}
     </div>`;
 
   document.querySelectorAll('[data-project-card]').forEach(card => {
@@ -2468,7 +2487,9 @@ async function renderProjectsView(showingDeleted) {
     card.addEventListener('click', openProjectBoard);
     makeKeyboardActivatable(card, openProjectBoard);
   });
-  document.querySelector('#toggle-recycle-bin')?.addEventListener('click', () => renderProjectsView(!showingDeleted));
+  document.querySelector('#back-to-projects')?.addEventListener('click', () => renderProjectsView('active'));
+  document.querySelector('#toggle-archived')?.addEventListener('click', () => renderProjectsView('archived'));
+  document.querySelector('#toggle-recycle-bin')?.addEventListener('click', () => renderProjectsView('deleted'));
   document.querySelector('#new-project-button')?.addEventListener('click', openProjectModal);
 
   const stopAnd = handler => event => { event.stopPropagation(); return handler(event); };
@@ -2488,7 +2509,7 @@ async function renderProjectsView(showingDeleted) {
       await api(`/api/v1/projects/${encodeURIComponent(key)}/archived`, { method: 'PATCH', body: JSON.stringify({ archived }) });
       showToast(`${key} ${archived ? 'archived' : 'unarchived'}`);
       await loadBaseData();
-      await renderProjectsView(false);
+      await renderProjectsView(viewMode);
     } catch (error) { showToast(error.message); }
   })));
   document.querySelectorAll('[data-delete-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
@@ -2497,7 +2518,7 @@ async function renderProjectsView(showingDeleted) {
       await api(`/api/v1/projects/${encodeURIComponent(key)}`, { method: 'DELETE' });
       showToast(`${key} moved to the recycle bin`);
       await loadBaseData();
-      await renderProjectsView(false);
+      await renderProjectsView('active');
     } catch (error) { showToast(error.message); }
   })));
   document.querySelectorAll('[data-restore-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
@@ -2506,7 +2527,7 @@ async function renderProjectsView(showingDeleted) {
       await api(`/api/v1/projects/${encodeURIComponent(key)}/restore`, { method: 'POST' });
       showToast(`${key} restored`);
       await loadBaseData();
-      await renderProjectsView(true);
+      await renderProjectsView('deleted');
     } catch (error) { showToast(error.message); }
   })));
   document.querySelectorAll('[data-permanent-project]').forEach(button => button.addEventListener('click', stopAnd(async () => {
@@ -2514,7 +2535,7 @@ async function renderProjectsView(showingDeleted) {
     try {
       await api(`/api/v1/projects/${encodeURIComponent(key)}/permanent`, { method: 'DELETE' });
       showToast(`${key} permanently deleted`);
-      await renderProjectsView(true);
+      await renderProjectsView('deleted');
     } catch (error) { showToast(error.message); }
   })));
 }
@@ -3556,7 +3577,7 @@ document.querySelector('#project-form').addEventListener('submit', async event =
     closeProjectModal();
     showToast(`${created.key} created`);
     await loadBaseData();
-    await renderProjectsView(false);
+    await renderProjectsView('active');
   } catch (error) {
     errorElement.textContent = error.message;
     errorElement.classList.remove('hidden');

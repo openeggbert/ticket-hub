@@ -1186,6 +1186,28 @@ std::vector<Domain::Project> SqliteDatabase::listDeletedProjects() {
     return projects;
 }
 
+std::vector<Domain::Project> SqliteDatabase::listArchivedProjects() {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, std::string(ProjectSelectSql)
+        + " WHERE p.archived = 1 AND p.deleted_at IS NULL GROUP BY p.id ORDER BY p.name");
+    std::vector<Domain::Project> projects;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        Domain::Project project;
+        project.id = text(statement.get(), 0);
+        project.key = text(statement.get(), 1);
+        project.name = text(statement.get(), 2);
+        project.description = text(statement.get(), 3);
+        if (sqlite3_column_type(statement.get(), 4) != SQLITE_NULL) {
+            project.lead = readUserSummary(statement.get(), 4);
+        }
+        project.ticketCount = sqlite3_column_int64(statement.get(), 7);
+        project.openTicketCount = sqlite3_column_int64(statement.get(), 8);
+        project.archived = boolColumn(statement.get(), 9);
+        projects.push_back(std::move(project));
+    }
+    return projects;
+}
+
 bool SqliteDatabase::permanentlyDeleteProject(const std::string& projectKey) {
     std::scoped_lock lock(mutex_);
     Statement statement(database_, "DELETE FROM projects WHERE project_key = ? AND deleted_at IS NOT NULL");

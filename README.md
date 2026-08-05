@@ -449,6 +449,7 @@ protect against, so a retry with the same key after a validation error simply ru
 | `DELETE` | `/api/v1/webhooks/{id}` | session + CSRF, global admin | also cascades away its queued/history deliveries |
 | `GET` | `/api/v1/projects` | session, or anon if enabled | active project summaries |
 | `POST` | `/api/v1/projects` | session + CSRF, global admin | create project |
+| `GET` | `/api/v1/projects/archived` | session, or anon if enabled | archived (not soft-deleted) project summaries -- unlike the recycle bin, not global-admin-only, since an archived project stays viewable (D87) |
 | `PATCH` | `/api/v1/projects/{key}/archived` | session + CSRF, project admin | `{archived}` |
 | `PATCH` | `/api/v1/projects/{key}/key` | session + CSRF, project admin | `{newKey}` -> renames the project's key; old key and every ticket's old key become permanent aliases (D91) |
 | `DELETE` | `/api/v1/projects/{key}` | session + CSRF, project admin | move to recycle bin |

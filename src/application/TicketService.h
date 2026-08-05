@@ -32,6 +32,10 @@ public:
     // the installation's anonymous read-access toggle is on (D59, off by
     // default), otherwise Domain::AuthenticationRequired is thrown.
     std::vector<Domain::Project> listProjects(const std::optional<Domain::Principal>& actor);
+    // Same visibility rule as listProjects (D58/D59) -- archiving "leaves
+    // active lists" but the project stays viewable (D87), unlike the
+    // recycle bin (listDeletedProjects), which is global-administrator-only.
+    std::vector<Domain::Project> listArchivedProjects(const std::optional<Domain::Principal>& actor);
     std::vector<Domain::Ticket> listTickets(const Domain::TicketFilter& filter, const std::optional<Domain::Principal>& actor);
     // Numbered/offset pagination (D126), used by GET /api/v1/tickets. The
     // unpaginated overload above remains for internal/CSV-export use where
