@@ -6,7 +6,7 @@ is [docs/REDUCED_SCOPE_ROADMAP.md](docs/REDUCED_SCOPE_ROADMAP.md) (the original
 snapshot status line, kept in sync at each milestone boundary -- see `NEXT.md` for full batch-by-batch
 detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
-## Current status (2026-08-03)
+## Current status (2026-08-05)
 
 **The entire reduced-scope V1 roadmap (`docs/REDUCED_SCOPE_ROADMAP.md`, Milestones 1-4 / Phases 1-8) is
 now complete**, including its Phase 8 exit gate (`docker compose up` produces a usable, documented
@@ -261,6 +261,40 @@ remains only as optional, non-roadmap follow-up.
   integration test coverage; verified end-to-end against fresh live PostgreSQL and SQLite databases over
   real HTTP (happy-path replay, conflict, cross-route defense, failed-attempts-never-cached) and a full
   Playwright/Chromium browser pass of all five wired UI actions.
+- **Post-V1, batch 16.** Bug fix, user-reported: archiving a project removed it from the active list (D87,
+  correct) but there was no substitute view or route to see/unarchive it, and `projectJson()` never even
+  serialized `archived`, so the existing per-card Unarchive button was dead code. Added
+  `listArchivedProjects` end-to-end (`IDatabase`/`TicketService`/`GET /api/v1/projects/archived`,
+  read-access-gated like the active list, not admin-gated like the recycle bin) and an "Archived" toggle in
+  `web/`. Verified end-to-end over real HTTP (build/test details in `docs/VERIFICATION.md`).
+- **Post-V1, batch 17.** Bug fix, user-reported: every lead/assignee `<select>` in `web/` (Components,
+  ticket assignee, bulk assign, the Tickets/Backlog filters, create-ticket) was hardcoded to the same three
+  seeded demo accounts instead of the real `state.users` directory, so no other account -- including a real
+  admin's own -- could ever be picked. Replaced with one `userSelectOptions()` helper. Frontend-only.
+- **Post-V1, batch 18.** Web admin user management (D2/D53/D57), user-requested. Not new scope -- a
+  decided-but-never-implemented gap, same class as batch 8. New admin-only "Users" page: list, create
+  (web counterpart to `ticket-hub-cli create-user`), deactivate/reactivate, grant/revoke global-admin, and
+  an admin-performed temporary-password reset (shown once) -- none of which the CLI could do before this
+  batch. No migration (`users.active`/`is_admin` already existed and were already enforced at login). Two
+  conservative self-protection defaults with no covering decision text: an admin can never deactivate or
+  demote their own account.
+- **Post-V1, batch 19.** Kanban board drag-and-drop now reorders a card within its column (D31) instead of
+  no-op'ing when dropped back where it started -- user-requested. Reuses the existing
+  `POST /api/v1/tickets/{key}/reorder` route the Tickets/Backlog ↑/↓ buttons already call; no new backend
+  code, no migration.
+
+## Queued next (not yet built)
+
+Two items requested by the user in the same 2026-08-05 session, both explicitly deferred pending more
+design input before implementation starts:
+
+- **Story Points picker redesign.** The Story Points field is currently a free-text number with no
+  in-product explanation of what it represents. User wants something closer to Jira's fixed-value picker
+  (shared a reference screenshot) but asked to discuss the exact design further before any code is written
+  -- do not implement until that follow-up conversation happens.
+- **Ticket detail drawer: resizable width + fullscreen.** The drawer's width is currently fixed. User wants
+  it resizable, with the chosen width remembered across sessions (likely `localStorage`, not an actual
+  cookie), plus an option to expand it to the full browser window. Not yet designed.
 
 ## Implementation rules
 
