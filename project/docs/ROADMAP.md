@@ -147,4 +147,10 @@ Exit gate: deterministic reports can be recomputed from history.
 
 ## Current implementation checkpoint
 
-The repository currently sits in **Phase 0** with a functional issue-tracker prototype. The first remediation batch has added ordered checksummed migrations, foundational aliases/soft-delete columns, issue versioning, stricter key normalization and expanded tests. Authentication, permission enforcement and the target workflow engine are not yet implemented.
+**Stale.** This paragraph described the very first remediation batch and predates almost all
+implementation work. This file is long-term reference only (see `CLAUDE.md`'s source-of-truth
+hierarchy); it is not updated per batch and must not be read as current status. For the actual current
+status, see `docs/REDUCED_SCOPE_ROADMAP.md` (the roadmap actually being built against) together with
+`PLAN.md`'s "Current status" line and `NEXT.md`'s "The roadmap is now complete" section — as of the last
+update (2026-08-05), the entire reduced-scope V1 roadmap (Phases 1-8) plus 15 further post-V1 batches are
+complete, and no further work is queued pending an explicit product conversation.

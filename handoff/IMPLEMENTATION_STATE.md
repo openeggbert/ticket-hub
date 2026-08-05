@@ -1,6 +1,16 @@
 # Current implementation state
 
-Version: 0.2.0
+> **Stale — historical snapshot only, updated 2026-08-05 to add this notice.** This document captured
+> implementation state as of the original 2026-07-30 handoff, before any implementation batch in this
+> repository's git history had landed. Every item below under "Not implemented yet" — auth/sessions,
+> permissions, custom fields, notifications, webhooks, backup/restore, Docker packaging, and more — has
+> since been implemented. The entire reduced-scope V1 roadmap (`project/docs/REDUCED_SCOPE_ROADMAP.md`,
+> Phases 1-8) is complete, plus 15 further post-V1 batches (most recently REST write idempotency keys,
+> D128). Do not use this file for current status. For current status, see `project/PLAN.md`'s "Current
+> status" line, `project/NEXT.md`'s "The roadmap is now complete" section, and `project/CHANGELOG.md`.
+> The content below is preserved as a historical record of the state at handoff time only.
+
+Version: 0.2.0 (as of the original 2026-07-30 handoff — see notice above for current version/status)
 
 ## Implemented and verified
 

@@ -56,23 +56,24 @@ feature from `docs/REMOVED_AND_DEFERRED_FEATURES.md` without a new, explicit pro
 
 ## Current objective
 
-Phase 1 (identity and sessions), Phase 2 (authorization and projects), and Phase 3 (issue core and the
-fixed workflow) of `docs/REDUCED_SCOPE_ROADMAP.md` are now **complete at the core/CLI/test layer**, with
-one deliberate exception: re-typing (`issueTypeKey`) or re-parenting (`parentIssueKey`) an issue after
-creation is not implemented — `TicketService::editIssue` does not touch either field, and `moveIssue`
-(D37) rejects moving an issue that currently has a parent or any children rather than re-parenting it.
-See `NEXT.md` for the exact detail. The Crow-based `ticket-hub` server target, previously blocked by
-network access to `github.com`, now builds and has been live-verified end-to-end (every route across all
-three phases exercised via `curl` against a running instance; zero bugs found) — see "Server
-verification" in `README.md` and `docs/VERIFICATION.md`. `web/` now covers every one of those routes with
-a working, browser-verified (Playwright/Chromium) control: login, hierarchy/resolution pickers, full
-edit/clone/links/watch-vote/delete in the issue drawer, project management, both recycle bins, and
-reorder/move/bulk actions. There is no remaining gap between the API surface and the demo UI for Phases
-1-3. The immediate next step is continuing the roadmap into Phase 4 (Collaboration) / Phase 5
-(Attachments and Kanban board), or optional UX polish (e.g. drag-and-drop reordering on the Board view) —
-see `NEXT.md`.
+**(Updated 2026-08-05 — the paragraph below was stale: it described the Phase 1-3 checkpoint from early
+in the project. Superseded per this file's own source-of-truth hierarchy by `NEXT.md`/`PLAN.md`, which
+are updated every batch; treat those two, not this paragraph, as authoritative for current status.)**
 
-Phase 1/2/3 scope, for reference:
+The entire reduced-scope V1 roadmap (`docs/REDUCED_SCOPE_ROADMAP.md`, Phases 1-8 / Milestones 1-4) is
+**complete**, including Docker/Compose packaging, light/dark theme, an accessibility baseline pass, and a
+threat-model/security self-review (`docs/THREAT_MODEL.md`) that found and fixed a real IDOR bug. Fifteen
+further post-V1 batches have shipped since the roadmap closed (see `PLAN.md`'s "Current status" and
+`NEXT.md`'s "The roadmap is now complete" section for the full list), most recently REST write
+idempotency keys (D128). Re-typing/re-parenting an issue after creation — the one gap this paragraph used
+to describe — was closed in post-V1 batch 2.
+
+Per `NEXT.md`: **"There is currently no further work queued."** Per this file's own "Autonomy and
+questions" rule and `docs/REMOVED_AND_DEFERRED_FEATURES.md`'s "Revisiting a deferred feature" rule, do not
+start new scope (including anything in `docs/REMOVED_AND_DEFERRED_FEATURES.md` — OIDC, sprints, saved
+filters, automation, etc.) without an explicit new product conversation with the owner.
+
+Phase 1/2/3 scope, for reference (all done, including the re-typing/re-parenting item):
 
 - Explicit `Principal`/actor context threaded through every write use case (done).
 - Migration-safe identity tables (`users`, `local_credentials`, `sessions`) — **no** `groups`,
@@ -85,8 +86,8 @@ Phase 1/2/3 scope, for reference:
 - Fixed Epic/Sub-task hierarchy enforcement on issue creation, the fixed workflow's hardcoded
   resolution/sub-task-completion rules on status changes, full-replacement issue edit with optimistic
   locking, the fixed issue-link catalog, simple cloning, self-service watching/voting, the issue recycle
-  bin, simple bulk actions, simple integer manual ordering with renumbering (D31), and moving an issue
-  between projects (D37) (done); re-typing/re-parenting an issue is not.
+  bin, simple bulk actions, simple integer manual ordering with renumbering (D31), moving an issue
+  between projects (D37), and re-typing/re-parenting an issue after creation (all done).
 
 ## Architecture rules
 
