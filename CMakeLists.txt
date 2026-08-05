@@ -4,7 +4,7 @@ project(ticket-hub VERSION 0.2.0 LANGUAGES CXX)
 
 option(TICKETHUB_BUILD_SERVER "Build the Crow HTTP server" ON)
 option(TICKETHUB_BUILD_CLI "Build the Ticket Hub administration CLI" ON)
-option(TICKETHUB_WITH_POSTGRES "Build the PostgreSQL database backend" ON)
+option(TICKETHUB_WITH_POSTGRES "Build the PostgreSQL database backend" OFF)
 option(TICKETHUB_WITH_SQLITE "Build the SQLite database backend" ON)
 option(TICKETHUB_BUILD_TESTS "Build Ticket Hub tests" ON)
 
