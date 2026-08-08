@@ -6,7 +6,7 @@ is [docs/REDUCED_SCOPE_ROADMAP.md](docs/REDUCED_SCOPE_ROADMAP.md) (the original
 snapshot status line, kept in sync at each milestone boundary -- see `NEXT.md` for full batch-by-batch
 detail and `docs/VERIFICATION.md` for exactly what was tested and how.
 
-## Current status (2026-08-05)
+## Current status (2026-08-08)
 
 **The entire reduced-scope V1 roadmap (`docs/REDUCED_SCOPE_ROADMAP.md`, Milestones 1-4 / Phases 1-8) is
 now complete**, including its Phase 8 exit gate (`docker compose up` produces a usable, documented
@@ -282,19 +282,14 @@ remains only as optional, non-roadmap follow-up.
   no-op'ing when dropped back where it started -- user-requested. Reuses the existing
   `POST /api/v1/tickets/{key}/reorder` route the Tickets/Backlog ↑/↓ buttons already call; no new backend
   code, no migration.
+- **Post-V1, batch 20.** The two previously queued user requests are complete: Story Points is a fixed
+  Jira-style picker (`0`, `0.25`, `0.5`, `1`, `2`, `3`, `5`, `8`, `13`, `20`, `40`, `100`) with a concise
+  "relative effort, not hours" explanation on create/edit; the ticket drawer can be resized by drag or
+  keyboard, persists its normal width in `localStorage`, and has a full-screen toggle. Frontend-only.
 
-## Queued next (not yet built)
+## Queued next
 
-Two items requested by the user in the same 2026-08-05 session, both explicitly deferred pending more
-design input before implementation starts:
-
-- **Story Points picker redesign.** The Story Points field is currently a free-text number with no
-  in-product explanation of what it represents. User wants something closer to Jira's fixed-value picker
-  (shared a reference screenshot) but asked to discuss the exact design further before any code is written
-  -- do not implement until that follow-up conversation happens.
-- **Ticket detail drawer: resizable width + fullscreen.** The drawer's width is currently fixed. User wants
-  it resizable, with the chosen width remembered across sessions (likely `localStorage`, not an actual
-  cookie), plus an option to expand it to the full browser window. Not yet designed.
+No work is currently queued. Any new feature needs an explicit product conversation.
 
 ## Implementation rules
 

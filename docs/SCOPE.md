@@ -761,14 +761,23 @@ remain as the long-term aspirational baseline only — do not build against them
   tickets (`TH-5`/`TH-6`), confirmed the swap persisted through a fresh fetch, restored the original order.
   See `docs/VERIFICATION.md`.
 
+- **Batch 20 (done): fixed Story Points picker and adaptable ticket detail drawer** -- the two explicitly
+  queued post-V1 follow-ups. Create and edit now offer the fixed Jira-style scale `0`, `0.25`, `0.5`, `1`,
+  `2`, `3`, `5`, `8`, `13`, `20`, `40`, `100`, with an approximate relative-effort explanation beside
+  the control.
+  Historic nonstandard values remain selectable during an edit rather than being silently cleared. The
+  ticket drawer has an accessible left-edge resize control (pointer drag, Arrow keys, Shift+Arrow for larger
+  steps, Home/End for limits), persists its normal width in `localStorage`, and has a full-screen toggle;
+  Escape leaves full-screen before closing the drawer. Frontend-only, no schema or API change.
+
 ## Not yet built (still V1 scope — see `REDUCED_SCOPE_ROADMAP.md`)
 
 - Phases 1-8 (the entire reduced-scope V1 roadmap) are complete -- nothing remains in this category.
   Everything below this point is either post-V1 optional follow-up (above) or permanently out of scope.
-- **Milestone 3 (Phases 6 and 7) is fully complete.** Pagination (D126) covers `GET /api/v1/tickets` only
-  so far -- every other list endpoint (projects, comments, worklogs, attachments, notifications,
-  sessions, tokens, audit events, watchers, voters, board-columns, ticket-links, comment-reactions)
-  remains unpaginated; extending it further is optional follow-up, not a blocker to Phase 6's exit gate.
+- **Milestone 3 (Phases 6 and 7) is fully complete.** Pagination (D126) covers `GET /api/v1/tickets`,
+  notifications, and the admin audit log. Every other list endpoint (projects, comments, worklogs,
+  attachments, sessions, tokens, watchers, voters, board-columns, ticket-links, comment-reactions) remains
+  unpaginated; extending it further is optional follow-up, not a blocker to Phase 6's exit gate.
 - **Phase 8 (Milestone 4) is fully complete**, which closes the entire reduced-scope V1 roadmap: Docker
   packaging (D50), light/dark theme (D46), the accessibility baseline pass (D47), the browser-support note
   (D139), and the threat-model/security self-review (`docs/THREAT_MODEL.md`) are all done.

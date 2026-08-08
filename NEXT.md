@@ -163,6 +163,11 @@ changes) worked before. User-requested ("proc nemohu zmenit poradi ticketu na bo
 existing `POST /api/v1/tickets/{key}/reorder` route the Tickets/Backlog ↑/↓ buttons already call; no new
 backend code. See "The roadmap is now complete" below for detail.
 
+**Post-V1, batch 20 (done, 2026-08-08):** Story Points is now an explained, fixed Jira-style picker
+(`0`, `0.25`, `0.5`, `1`, `2`, `3`, `5`, `8`, `13`, `20`, `40`, `100`) on both ticket creation and editing. The
+ticket-detail drawer is now resizable by pointer or keyboard, remembers its width in `localStorage`, and
+has a full-screen toggle. Both requested follow-ups are complete; no work is currently queued.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.
@@ -860,15 +865,11 @@ residual risk in `docs/THREAT_MODEL.md`, not a silent gap.
 done** (post-V1 batches 1-4, below). One further item was added since at explicit user request -- Jira-
 style `/browse/{key}` direct issue links (post-V1 batch 5, below). Post-V1 batches 16, 17, and 19 (below)
 were bug fixes/UX gaps; batch 18 was a decided-but-never-implemented gap closure (Decisions 2/53/56/57),
-same class as batch 8 -- none of these four is new scope. **Two items remain queued, both from explicit
-user requests during this same session, not yet built:** (1) The Story Points field is a free number with
-no explanation of what it represents; user wants something closer to Jira's fixed-value picker (a
-reference screenshot was shared) but said this can be discussed further before implementation -- do not
-build until that follow-up conversation happens. (2) The ticket detail drawer's width is fixed; user wants
-it resizable (remembered across sessions, likely `localStorage` rather than an actual cookie) plus a
-full-screen expand option -- not yet designed. Beyond these two, anything else is new scope and, per the
-same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along, should not be started
-without a fresh, explicit product conversation.
+same class as batch 8 -- none of these four is new scope. **The two items that were queued here are now
+done as post-V1 batch 20:** Story Points has an explained fixed-value picker, and the ticket-detail drawer
+has a persisted resizable width plus a full-screen toggle. No work is currently queued; anything further
+is new scope and, per the same rule that has applied to `docs/REMOVED_AND_DEFERRED_FEATURES.md` all along,
+should not be started without a fresh, explicit product conversation.
 
 **Post-V1 batch 1 (done):** the user was asked to pick the first piece of optional follow-up and chose a
 web UI for managing personal access tokens and active sessions -- both already had a complete REST API and

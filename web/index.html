@@ -152,7 +152,22 @@
         </label>
         <label>
           Story points
-          <input name="storyPoints" type="number" min="0" max="10000" step="0.5" placeholder="e.g. 3">
+          <select name="storyPoints" aria-describedby="create-story-points-help">
+            <option value="">Not estimated</option>
+            <option value="0">0 (no effort)</option>
+            <option value="0.25">0.25 (quarter a day)</option>
+            <option value="0.5">0.5 (half a day)</option>
+            <option value="1">1 (about one day)</option>
+            <option value="2">2 (about two days)</option>
+            <option value="3">3 (about three days)</option>
+            <option value="5">5 (about one week)</option>
+            <option value="8">8 (about two weeks)</option>
+            <option value="13">13 (about three weeks)</option>
+            <option value="20">20 (about one month)</option>
+            <option value="40">40 (about two months)</option>
+            <option value="100">100 (split the ticket)</option>
+          </select>
+          <span class="field-hint" id="create-story-points-help">Relative effort; the examples are approximate, not a deadline.</span>
         </label>
         <label>
           Due date

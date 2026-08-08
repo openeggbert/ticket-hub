@@ -158,6 +158,164 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+// A small, conventional Jira-style scale keeps estimates comparable across
+// tickets. Its parenthesized examples are deliberately approximate: points
+// describe relative effort, not a delivery promise. The API continues to
+// accept a number for compatibility with existing integrations and historic
+// data, but the web UI only offers these fixed values to new edits and tickets.
+const STORY_POINT_OPTIONS = [
+  { value: 0, label: '0 (no effort)' },
+  { value: 0.25, label: '0.25 (quarter a day)' },
+  { value: 0.5, label: '0.5 (half a day)' },
+  { value: 1, label: '1 (about one day)' },
+  { value: 2, label: '2 (about two days)' },
+  { value: 3, label: '3 (about three days)' },
+  { value: 5, label: '5 (about one week)' },
+  { value: 8, label: '8 (about two weeks)' },
+  { value: 13, label: '13 (about three weeks)' },
+  { value: 20, label: '20 (about one month)' },
+  { value: 40, label: '40 (about two months)' },
+  { value: 100, label: '100 (split the ticket)' }
+];
+
+function storyPointsOptionsMarkup(selectedValue) {
+  const selected = selectedValue === null || selectedValue === undefined ? '' : String(selectedValue);
+  const isStandardValue = STORY_POINT_OPTIONS.some(option => String(option.value) === selected);
+  const legacyOption = selected && !isStandardValue
+    ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (existing value)</option>`
+    : '';
+  return `<option value="" ${selected ? '' : 'selected'}>Not estimated</option>${legacyOption}${STORY_POINT_OPTIONS.map(option =>
+    `<option value="${option.value}" ${String(option.value) === selected ? 'selected' : ''}>${option.label}</option>`).join('')}`;
+}
+
+const TICKET_DRAWER_WIDTH_STORAGE_KEY = 'ticket-hub.ticket-drawer-width';
+const DEFAULT_TICKET_DRAWER_WIDTH = 720;
+const MIN_TICKET_DRAWER_WIDTH = 480;
+let ticketDrawerFullscreen = false;
+
+function maximumTicketDrawerWidth() {
+  return Math.max(MIN_TICKET_DRAWER_WIDTH, Math.floor(window.innerWidth * 0.94));
+}
+
+function setTicketDrawerWidth(width, persist = false) {
+  const normalized = Math.max(MIN_TICKET_DRAWER_WIDTH, Math.min(maximumTicketDrawerWidth(), Math.round(width)));
+  document.documentElement.style.setProperty('--ticket-drawer-width', `${normalized}px`);
+  if (persist) {
+    try {
+      localStorage.setItem(TICKET_DRAWER_WIDTH_STORAGE_KEY, String(normalized));
+    } catch {
+      // The drawer remains resizable when storage is disabled; only the
+      // cross-session preference is unavailable.
+    }
+  }
+  return normalized;
+}
+
+function restoreTicketDrawerWidth() {
+  try {
+    const saved = Number(localStorage.getItem(TICKET_DRAWER_WIDTH_STORAGE_KEY));
+    setTicketDrawerWidth(Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_TICKET_DRAWER_WIDTH);
+  } catch {
+    setTicketDrawerWidth(DEFAULT_TICKET_DRAWER_WIDTH);
+  }
+}
+
+function ticketDrawerHeaderMarkup(title) {
+  const expandLabel = ticketDrawerFullscreen ? 'Exit full screen' : 'Expand to full screen';
+  return `
+    <div class="drawer-resize-handle" id="drawer-resize-handle" role="separator" aria-orientation="vertical" aria-controls="ticket-drawer" aria-label="Resize ticket detail" tabindex="0" title="Drag or use arrow keys to resize"></div>
+    <div class="drawer-header">
+      <span class="ticket-key">${escapeHtml(title)}</span>
+      <div class="drawer-header-controls">
+        <button type="button" class="icon-button" id="toggle-drawer-fullscreen" aria-label="${expandLabel}" title="${expandLabel}">${ticketDrawerFullscreen ? '↙' : '⛶'}</button>
+        <button type="button" class="icon-button" id="close-drawer" aria-label="Close">×</button>
+      </div>
+    </div>`;
+}
+
+function updateTicketDrawerControls() {
+  ticketDrawer.classList.toggle('ticket-drawer--fullscreen', ticketDrawerFullscreen);
+  const resizeHandle = ticketDrawer.querySelector('#drawer-resize-handle');
+  if (resizeHandle) {
+    const canResize = !ticketDrawerFullscreen && window.innerWidth > 760;
+    const width = Math.round(ticketDrawer.getBoundingClientRect().width);
+    resizeHandle.tabIndex = canResize ? 0 : -1;
+    resizeHandle.setAttribute('aria-disabled', String(!canResize));
+    resizeHandle.setAttribute('aria-valuemin', String(MIN_TICKET_DRAWER_WIDTH));
+    resizeHandle.setAttribute('aria-valuemax', String(maximumTicketDrawerWidth()));
+    resizeHandle.setAttribute('aria-valuenow', String(width));
+    resizeHandle.setAttribute('aria-valuetext', `${width} pixels wide`);
+  }
+  const fullscreenButton = ticketDrawer.querySelector('#toggle-drawer-fullscreen');
+  if (fullscreenButton) {
+    const label = ticketDrawerFullscreen ? 'Exit full screen' : 'Expand to full screen';
+    fullscreenButton.textContent = ticketDrawerFullscreen ? '↙' : '⛶';
+    fullscreenButton.setAttribute('aria-label', label);
+    fullscreenButton.title = label;
+  }
+}
+
+function setTicketDrawerFullscreen(fullscreen) {
+  ticketDrawerFullscreen = fullscreen;
+  updateTicketDrawerControls();
+}
+
+function beginTicketDrawerResize(event) {
+  if (event.button !== 0 || ticketDrawerFullscreen || window.innerWidth <= 760) return;
+  event.preventDefault();
+  const resizeHandle = event.currentTarget;
+  const pointerId = event.pointerId;
+  const startX = event.clientX;
+  const startWidth = ticketDrawer.getBoundingClientRect().width;
+  document.body.classList.add('drawer-resizing');
+  resizeHandle.setPointerCapture(pointerId);
+
+  const onPointerMove = moveEvent => {
+    if (moveEvent.pointerId !== pointerId) return;
+    setTicketDrawerWidth(startWidth + startX - moveEvent.clientX);
+    updateTicketDrawerControls();
+  };
+  const finishResize = endEvent => {
+    if (endEvent.pointerId !== pointerId) return;
+    document.body.classList.remove('drawer-resizing');
+    if (resizeHandle.hasPointerCapture(pointerId)) resizeHandle.releasePointerCapture(pointerId);
+    resizeHandle.removeEventListener('pointermove', onPointerMove);
+    resizeHandle.removeEventListener('pointerup', finishResize);
+    resizeHandle.removeEventListener('pointercancel', finishResize);
+    setTicketDrawerWidth(ticketDrawer.getBoundingClientRect().width, true);
+    updateTicketDrawerControls();
+  };
+  resizeHandle.addEventListener('pointermove', onPointerMove);
+  resizeHandle.addEventListener('pointerup', finishResize);
+  resizeHandle.addEventListener('pointercancel', finishResize);
+}
+
+function bindTicketDrawerControls() {
+  const resizeHandle = ticketDrawer.querySelector('#drawer-resize-handle');
+  resizeHandle?.addEventListener('pointerdown', beginTicketDrawerResize);
+  resizeHandle?.addEventListener('keydown', event => {
+    if (ticketDrawerFullscreen || window.innerWidth <= 760) return;
+    const step = event.shiftKey ? 80 : 32;
+    const currentWidth = ticketDrawer.getBoundingClientRect().width;
+    let nextWidth = null;
+    if (event.key === 'ArrowLeft') nextWidth = currentWidth + step;
+    if (event.key === 'ArrowRight') nextWidth = currentWidth - step;
+    if (event.key === 'Home') nextWidth = MIN_TICKET_DRAWER_WIDTH;
+    if (event.key === 'End') nextWidth = maximumTicketDrawerWidth();
+    if (nextWidth === null) return;
+    event.preventDefault();
+    setTicketDrawerWidth(nextWidth, true);
+    updateTicketDrawerControls();
+  });
+  ticketDrawer.querySelector('#toggle-drawer-fullscreen')?.addEventListener('click', () => {
+    setTicketDrawerFullscreen(!ticketDrawerFullscreen);
+  });
+  updateTicketDrawerControls();
+}
+
+restoreTicketDrawerWidth();
+window.addEventListener('resize', updateTicketDrawerControls);
+
 // --- Markdown rendering (D16) ---
 // A deliberately small subset of Markdown (bold/italic/inline code/links/
 // headings/lists/blockquotes/fenced code/hr), not a general-purpose engine
@@ -2801,7 +2959,7 @@ function editFieldsMarkup(ticket) {
     <label class="wide">Description<textarea id="edit-description" rows="6">${escapeHtml(ticket.description)}</textarea></label>
     <label>Priority<select id="edit-priority">${['highest', 'high', 'medium', 'low', 'lowest'].map(key => `<option value="${key}" ${key === ticket.priority.key ? 'selected' : ''}>${key[0].toUpperCase()}${key.slice(1)}</option>`).join('')}</select></label>
     <label>Assignee<select id="edit-assignee">${userSelectOptions(ticket.assignee?.email || '', 'Unassigned')}</select></label>
-    <label>Story points<input id="edit-story-points" type="number" min="0" max="10000" step="0.5" value="${ticket.storyPoints ?? ''}"></label>
+    <label>Story points<select id="edit-story-points" aria-describedby="edit-story-points-help">${storyPointsOptionsMarkup(ticket.storyPoints)}</select><span class="field-hint" id="edit-story-points-help">Relative effort; the examples are approximate, not a deadline.</span></label>
     <label>Due date<input id="edit-due-date" type="date" value="${ticket.dueDate ?? ''}"></label>
     <label class="wide">Labels<input id="edit-labels" value="${escapeHtml(ticket.labels.join(', '))}"></label>
     <label>Component<select id="edit-component"><option value="">None</option></select></label>`;
@@ -2891,7 +3049,7 @@ async function openTicket(ticketKey, editing = false) {
     function render(editing) {
       const statusCategory = STATUSES.find(status => status.key === ticket.status.key)?.category || 'todo';
       ticketDrawer.innerHTML = `
-        <div class="drawer-header"><span class="ticket-key">${escapeHtml(ticket.key)}</span><button class="icon-button" id="close-drawer" aria-label="Close">×</button></div>
+        ${ticketDrawerHeaderMarkup(ticket.key)}
         <div class="drawer-content">
           <span class="ticket-type"><span style="color:${escapeHtml(ticket.type.color)}">${escapeHtml(ticket.type.icon)}</span>${escapeHtml(ticket.type.name)} · ${escapeHtml(ticket.projectName)}</span>
           ${editing
@@ -3077,6 +3235,7 @@ async function openTicket(ticketKey, editing = false) {
           </div>
         </div>`;
 
+      bindTicketDrawerControls();
       document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
       document.querySelectorAll('[data-activity-tab]').forEach(button => button.addEventListener('click', () => {
         activeActivityTab = button.dataset.activityTab;
@@ -3377,12 +3536,14 @@ async function openTicket(ticketKey, editing = false) {
 
     render(editing);
   } catch (error) {
-    ticketDrawer.innerHTML = `<div class="drawer-header"><span>Ticket</span><button class="icon-button" id="close-drawer">×</button></div><div class="drawer-content"><div class="error-banner">${escapeHtml(error.message)}</div></div>`;
+    ticketDrawer.innerHTML = `${ticketDrawerHeaderMarkup('Ticket')}<div class="drawer-content"><div class="error-banner">${escapeHtml(error.message)}</div></div>`;
+    bindTicketDrawerControls();
     document.querySelector('#close-drawer').addEventListener('click', closeDrawer);
   }
 }
 
 function closeDrawer() {
+  setTicketDrawerFullscreen(false);
   ticketDrawer.classList.add('hidden');
   drawerBackdrop.classList.add('hidden');
   state.currentTicket = null;
@@ -3772,6 +3933,11 @@ window.addEventListener('popstate', () => {
 
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
+    if (ticketDrawerFullscreen) {
+      event.preventDefault();
+      setTicketDrawerFullscreen(false);
+      return;
+    }
     closeCreateModal();
     closeProjectModal();
     closeShortcutsModal();

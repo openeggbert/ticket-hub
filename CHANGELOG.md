@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Fixed Story Points picker and adaptable ticket drawer
+
+- **Story Points**: create and edit now use the fixed Jira-style values `0`, `0.25`, `0.5`, `1`, `2`, `3`, `5`,
+  `8`, `13`, `20`, `40`, and `100` instead of a free number. Each value includes an approximate
+  parenthesized day/week/month example while clarifying that points remain relative effort, not a deadline.
+  Existing nonstandard values remain selected in the edit picker until deliberately changed, so no historic
+  estimate is silently lost.
+- **Ticket drawer**: drag its left edge to resize, or focus the resize handle and use Arrow keys
+  (Shift+Arrow for larger steps, Home/End for limits). The normal width is saved in `localStorage`; the new
+  header button expands the drawer to the full browser width, and Escape leaves that mode before closing.
+- No API, database, or server change.
+
 ## Unreleased — Kanban board: drag-and-drop reordering within a column
 
 - **Feature**: dropping a card back into the column it's already in used to be a no-op -- the board's

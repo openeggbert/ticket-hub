@@ -1,5 +1,29 @@
 # Verification record
 
+## 2026-08-08 — Fixed Story Points picker and adaptable ticket detail drawer, user-requested
+
+### What changed
+
+- Replaced free-number Story Points controls in ticket create/edit with the fixed Jira-style scale `0`,
+  `0.25`, `0.5`, `1`, `2`, `3`, `5`, `8`, `13`, `20`, `40`, `100`, plus "Not estimated" and a concise
+  "Relative effort, not hours" explanation. An existing nonstandard numeric value is shown as an explicit
+  selected legacy option during edit, so adopting the picker cannot silently erase data created by an older
+  client or API integration.
+- The ticket drawer now has a pointer-draggable, keyboard-operable left-edge resize handle; Arrow keys
+  change its width, Shift+Arrow uses a larger step, and Home/End jump to the allowed limits. The normal
+  width persists in `localStorage` under `ticket-hub.ticket-drawer-width`. A header button toggles a full
+  browser-width view; Escape exits that view before applying its usual close-drawer behavior. On narrow
+  screens the drawer remains full width and the resize handle is hidden.
+
+### Verification
+
+- Parsed the entire `web/app.js` with GJS's JavaScript parser. A focused harness verified that the standard
+  `0.5` picker value is selected, legacy `2.5` is preserved, and drawer-width limits clamp to 94% of the
+  viewport.
+- `git diff --check` is clean. No C++/schema/API code changed. A clean CMake build could not run in this
+  checkout: its inherited `build/` cache points to a removed source path, while a new configure fails before
+  generation because the environment lacks Argon2 development headers/libraries.
+
 ## 2026-08-05 — Kanban board: drag-and-drop reordering within a column, user-requested
 
 User asked why they couldn't reorder tickets on the board ("proc nemohu zmenit poradi ticketu na

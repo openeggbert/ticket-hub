@@ -29,6 +29,7 @@
   --topbar-bg: rgba(255, 255, 255, 0.94);
   --shadow: 0 8px 28px rgba(9, 30, 66, 0.16);
   --radius: 10px;
+  --ticket-drawer-width: 720px;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -69,6 +70,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: var(--bg); }
+body.drawer-resizing { cursor: ew-resize; user-select: none; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 /* Keyboard-operable rows/cards (D47) -- see makeKeyboardActivatable in app.js. */
@@ -293,6 +295,7 @@ kbd {
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 22px; }
 .form-grid label { display: grid; gap: 7px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .form-grid .wide { grid-column: 1 / -1; }
+.field-hint { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.35; }
 .form-grid input, .form-grid select, .form-grid textarea, .comment-form textarea {
   width: 100%; padding: 10px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); outline: 0;
 }
@@ -303,8 +306,15 @@ kbd {
 .token-reveal-value { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .token-reveal-value code { flex: 1; padding: 8px 10px; border-radius: 7px; background: var(--surface); color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; overflow-x: auto; white-space: nowrap; }
 
-.ticket-drawer { position: fixed; top: 0; right: 0; z-index: 90; width: min(720px, 94vw); height: 100vh; overflow-y: auto; background: var(--surface); box-shadow: -12px 0 40px rgba(9,30,66,.22); }
+.ticket-drawer { position: fixed; top: 0; right: 0; z-index: 90; width: min(var(--ticket-drawer-width), 94vw); height: 100vh; overflow-y: auto; background: var(--surface); box-shadow: -12px 0 40px rgba(9,30,66,.22); }
+.ticket-drawer--fullscreen { width: 100vw; }
+.drawer-resize-handle { position: absolute; z-index: 4; top: 0; bottom: 0; left: 0; width: 12px; cursor: ew-resize; touch-action: none; }
+.drawer-resize-handle::after { position: absolute; top: 50%; left: 4px; width: 3px; height: 46px; border-radius: 3px; background: var(--border); content: ''; transform: translateY(-50%); opacity: 0; transition: opacity .15s ease; }
+.drawer-resize-handle:hover::after, .drawer-resize-handle:focus-visible::after { opacity: 1; }
+.drawer-resize-handle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.ticket-drawer--fullscreen .drawer-resize-handle { display: none; }
 .drawer-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid var(--border); background: var(--topbar-bg); backdrop-filter: blur(8px); }
+.drawer-header-controls { display: flex; align-items: center; gap: 6px; }
 .drawer-content { padding: 24px; }
 .drawer-content h1 { margin: 8px 0 16px; font-size: 25px; line-height: 1.3; }
 .ticket-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
@@ -452,6 +462,8 @@ kbd {
   .stats-grid, .project-grid { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .wide { grid-column: auto; }
+  .ticket-drawer { width: 100vw; }
+  .drawer-resize-handle { display: none; }
   .drawer-layout { grid-template-columns: 1fr; }
   .ticket-table th:nth-child(4), .ticket-table td:nth-child(4), .ticket-table th:nth-child(5), .ticket-table td:nth-child(5) { display: none; }
   .global-search { min-width: 0; }
