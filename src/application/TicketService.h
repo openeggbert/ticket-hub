@@ -383,6 +383,16 @@ public:
                                                             const Domain::Principal& actor);
     bool deleteWebhookSubscription(const std::string& subscriptionId, const Domain::Principal& actor);
 
+    // Operational visibility of the durable webhook/email outbox. These
+    // remain global-admin-only: delivery targets and errors are installation
+    // integration metadata, not project data. Retrying changes only terminal
+    // failures back to pending; the separate outbox worker performs delivery.
+    Domain::OutboxSummary outboxSummary(const Domain::Principal& actor);
+    Domain::Page<Domain::OutboxDelivery> listOutboxDeliveries(const Domain::Principal& actor,
+                                                               int page, int pageSize);
+    bool retryOutboxDelivery(const std::string& channel, const std::string& deliveryId,
+                             const Domain::Principal& actor);
+
     // --- REST write idempotency keys (D128, deferred-after-V1, user-requested) ---
     // Thin pass-throughs, not a project/global-admin-gated operation like
     // the methods above -- scoped to the caller's own userId by

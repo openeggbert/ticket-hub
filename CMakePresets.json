@@ -1,0 +1,73 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "TICKETHUB_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "sqlite",
+      "displayName": "SQLite development",
+      "inherits": "base",
+      "cacheVariables": {
+        "TICKETHUB_BUILD_SERVER": "OFF",
+        "TICKETHUB_BUILD_CLI": "ON",
+        "TICKETHUB_WITH_SQLITE": "ON",
+        "TICKETHUB_WITH_POSTGRES": "OFF"
+      }
+    },
+    {
+      "name": "all-adapters",
+      "displayName": "SQLite and PostgreSQL adapters",
+      "inherits": "base",
+      "cacheVariables": {
+        "TICKETHUB_BUILD_SERVER": "OFF",
+        "TICKETHUB_BUILD_CLI": "ON",
+        "TICKETHUB_WITH_SQLITE": "ON",
+        "TICKETHUB_WITH_POSTGRES": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release server",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "TICKETHUB_BUILD_SERVER": "ON",
+        "TICKETHUB_BUILD_CLI": "ON",
+        "TICKETHUB_WITH_SQLITE": "ON",
+        "TICKETHUB_WITH_POSTGRES": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "sqlite", "configurePreset": "sqlite" },
+    { "name": "all-adapters", "configurePreset": "all-adapters" },
+    { "name": "release", "configurePreset": "release" }
+  ],
+  "testPresets": [
+    {
+      "name": "sqlite",
+      "configurePreset": "sqlite",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "all-adapters",
+      "configurePreset": "all-adapters",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

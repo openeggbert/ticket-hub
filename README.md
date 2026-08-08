@@ -223,12 +223,13 @@ secrets/observability) that the original full-scope architecture reserved.
 - SQLite development files when `TICKETHUB_WITH_SQLITE=ON`
 - PostgreSQL client development files when `TICKETHUB_WITH_POSTGRES=ON`
 - libargon2 development files (local password hashing)
+- libcurl development files when building the administration CLI
 - Crow 1.3.3 for the server target
 
 Typical Debian dependencies:
 
 ```bash
-sudo apt install build-essential cmake libpq-dev libsqlite3-dev libargon2-dev libasio-dev
+sudo apt install build-essential cmake ninja-build libpq-dev libsqlite3-dev libargon2-dev libasio-dev libcurl4-openssl-dev
 ```
 
 ## Build and test the core without downloading Crow
@@ -241,6 +242,17 @@ cmake -S . -B build-core \
 cmake --build build-core --parallel 4
 ctest --test-dir build-core --output-on-failure
 ```
+
+The committed presets make the supported configurations repeatable:
+
+```bash
+cmake --preset sqlite && cmake --build --preset sqlite && ctest --preset sqlite
+cmake --preset all-adapters && cmake --build --preset all-adapters
+```
+
+`vcpkg.json` declares Crow, Argon2, curl, libpq, and SQLite for a vcpkg-based
+environment. CI also runs these clean system-package builds and the browser
+test suite.
 
 ## Build the server
 
@@ -265,7 +277,8 @@ TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli migrate
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli seed-demo
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli create-user "person@example.com" "A Person" "a sufficiently long password" [--admin] [--handle=<handle>]
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli backup ./backups/2026-08-02
-TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli restore ./backups/2026-08-02 --yes
+TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli verify-backup ./backups/2026-08-02
+TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli restore ./backups/2026-08-02 --yes --maintenance
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli process-outbox
 ```
 
@@ -276,13 +289,16 @@ neither command checks whether it is still running. `backup <output-directory>` 
 directory and dumps the database (SQLite: the online backup API, correct regardless of WAL/checkpoint
 state; PostgreSQL: `pg_dump --clean --if-exists`, so the dump is self-contained for a direct restore) into
 `<output-directory>`, refusing to write into a directory that already exists and is non-empty.
-`restore <backup-directory> --yes` permanently overwrites the current database and attachments directory
+`backup` writes `ticket-hub-backup.manifest`, recording the application version, migration-catalog
+checksum, and a SHA-256/byte-size entry for the database dump and every attachment. Run
+`verify-backup <backup-directory>` before moving a backup; restore performs the same verification before
+it changes data. `restore <backup-directory> --yes --maintenance` permanently overwrites the current database and attachments directory
 with the backup's contents and then runs pending migrations (SQLite: the online backup API in reverse;
-PostgreSQL: `psql -v ON_ERROR_STOP=1`) -- the `--yes` flag is mandatory; without it the command prints a
-warning and refuses to proceed. There is no isolated staging environment and no manifest/checksum file
-(D106-D108); the admin is responsible for their own pre-restore backup of whatever is about to be
-overwritten. `ticket-hub-cli migrate` remains the entire upgrade mechanism (D111) -- already implemented,
-no separate upgrade command.
+PostgreSQL: `psql -v ON_ERROR_STOP=1`) -- `--yes --maintenance` explicitly acknowledges that the server
+has been stopped and a maintenance window is in effect. Restore also replaces the attachment directory
+rather than leaving newer files behind. There is still no isolated staging environment, so the admin is
+responsible for a pre-restore backup of data being overwritten. `ticket-hub-cli migrate` remains the entire
+upgrade mechanism (D111) -- already implemented, no separate upgrade command.
 
 `create-user` is administrator-only account creation: there is no public registration and no invitation
 flow in V1 (`REDUCED_SCOPE_SPECIFICATION.md` section 3). The password is set directly by whoever runs
@@ -311,14 +327,16 @@ SQLite has the same planned user-facing feature set, but only one Ticket Hub ser
 ## Run with PostgreSQL
 
 ```bash
-docker compose up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
 
 TICKETHUB_DB_DRIVER=postgres \
 TICKETHUB_DATABASE_URL='host=127.0.0.1 port=5432 dbname=tickethub user=tickethub password=tickethub-dev' \
 ./build/ticket-hub
 ```
 
-Do not put production secrets in shell history. The target product uses a pluggable secrets backend.
+Do not put production secrets in shell history. Ticket Hub reads deployment
+secrets from environment variables; use a protected `.env` file, Docker
+secrets-compatible environment injection, or a local `.pgpass` file.
 
 ## Run with Docker
 
@@ -326,13 +344,16 @@ The official Docker image plus Docker Compose is the only supported distribution
 no `.deb`/`.rpm`, no Helm/Kubernetes:
 
 ```bash
-docker compose up
+cp .env.example .env
+# Edit .env and replace TICKETHUB_POSTGRES_PASSWORD with a long random value.
+docker compose up -d --build
 ```
 
 This builds the image from the `Dockerfile` in this repository (a two-stage build: full toolchain to
 compile, then a slim runtime image with just the shared libraries the binary links against), starts
 PostgreSQL, waits for it to report healthy, then starts Ticket Hub against it -- reachable at
-`http://127.0.0.1:8080`. A fresh instance ships with no accounts at all (D2: administrator-created
+`http://127.0.0.1:8080` only. Put a TLS reverse proxy in front of that loopback port before exposing it
+to users; see [production deployment](docs/DEPLOYMENT.md). A fresh instance ships with no accounts at all (D2: administrator-created
 accounts only, no public registration); create the first admin with:
 
 ```bash
@@ -345,8 +366,9 @@ demo data/logins used throughout this README instead. The `ticket-hub-attachment
 `ticket-hub-postgres` volume persist data across `docker compose down`/`up` cycles;
 `docker compose down -v` removes both.
 
-`docker compose up -d postgres` (starting only that one service) continues to work exactly as in "Run
-with PostgreSQL" above, for building from source and running the database in Docker only.
+For local development, `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres`
+starts only the loopback-published database with the deliberately non-production `tickethub-dev`
+password, as used in "Run with PostgreSQL" above.
 
 **Verification note:** this Docker packaging was written and validated as far as this development
 environment's network policy allows -- `docker build --check` and `docker compose config` both pass
@@ -446,6 +468,9 @@ protect against, so a retry with the same key after a validation error simply ru
 | `PATCH` | `/api/v1/admin/users/{id}/active` | session + CSRF, global admin | `{active}` -> deactivating kills every session for that user; an admin cannot deactivate themselves |
 | `PATCH` | `/api/v1/admin/users/{id}/admin` | session + CSRF, global admin | `{isAdmin}` -> an admin cannot remove their own admin privileges |
 | `POST` | `/api/v1/admin/users/{id}/reset-password` | session + CSRF, global admin | sets and returns a fresh temporary password, shown once; kills every session for that user |
+| `GET` | `/api/v1/admin/outbox/summary` | session, global admin | queued, delivered and failed webhook/email delivery totals; no payload or secret material |
+| `GET` | `/api/v1/admin/outbox/deliveries` | session, global admin | paginated delivery metadata and last error (`page`/`pageSize`) |
+| `POST` | `/api/v1/admin/outbox/deliveries/{channel}/{id}/retry` | session + CSRF, global admin | deliberately reset one terminal `failed` webhook/email delivery to pending |
 | `GET` | `/api/v1/notifications` | session | `?unread=true` filters; fixed set (D14); paginated via `page`/`pageSize` (D126) |
 | `GET` | `/api/v1/notifications/unread-count` | session | `{count}` |
 | `POST` | `/api/v1/notifications/{id}/read` | session + CSRF | scoped to the caller's own notifications |

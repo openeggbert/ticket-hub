@@ -1245,6 +1245,39 @@ bool TicketService::deleteWebhookSubscription(const std::string& subscriptionId,
     return database_->deleteWebhookSubscription(subscriptionId);
 }
 
+Domain::OutboxSummary TicketService::outboxSummary(const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    return database_->outboxSummary();
+}
+
+Domain::Page<Domain::OutboxDelivery> TicketService::listOutboxDeliveries(const Domain::Principal& actor,
+                                                                           const int page,
+                                                                           const int pageSize) {
+    requireGlobalAdmin(actor);
+    const int clampedPage = std::max(page, 1);
+    const int clampedPageSize = std::clamp(pageSize, 1, Domain::MaxPageSize);
+    Domain::Page<Domain::OutboxDelivery> result;
+    result.page = clampedPage;
+    result.pageSize = clampedPageSize;
+    result.totalItems = database_->outboxSummary().total();
+    result.items = database_->listOutboxDeliveries(clampedPageSize, (clampedPage - 1) * clampedPageSize);
+    return result;
+}
+
+bool TicketService::retryOutboxDelivery(const std::string& channel, const std::string& deliveryId,
+                                        const Domain::Principal& actor) {
+    requireGlobalAdmin(actor);
+    if (channel != "webhook" && channel != "email") {
+        throw std::invalid_argument("Unknown outbox delivery channel");
+    }
+    const bool retried = database_->retryOutboxDelivery(channel, deliveryId);
+    if (retried) {
+        database_->recordAuditEvent("outbox", "retry_failed_delivery", actor.userId, channel, deliveryId,
+                                    "Reset failed delivery to pending");
+    }
+    return retried;
+}
+
 std::optional<Domain::IdempotencyRecord> TicketService::findIdempotencyRecord(
     const std::string& userId, const std::string& idempotencyKey) {
     return database_->findIdempotencyRecord(userId, idempotencyKey);

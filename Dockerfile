@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --create-home --home-dir /home/ticket-hub --shell /usr/sbin/nologin ticket-hub
 
 COPY --from=build /opt/ticket-hub /opt/ticket-hub
+COPY docker-entrypoint.sh /opt/ticket-hub/bin/docker-entrypoint.sh
 
 # Compiled-in defaults for TICKETHUB_WEB_ROOT/MIGRATIONS_ROOT point at the
 # *build machine's* source checkout (see src/config/Config.cpp), which does
@@ -47,7 +48,9 @@ ENV TICKETHUB_WEB_ROOT=/opt/ticket-hub/share/ticket-hub/web \
     TICKETHUB_PORT=8080 \
     PATH=/opt/ticket-hub/bin:$PATH
 
-RUN mkdir -p /data/attachments && chown -R ticket-hub:ticket-hub /data
+RUN mkdir -p /data/attachments \
+    && chown -R ticket-hub:ticket-hub /data \
+    && chmod 0755 /opt/ticket-hub/bin/docker-entrypoint.sh
 
 USER ticket-hub
 WORKDIR /home/ticket-hub
@@ -57,4 +60,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
     CMD curl -fsS "http://127.0.0.1:${TICKETHUB_PORT}/api/health" || exit 1
 
-ENTRYPOINT ["ticket-hub"]
+ENTRYPOINT ["/opt/ticket-hub/bin/docker-entrypoint.sh", "ticket-hub"]

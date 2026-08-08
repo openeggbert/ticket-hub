@@ -14,6 +14,50 @@ instance; all supported build configurations compile and pass tests; no known op
 the hardening pass). See "The roadmap is now complete" in `NEXT.md` for the exact closing detail and what
 remains only as optional, non-roadmap follow-up.
 
+## Approved reliability and scale-up work (2026-08-08)
+
+The following work was approved after the post-V1 technical analysis. It is a
+new operational-quality roadmap, separate from the completed reduced-scope V1
+roadmap above. Items are ordered by delivery priority; an unchecked item is
+not a claim that the capability already exists.
+
+- [x] **P0 — CI and reproducible builds.** Added CMake presets, declared every
+  build dependency, and run a clean SQLite test build, a PostgreSQL compile
+  build, formatting/static checks, and browser checks in CI.
+- [x] **P0 — Harden the production Docker deployment.** Split production and
+  development Compose configuration; remove the default database password and
+  public PostgreSQL port from production; document TLS reverse-proxy and
+  request-size limits.
+- [x] **P1 — Operable durable outbox.** Added an optional Compose worker
+  schedule, an administrator delivery overview with failures, and a
+  deliberate manual retry action. A systemd timer remains an equivalent
+  deployment option documented in `docs/DEPLOYMENT.md`.
+- [x] **P1 — Automated end-to-end and accessibility testing.** Added committed
+  Playwright/axe coverage for authentication, authorization, ticket editing,
+  attachments, drawer resizing, story-point choices, and ticket history.
+- [x] **P1 — Reconcile decision documentation.** Marked custom fields,
+  webhooks, outbound email, and idempotency as implemented post-V1 while
+  preserving the historical deferred-scope decisions.
+- [x] **P1 — Security release checks.** Added dependency, code, and container
+  scanning in CI; generate an SBOM and document a recurring update cadence.
+- [x] **P2 — Start splitting oversized modules.** The fixed estimation scale
+  and ticket-drawer interaction controller are now native ES modules,
+  removing their stateful DOM code from `web/app.js` without a framework or a
+  bundler. Continue splitting API/state, board and backend route domains in
+  future focused refactor batches without changing the public API.
+- [x] **P2 — Scale larger installations.** Replaced ad-hoc ticket search with
+  native SQLite FTS5/PostgreSQL full-text search; retain bounded board queries
+  and add virtualization/selective pagination where measurements require it.
+- [x] **P2 — Safer backup and restore.** Added a backup manifest with version,
+  migration and attachment integrity data plus an explicit maintenance
+  preflight before destructive restore.
+
+**Latest verification (2026-08-08):** the current SQLite server build was
+compiled from this checkout, started with an isolated demo database, and
+manually exercised through the browser. The start page and the extracted
+story-point and ticket-drawer modules all returned HTTP 200; the preview was
+then stopped cleanly.
+
 - **Milestone 1** (Phases 1-3: identity/sessions, authorization/projects, issue core/fixed workflow) --
   **fully complete** at the core/CLI/test/server/UI layer. Re-typing (`issueTypeKey`)/re-parenting
   (`parentIssueKey`) an issue after creation, the one item left open since Phase 3, was added post-V1 as

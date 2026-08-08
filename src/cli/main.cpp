@@ -1,4 +1,6 @@
 #include "application/AuthService.h"
+#include "common/FileUtil.h"
+#include "common/Sha256.h"
 #include "config/Config.h"
 #include "infrastructure/database/DatabaseFactory.h"
 #include "infrastructure/delivery/SmtpEmailSender.h"
@@ -6,11 +8,17 @@
 
 #include <curl/curl.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #ifndef TICKETHUB_VERSION
 #define TICKETHUB_VERSION "development"
@@ -35,11 +43,14 @@ void printUsage(const char* executable) {
         << "                                                into <output-directory> (must not already exist\n"
         << "                                                or must be empty). Offline/maintenance-window\n"
         << "                                                use only -- stop the server first (D106/D107).\n"
-        << "  restore <backup-directory> --yes             Restore the database and attachments directory\n"
+        << "  restore <backup-directory> --yes --maintenance Restore the database and attachments directory\n"
         << "                                                from <backup-directory>, overwriting the current\n"
         << "                                                ones. Destructive and irreversible; requires\n"
-        << "                                                --yes. Runs pending migrations afterward. Stop\n"
-        << "                                                the server first (D108).\n"
+        << "                                                --yes and --maintenance. Validates the backup\n"
+        << "                                                manifest, then runs pending migrations. Stop the\n"
+        << "                                                server first (D108).\n"
+        << "  verify-backup <backup-directory>              Verify the backup manifest, database dump and\n"
+        << "                                                every attachment checksum without restoring.\n"
         << "  process-outbox                               Attempt delivery of every pending webhook\n"
         << "                                                (D39/D41) and email (D52) row whose retry\n"
         << "                                                time has arrived. Not run automatically --\n"
@@ -48,6 +59,131 @@ void printUsage(const char* executable) {
         << "                                                never makes an outbound network call; this\n"
         << "                                                command is the only place that does.\n"
         << "  version                                      Print the Ticket Hub version.\n";
+}
+
+constexpr const char* BackupManifestFileName = "ticket-hub-backup.manifest";
+
+struct BackupFileEntry {
+    std::string relativePath;
+    std::uintmax_t byteSize{};
+    std::string sha256;
+};
+
+std::string databaseMigrationDirectory(const TicketHub::Config::AppConfig& config) {
+    return config.databaseDriver == "sqlite" ? config.migrationsRoot + "/sqlite"
+                                              : config.migrationsRoot + "/postgresql";
+}
+
+std::string migrationCatalogChecksum(const TicketHub::Config::AppConfig& config) {
+    namespace fs = std::filesystem;
+    std::vector<fs::path> files;
+    const fs::path directory(databaseMigrationDirectory(config));
+    if (fs::exists(directory)) {
+        for (const auto& entry : fs::directory_iterator(directory)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".sql") {
+                files.push_back(entry.path());
+            }
+        }
+    }
+    std::sort(files.begin(), files.end());
+    std::string catalog;
+    for (const auto& file : files) {
+        catalog += file.filename().string() + ":" + TicketHub::Common::sha256Hex(TicketHub::Common::readTextFile(file.string())) + "\n";
+    }
+    return TicketHub::Common::sha256Hex(catalog);
+}
+
+std::vector<BackupFileEntry> backupFiles(const std::filesystem::path& directory) {
+    namespace fs = std::filesystem;
+    std::vector<BackupFileEntry> entries;
+    for (const auto& entry : fs::recursive_directory_iterator(directory)) {
+        if (!entry.is_regular_file() || entry.path().filename() == BackupManifestFileName) {
+            continue;
+        }
+        const auto relative = fs::relative(entry.path(), directory).generic_string();
+        entries.push_back({relative, entry.file_size(), TicketHub::Common::sha256Hex(TicketHub::Common::readTextFile(entry.path().string()))});
+    }
+    std::sort(entries.begin(), entries.end(), [](const BackupFileEntry& left, const BackupFileEntry& right) {
+        return left.relativePath < right.relativePath;
+    });
+    return entries;
+}
+
+void writeBackupManifest(const std::filesystem::path& directory,
+                         const TicketHub::Config::AppConfig& config,
+                         const std::string& backendName) {
+    std::ofstream manifest(directory / BackupManifestFileName, std::ios::binary | std::ios::trunc);
+    if (!manifest) {
+        throw std::runtime_error("Cannot write backup manifest");
+    }
+    manifest << "format=1\n"
+             << "ticket_hub_version=" << TICKETHUB_VERSION << "\n"
+             << "database_backend=" << backendName << "\n"
+             << "migration_catalog_sha256=" << migrationCatalogChecksum(config) << "\n";
+    for (const auto& file : backupFiles(directory)) {
+        manifest << "file=" << file.relativePath << '\t' << file.byteSize << '\t' << file.sha256 << '\n';
+    }
+    if (!manifest) {
+        throw std::runtime_error("Cannot finish backup manifest");
+    }
+}
+
+bool safeRelativeBackupPath(const std::filesystem::path& path) {
+    if (path.empty() || path.is_absolute()) {
+        return false;
+    }
+    for (const auto& part : path) {
+        if (part == "..") {
+            return false;
+        }
+    }
+    return true;
+}
+
+void verifyBackupManifest(const std::filesystem::path& directory) {
+    namespace fs = std::filesystem;
+    std::ifstream manifest(directory / BackupManifestFileName, std::ios::binary);
+    if (!manifest) {
+        throw std::runtime_error("Backup manifest not found: " + (directory / BackupManifestFileName).string());
+    }
+    std::string line;
+    bool formatSeen = false;
+    int fileCount = 0;
+    while (std::getline(manifest, line)) {
+        if (line == "format=1") {
+            formatSeen = true;
+            continue;
+        }
+        if (line.rfind("file=", 0) != 0) {
+            continue;
+        }
+        const std::string entry = line.substr(5);
+        const auto firstTab = entry.find('\t');
+        const auto secondTab = firstTab == std::string::npos ? std::string::npos : entry.find('\t', firstTab + 1);
+        if (firstTab == std::string::npos || secondTab == std::string::npos) {
+            throw std::runtime_error("Malformed backup manifest file entry");
+        }
+        const fs::path relative(entry.substr(0, firstTab));
+        if (!safeRelativeBackupPath(relative)) {
+            throw std::runtime_error("Unsafe path in backup manifest: " + relative.string());
+        }
+        const std::uintmax_t expectedSize = std::stoull(entry.substr(firstTab + 1, secondTab - firstTab - 1));
+        const std::string expectedDigest = entry.substr(secondTab + 1);
+        const fs::path file = directory / relative;
+        if (!fs::is_regular_file(file)) {
+            throw std::runtime_error("Backup file missing: " + relative.string());
+        }
+        if (fs::file_size(file) != expectedSize) {
+            throw std::runtime_error("Backup file size mismatch: " + relative.string());
+        }
+        if (TicketHub::Common::sha256Hex(TicketHub::Common::readTextFile(file.string())) != expectedDigest) {
+            throw std::runtime_error("Backup file checksum mismatch: " + relative.string());
+        }
+        ++fileCount;
+    }
+    if (!formatSeen || fileCount == 0) {
+        throw std::runtime_error("Backup manifest is incomplete or unsupported");
+    }
 }
 
 void printDiagnostics(const TicketHub::Config::AppConfig& config) {
@@ -128,8 +264,10 @@ int runBackup(const TicketHub::Config::AppConfig& config, int argc, char** argv)
 
     auto database = TicketHub::Infrastructure::Database::createDatabase(config);
     database->backup(outputDirectory.string());
+    writeBackupManifest(outputDirectory, config, database->backendName());
 
-    std::cout << "Backup complete: " << outputDirectory.string() << " (" << database->backendName() << ")\n";
+    std::cout << "Backup complete and verified manifest written: " << outputDirectory.string() << " ("
+              << database->backendName() << ")\n";
     return 0;
 }
 
@@ -147,32 +285,46 @@ int runRestore(const TicketHub::Config::AppConfig& config, int argc, char** argv
     namespace fs = std::filesystem;
     const fs::path backupDirectory(argv[2]);
     bool confirmed = false;
+    bool maintenanceConfirmed = false;
     for (int index = 3; index < argc; ++index) {
         if (std::string(argv[index]) == "--yes") {
             confirmed = true;
         }
+        if (std::string(argv[index]) == "--maintenance") {
+            maintenanceConfirmed = true;
+        }
     }
-    if (!confirmed) {
+    if (!confirmed || !maintenanceConfirmed) {
         std::cerr << "WARNING: this permanently overwrites the current database and attachments directory\n"
                      "with the contents of " << backupDirectory.string() << ". This cannot be undone.\n"
-                     "Back up your current data first if you have not already done so.\n"
-                     "Re-run with --yes to proceed.\n";
+                     "Stop Ticket Hub first, back up current data, and re-run with --yes --maintenance\n"
+                     "to acknowledge the required maintenance window.\n";
         return 2;
     }
     if (!fs::exists(backupDirectory)) {
         std::cerr << "Backup directory does not exist: " << backupDirectory.string() << "\n";
         return 2;
     }
+    verifyBackupManifest(backupDirectory);
 
     auto database = TicketHub::Infrastructure::Database::createDatabase(config);
     database->restore(backupDirectory.string());
     database->migrate();
 
+    const fs::path attachmentsTarget(config.attachmentsRoot);
+    if (attachmentsTarget.empty() || attachmentsTarget == attachmentsTarget.root_path()) {
+        throw std::runtime_error("Refusing to replace an unsafe attachments directory");
+    }
+    // A backup with no attachments must restore to no attachments too. Clear
+    // the target only after the manifest/database preflight and explicit
+    // maintenance confirmation above, avoiding stale files from the newer
+    // installation surviving an otherwise successful restore.
+    fs::remove_all(attachmentsTarget);
     const fs::path attachmentsBackup = backupDirectory / "attachments";
     if (fs::exists(attachmentsBackup)) {
-        fs::create_directories(config.attachmentsRoot);
+        fs::create_directories(attachmentsTarget);
         for (const auto& entry : fs::directory_iterator(attachmentsBackup)) {
-            fs::copy(entry.path(), fs::path(config.attachmentsRoot) / entry.path().filename(),
+            fs::copy(entry.path(), attachmentsTarget / entry.path().filename(),
                      fs::copy_options::recursive | fs::copy_options::copy_symlinks
                          | fs::copy_options::overwrite_existing);
         }
@@ -180,6 +332,21 @@ int runRestore(const TicketHub::Config::AppConfig& config, int argc, char** argv
 
     std::cout << "Restore complete: " << backupDirectory.string() << " (" << database->backendName()
               << "), pending migrations applied.\n";
+    return 0;
+}
+
+int runVerifyBackup(int argc, char** argv) {
+    if (argc != 3) {
+        std::cerr << "Usage: verify-backup <backup-directory>\n";
+        return 2;
+    }
+    const std::filesystem::path backupDirectory(argv[2]);
+    if (!std::filesystem::is_directory(backupDirectory)) {
+        std::cerr << "Backup directory does not exist: " << backupDirectory.string() << "\n";
+        return 2;
+    }
+    verifyBackupManifest(backupDirectory);
+    std::cout << "Backup manifest verified: " << backupDirectory.string() << '\n';
     return 0;
 }
 
@@ -293,6 +460,10 @@ int main(int argc, char** argv) {
 
         if (command == "restore") {
             return runRestore(config, argc, argv);
+        }
+
+        if (command == "verify-backup") {
+            return runVerifyBackup(argc, argv);
         }
 
         if (command == "process-outbox") {

@@ -204,6 +204,37 @@ crow::json::wvalue webhookSubscriptionJson(const Domain::WebhookSubscription& su
     return json;
 }
 
+crow::json::wvalue outboxSummaryJson(const Domain::OutboxSummary& summary) {
+    const auto channelJson = [](const Domain::OutboxChannelSummary& channel) {
+        crow::json::wvalue json;
+        json["pending"] = channel.pending;
+        json["delivered"] = channel.delivered;
+        json["failed"] = channel.failed;
+        json["total"] = channel.total();
+        return json;
+    };
+    crow::json::wvalue json;
+    json["webhooks"] = channelJson(summary.webhooks);
+    json["email"] = channelJson(summary.email);
+    json["total"] = summary.total();
+    return json;
+}
+
+crow::json::wvalue outboxDeliveryJson(const Domain::OutboxDelivery& delivery) {
+    crow::json::wvalue json;
+    json["channel"] = delivery.channel;
+    json["id"] = delivery.id;
+    json["destination"] = delivery.destination;
+    json["subjectOrEvent"] = delivery.subjectOrEvent;
+    json["status"] = delivery.status;
+    json["attemptCount"] = delivery.attemptCount;
+    json["nextAttemptAt"] = delivery.nextAttemptAt;
+    json["lastError"] = delivery.lastError ? crow::json::wvalue(*delivery.lastError) : crow::json::wvalue(nullptr);
+    json["createdAt"] = delivery.createdAt;
+    json["completedAt"] = delivery.completedAt ? crow::json::wvalue(*delivery.completedAt) : crow::json::wvalue(nullptr);
+    return json;
+}
+
 crow::json::wvalue ticketJson(const Domain::Ticket& ticket) {
     crow::json::wvalue json;
     json["id"] = ticket.id;
@@ -3277,6 +3308,81 @@ void registerApiRoutes(crow::SimpleApp& app,
             return jsonResponse(200, std::move(body));
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    // Durable outbox operational view. The payloads and webhook signing
+    // secrets never leave the database through these routes: global admins
+    // get delivery targets, states and failure text only, sufficient to
+    // diagnose/retry an integration without creating another secret surface.
+    CROW_ROUTE(app, "/api/v1/admin/outbox/summary")([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            return jsonResponse(200, outboxSummaryJson(service->outboxSummary(*principal)));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/admin/outbox/deliveries")([service, authService](const crow::request& request) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        try {
+            const int page = optionalIntQueryParameter(request, "page").value_or(1);
+            const int pageSize = optionalIntQueryParameter(request, "pageSize").value_or(Domain::DefaultPageSize);
+            const auto result = service->listOutboxDeliveries(*principal, page, pageSize);
+            crow::json::wvalue::list items;
+            for (const auto& delivery : result.items) {
+                items.emplace_back(outboxDeliveryJson(delivery));
+            }
+            crow::json::wvalue body;
+            body["items"] = std::move(items);
+            body["page"] = result.page;
+            body["pageSize"] = result.pageSize;
+            body["totalItems"] = result.totalItems;
+            body["totalPages"] = result.totalPages();
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::exception& error) {
+            return errorResponse(500, error.what());
+        }
+    });
+
+    CROW_ROUTE(app, "/api/v1/admin/outbox/deliveries/<string>/<string>/retry")
+    .methods(crow::HTTPMethod::Post)([service, authService](const crow::request& request,
+                                                            const std::string& channel,
+                                                            const std::string& deliveryId) {
+        const auto principal = resolvePrincipal(request, authService);
+        if (!principal) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (!service->retryOutboxDelivery(channel, deliveryId, *principal)) {
+                return errorResponse(404, "Failed outbox delivery not found");
+            }
+            crow::json::wvalue body;
+            body["ok"] = true;
+            return jsonResponse(200, std::move(body));
+        } catch (const Domain::Forbidden& error) {
+            return errorResponse(403, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
         } catch (const std::exception& error) {
             return errorResponse(500, error.what());
         }

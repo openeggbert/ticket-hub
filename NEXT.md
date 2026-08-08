@@ -168,6 +168,18 @@ backend code. See "The roadmap is now complete" below for detail.
 ticket-detail drawer is now resizable by pointer or keyboard, remembers its width in `localStorage`, and
 has a full-screen toggle. Both requested follow-ups are complete; no work is currently queued.
 
+**Post-V1, batch 21 (done, 2026-08-08):** production-readiness and scale-up work requested after a full
+technical analysis. Added reproducible CMake presets and CI (native C++ tests, Playwright/axe,
+CodeQL/dependency/container checks and SBOM); hardened production Compose plus a development override and
+deployment guide; an optional scheduled outbox worker and global-admin Outbox diagnostics/retry API/UI;
+backup integrity manifests plus `verify-backup`/explicit maintenance restore confirmation; native SQLite
+FTS5/PostgreSQL full-text ticket search; and the first native-ES-module split of `web/app.js` (estimation
+scale and drawer controls). Decision documentation now distinguishes historical V1 deferrals from the
+post-V1 custom fields/webhooks/email/idempotency implementations. Follow-up module decomposition remains
+an incremental maintenance activity, recorded in `PLAN.md`. The current SQLite server was subsequently
+compiled from this checkout and manually exercised against an isolated demo database; its page and both
+new native modules were confirmed reachable before the local preview was stopped.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.

@@ -7,6 +7,7 @@
 #include "domain/Errors.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -74,6 +75,47 @@ std::optional<std::string> optionalText(sqlite3_stmt* statement, int column) {
         return std::nullopt;
     }
     return text(statement, column);
+}
+
+// FTS5's MATCH grammar is intentionally richer than a plain text search box.
+// Convert untrusted free text to a deterministic OR query of safe tokens so a
+// user typing punctuation (or FTS operators such as NOT) never turns into a
+// malformed query or surprising boolean expression. The normal Ticket Hub
+// filters still compose around this native index in SQL below.
+std::string fullTextQuery(const std::string& value) {
+    std::string query;
+    std::string token;
+    for (const unsigned char character : value) {
+        if (std::isalnum(character) != 0) {
+            token += static_cast<char>(character);
+        } else if (!token.empty()) {
+            if (!query.empty()) {
+                query += " OR ";
+            }
+            query += token;
+            token.clear();
+        }
+    }
+    if (!token.empty()) {
+        if (!query.empty()) {
+            query += " OR ";
+        }
+        query += token;
+    }
+    return query;
+}
+
+void bindFullTextQuery(Statement& statement, const int index, const std::optional<std::string>& search) {
+    if (!search) {
+        statement.bindNull(index);
+        return;
+    }
+    const std::string query = fullTextQuery(*search);
+    if (query.empty()) {
+        statement.bindNull(index);
+        return;
+    }
+    statement.bind(index, query);
 }
 
 bool boolColumn(sqlite3_stmt* statement, int column) {
@@ -1638,8 +1680,7 @@ WHERE i.deleted_at IS NULL
   AND (?7 IS NULL OR EXISTS (
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
-  AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
-       OR LOWER(i.ticket_key) LIKE LOWER(?8))
+  AND (?8 IS NULL OR i.rowid IN (SELECT rowid FROM ticket_search WHERE ticket_search MATCH ?8))
   AND (?9 IS NULL OR LOWER(comp.name) = LOWER(?9))
 GROUP BY i.id
 )SQL" + (filter.sortByRank ? "ORDER BY i.rank_order, i.ticket_number\n" : "ORDER BY i.updated_at DESC, i.ticket_key DESC\n") + R"SQL(
@@ -1653,7 +1694,7 @@ LIMIT 200
     filter.assigneeEmail ? statement.bind(5, *filter.assigneeEmail) : statement.bindNull(5);
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
     filter.label ? statement.bind(7, *filter.label) : statement.bindNull(7);
-    filter.search ? statement.bind(8, "%" + *filter.search + "%") : statement.bindNull(8);
+    bindFullTextQuery(statement, 8, filter.search);
     filter.componentName ? statement.bind(9, *filter.componentName) : statement.bindNull(9);
 
     std::vector<Domain::Ticket> tickets;
@@ -1677,8 +1718,7 @@ WHERE i.deleted_at IS NULL
   AND (?7 IS NULL OR EXISTS (
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
-  AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
-       OR LOWER(i.ticket_key) LIKE LOWER(?8))
+  AND (?8 IS NULL OR i.rowid IN (SELECT rowid FROM ticket_search WHERE ticket_search MATCH ?8))
   AND (?9 IS NULL OR LOWER(comp.name) = LOWER(?9))
 GROUP BY i.id
 )SQL" + (filter.sortByRank ? "ORDER BY i.rank_order, i.ticket_number\n" : "ORDER BY i.updated_at DESC, i.ticket_key DESC\n") + R"SQL(
@@ -1692,7 +1732,7 @@ LIMIT ?10 OFFSET ?11
     filter.assigneeEmail ? statement.bind(5, *filter.assigneeEmail) : statement.bindNull(5);
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
     filter.label ? statement.bind(7, *filter.label) : statement.bindNull(7);
-    filter.search ? statement.bind(8, "%" + *filter.search + "%") : statement.bindNull(8);
+    bindFullTextQuery(statement, 8, filter.search);
     filter.componentName ? statement.bind(9, *filter.componentName) : statement.bindNull(9);
     statement.bind(10, static_cast<std::int64_t>(limit));
     statement.bind(11, static_cast<std::int64_t>(offset));
@@ -1726,8 +1766,7 @@ WHERE i.deleted_at IS NULL
   AND (?7 IS NULL OR EXISTS (
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND LOWER(l2.name) = LOWER(?7)))
-  AND (?8 IS NULL OR LOWER(i.summary) LIKE LOWER(?8) OR LOWER(i.description) LIKE LOWER(?8)
-       OR LOWER(i.ticket_key) LIKE LOWER(?8))
+  AND (?8 IS NULL OR i.rowid IN (SELECT rowid FROM ticket_search WHERE ticket_search MATCH ?8))
   AND (?9 IS NULL OR LOWER(comp.name) = LOWER(?9))
 )SQL";
     Statement statement(database_, sql);
@@ -1738,7 +1777,7 @@ WHERE i.deleted_at IS NULL
     filter.assigneeEmail ? statement.bind(5, *filter.assigneeEmail) : statement.bindNull(5);
     filter.dueBefore ? statement.bind(6, *filter.dueBefore) : statement.bindNull(6);
     filter.label ? statement.bind(7, *filter.label) : statement.bindNull(7);
-    filter.search ? statement.bind(8, "%" + *filter.search + "%") : statement.bindNull(8);
+    bindFullTextQuery(statement, 8, filter.search);
     filter.componentName ? statement.bind(9, *filter.componentName) : statement.bindNull(9);
 
     if (statement.step() != SQLITE_ROW) {
@@ -3430,6 +3469,91 @@ WHERE id = ?1
     update.bind(3, static_cast<std::int64_t>(Domain::MaxDeliveryAttempts));
     update.bind(4, static_cast<std::int64_t>(Domain::DeliveryRetryDelayMinutes));
     expectDone(database_, update, "Record email delivery failure");
+}
+
+Domain::OutboxSummary SqliteDatabase::outboxSummary() {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT channel, status, COUNT(*)
+FROM (
+    SELECT 'webhook' AS channel, status FROM webhook_deliveries
+    UNION ALL
+    SELECT 'email' AS channel, status FROM email_deliveries
+)
+GROUP BY channel, status
+)SQL");
+    Domain::OutboxSummary summary;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        auto& channel = text(statement.get(), 0) == "webhook" ? summary.webhooks : summary.email;
+        const std::string status = text(statement.get(), 1);
+        const int count = sqlite3_column_int(statement.get(), 2);
+        if (status == "pending") {
+            channel.pending = count;
+        } else if (status == "delivered") {
+            channel.delivered = count;
+        } else if (status == "failed") {
+            channel.failed = count;
+        }
+    }
+    return summary;
+}
+
+std::vector<Domain::OutboxDelivery> SqliteDatabase::listOutboxDeliveries(const int limit, const int offset) {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, R"SQL(
+SELECT channel, id, destination, subject_or_event, status, attempt_count,
+       next_attempt_at, last_error, created_at, completed_at
+FROM (
+    SELECT 'webhook' AS channel, d.id, w.target_url AS destination,
+           d.event_type AS subject_or_event, d.status, d.attempt_count,
+           d.next_attempt_at, d.last_error, d.created_at, d.delivered_at AS completed_at
+    FROM webhook_deliveries d
+    JOIN webhook_subscriptions w ON w.id = d.subscription_id
+    UNION ALL
+    SELECT 'email' AS channel, d.id, u.email AS destination,
+           d.subject AS subject_or_event, d.status, d.attempt_count,
+           d.next_attempt_at, d.last_error, d.created_at, d.sent_at AS completed_at
+    FROM email_deliveries d
+    JOIN users u ON u.id = d.recipient_user_id
+)
+ORDER BY created_at DESC
+LIMIT ? OFFSET ?
+)SQL");
+    statement.bind(1, static_cast<std::int64_t>(limit));
+    statement.bind(2, static_cast<std::int64_t>(offset));
+    std::vector<Domain::OutboxDelivery> deliveries;
+    for (int result = statement.step(); result == SQLITE_ROW; result = statement.step()) {
+        Domain::OutboxDelivery delivery;
+        delivery.channel = text(statement.get(), 0);
+        delivery.id = text(statement.get(), 1);
+        delivery.destination = text(statement.get(), 2);
+        delivery.subjectOrEvent = text(statement.get(), 3);
+        delivery.status = text(statement.get(), 4);
+        delivery.attemptCount = sqlite3_column_int(statement.get(), 5);
+        delivery.nextAttemptAt = text(statement.get(), 6);
+        delivery.lastError = optionalText(statement.get(), 7);
+        delivery.createdAt = text(statement.get(), 8);
+        delivery.completedAt = optionalText(statement.get(), 9);
+        deliveries.push_back(std::move(delivery));
+    }
+    return deliveries;
+}
+
+bool SqliteDatabase::retryOutboxDelivery(const std::string& channel, const std::string& deliveryId) {
+    std::scoped_lock lock(mutex_);
+    if (channel != "webhook" && channel != "email") {
+        return false;
+    }
+    const char* table = channel == "webhook" ? "webhook_deliveries" : "email_deliveries";
+    const char* completedColumn = channel == "webhook" ? "delivered_at" : "sent_at";
+    Statement update(database_, std::string("UPDATE ") + table + R"SQL(
+SET status = 'pending', attempt_count = 0, next_attempt_at = CURRENT_TIMESTAMP,
+    last_error = NULL, )SQL" + completedColumn + R"SQL( = NULL
+WHERE id = ? AND status = 'failed'
+)SQL");
+    update.bind(1, deliveryId);
+    expectDone(database_, update, "Retry failed outbox delivery");
+    return sqlite3_changes(database_) > 0;
 }
 
 std::optional<Domain::IdempotencyRecord> SqliteDatabase::findIdempotencyRecord(

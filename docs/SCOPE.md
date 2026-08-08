@@ -94,8 +94,8 @@ remain as the long-term aspirational baseline only — do not build against them
 - **Ad-hoc ticket filter/search widening (Phase 5, D10/D43):** `GET /api/v1/tickets` and `Domain::TicketFilter`
   now also support type/priority/assignee/label/due-date filters (in addition to project/status/search),
   and search now also matches ticket description, not just summary/key. Still ad-hoc, in-UI-only filters
-  (no saved/shared filters, no JQL, not usable as a webhook/board source) and still a plain `LIKE`/`ILIKE`
-  substring match (no full-text index). This is the first Phase 5 slice.
+  (no saved/shared filters, no JQL, not usable as a webhook/board source); migration 021 replaces the
+  former `LIKE`/`ILIKE` substring scan with native SQLite FTS5 and PostgreSQL full-text indexes.
 - **Personal dashboard widgets (Phase 5, D24):** `GET /api/v1/dashboard` now returns `assignedToMe`,
   `watchedTickets`, and `upcomingDeadlines` for an authenticated caller (empty for anonymous). Matches
   D24's fixed widget set (assigned tickets, watched tickets, recent activity, deadlines, simple stats) minus
@@ -157,12 +157,13 @@ remain as the long-term aspirational baseline only — do not build against them
   `totalItems`/`totalPages`. Fixed, along the way, a previously-undocumented bug: the route's SQL had
   always silently capped results at 200 rows with no `total` returned. A deliberate partial rollout --
   every other list endpoint remains unpaginated, documented as still open. **This closes Phase 6.**
-- **Backup and restore (Phase 7, D106-D108):** `ticket-hub-cli backup <output-directory>` (copies the
-  attachments directory, dumps the database -- SQLite online backup API; PostgreSQL `pg_dump --clean
-  --if-exists`) and `ticket-hub-cli restore <backup-directory> --yes` (mandatory confirmation flag;
-  restores database + attachments, then runs pending migrations). Offline/maintenance-window use only, no
-  isolated staging environment. D111 (upgrades) needed no new work -- `ticket-hub-cli migrate` already
-  satisfies it. Live-verified end-to-end on both SQLite and PostgreSQL matching the exit gate exactly.
+- **Backup and restore (Phase 7, D106-D108; strengthened post-V1):** `ticket-hub-cli backup
+  <output-directory>` copies attachments, writes the database dump (SQLite online backup API; PostgreSQL
+  `pg_dump --clean --if-exists`), and writes a version/migration-catalog/file-checksum manifest.
+  `ticket-hub-cli verify-backup <backup-directory>` validates it without writes. Restore now requires
+  `restore <backup-directory> --yes --maintenance`, validates the manifest before changing data, replaces
+  the attachment directory exactly, then runs pending migrations. It remains an offline maintenance-window
+  operation with no isolated staging environment. D111 (upgrades) remains `ticket-hub-cli migrate`.
 - **Structured JSON logs (Phase 7, D133):** a new `TicketHub::Web::JsonLogHandler` replaces Crow's
   default stderr text logger, so every log line (startup, per-request, warnings/errors) is one JSON
   object per line on stdout. No Prometheus, no OpenTelemetry.
@@ -785,9 +786,9 @@ remain as the long-term aspirational baseline only — do not build against them
 ## Permanently out of V1 scope (do not build these)
 
 OIDC, invitations, public registration, configurable permission/notification schemes, the configurable
-workflow engine, custom fields, saved/shared filters, Scrum/sprints/agile reports, versions/releases,
-ticket templates, automation rules, webhooks, service accounts, Git integration, the Jira migration
-tool, CSV import, outbound/inbound email, the background job queue, internal event bus, realtime
+workflow engine, saved/shared filters, Scrum/sprints/agile reports, versions/releases, ticket templates,
+automation rules, service accounts, Git integration, the Jira migration tool, CSV import, inbound email,
+the background job queue, internal event bus, realtime
 (SSE), in-memory cache, S3 attachment storage, Kubernetes/Helm/`.deb`/`.rpm` packaging, the i18n
 framework, and pluggable secrets/observability backends. Full list with decision numbers:
 [REMOVED_AND_DEFERRED_FEATURES.md](REMOVED_AND_DEFERRED_FEATURES.md).

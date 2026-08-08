@@ -1,11 +1,29 @@
 # Removed and deferred features (V1)
 
-This is the authoritative list of everything that is **not** in Ticket Hub V1, split into two permanently different categories. Both lists are decision-numbered (`D#`) against `docs/REDUCED_SCOPE_DECISIONS.md` / `docs/PRODUCT_DECISIONS_COMPLETE.md`.
+This is the authoritative historical list of everything that was **not** in
+the reduced Ticket Hub V1 scope, split into two permanently different
+categories. Both lists are decision-numbered (`D#`) against
+`docs/REDUCED_SCOPE_DECISIONS.md` / `docs/PRODUCT_DECISIONS_COMPLETE.md`.
 
 - **Permanently removed** — no longer part of the Ticket Hub plan at all, at any future point, unless a fresh product conversation explicitly reopens it.
 - **Deferred after V1** — a real, wanted feature, intentionally cut from V1 for cost, and a legitimate candidate for a post-V1 milestone.
 
-Totals: **7 permanently removed**, **38 deferred after V1** (of 142 decisions total; the remaining 97 were kept, simplified, or already implemented — see `docs/REDUCED_SCOPE_DECISIONS.md`).
+## Post-V1 decisions that superseded a deferred item
+
+The following entries remain below as historical V1 decisions, but are **not
+open deferred work anymore**. Each was explicitly approved and implemented
+after V1:
+
+| Original decision | Current state | Implementation record |
+|---|---|---|
+| D9 — custom fields | Implemented post-V1 | Batch 13; migration 018 |
+| D39/D41 — webhooks and filtering | Implemented post-V1 | Batch 14; migration 019 |
+| D52 — outbound email | Implemented post-V1 | Batch 14; migration 019 |
+| D128 — REST idempotency keys | Implemented post-V1 | Batch 15; migration 020 |
+
+Current behavior and API contracts live in `README.md` and `docs/SCOPE.md`.
+The remaining entries below are still deferred or permanently removed unless a
+new product decision says otherwise.
 
 ## Permanently removed
 
@@ -25,7 +43,9 @@ Grouped by theme for readability; original decision order preserved within each 
 
 ### Custom fields and saved filters
 
-- **D9 — Custom fields and screens:** No custom fields in V1 at all; only the fixed standard issue field set
+- **D9 — Custom fields and screens:** **Implemented post-V1 (Batch 13).**
+  This line records only the original V1 cut; current custom-field behavior is
+  documented in `docs/SCOPE.md`.
 - **D35 — Quick filters:** No quick filters in V1; board uses only ad-hoc UI filtering
 
 ### Scrum, sprints, and agile reports
@@ -54,14 +74,18 @@ Grouped by theme for readability; original decision order preserved within each 
 
 ### Public API surface: webhooks, Git links, extensions, idempotency
 
-- **D41 — Webhook filtering:** Confirmed moot; superseded by Decision 39 (no webhooks in V1)
+- **D41 — Webhook filtering:** **Implemented post-V1 (Batch 14)** together
+  with D39 webhooks: single-project and fixed-event-type filtering.
 - **D42 — Git integration:** No Git integration in V1; no mechanism for external tools to attach links without public API/webhooks
 - **D49 — Extensions:** Confirmed moot; depends on public API/webhooks/service accounts removed in Decision 39
-- **D128 — REST write idempotency keys:** No idempotency-key mechanism in V1; accept small risk of duplicate records on client retries
+- **D128 — REST write idempotency keys:** **Implemented post-V1 (Batch 15)**
+  for the five resource-creating POST routes.
 
 ### Email — outbound backend and the entire inbound subsystem
 
-- **D52 — Outbound email:** Confirmed moot; superseded by Decision 14 (in-app-only notifications). Password reset email addressed separately in Decision 53.
+- **D52 — Outbound email:** **Implemented post-V1 (Batch 14)** as optional
+  SMTP delivery through the durable outbox. Password reset email remains out
+  of scope; Decision 53 is unchanged.
 - **D55 — OIDC provisioning:** Confirmed moot; superseded by Decision 1 (OIDC removed entirely)
 - **D86 — Personal notification preferences:** Confirmed moot; fixed notification set for everyone per Decision 14, no per-user preferences
 - **D115 — Inbound email features:** No inbound email in V1; issues/comments created via UI only. Confirms entire block 116-123 as moot.
@@ -93,4 +117,9 @@ Grouped by theme for readability; original decision order preserved within each 
 
 ## Revisiting a deferred feature
 
-Do not silently re-add anything from the deferred list mid-implementation. If a milestone genuinely needs one of these, treat it the same as any other product-scope change: raise it explicitly with the product owner, record a new decision (with a decision number continuing from 141), and update `docs/REDUCED_SCOPE_DECISIONS.md` and this file together.
+Do not silently re-add an item that is still deferred mid-implementation. If a
+milestone genuinely needs one, treat it as a product-scope change: raise it
+explicitly with the product owner, record a new decision (with a decision
+number continuing from 141), and update `docs/REDUCED_SCOPE_DECISIONS.md` and
+this file together. Entries called out in the post-V1 table above are already
+implemented and must not be described as absent.

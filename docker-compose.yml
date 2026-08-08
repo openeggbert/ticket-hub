@@ -1,18 +1,14 @@
-# Official Docker Compose distribution path (D50): `docker compose up`
-# alone brings up the full V1 instance (Postgres + the ticket-hub server),
-# reachable at http://127.0.0.1:8080. `docker compose up -d postgres`
-# continues to start only the database, for the "build from source, point
-# it at a local Postgres" workflow documented in README.md's "Run with
-# PostgreSQL" section -- postgres's host port stays published for that.
+# Production Compose configuration. Copy .env.example to .env and set a
+# unique TICKETHUB_POSTGRES_PASSWORD before first use. PostgreSQL has no host
+# port: only Ticket Hub reaches it on the private Compose network. The HTTP
+# port binds to localhost so a TLS reverse proxy is the public edge.
 services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: tickethub
-      POSTGRES_USER: tickethub
-      POSTGRES_PASSWORD: tickethub-dev
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${TICKETHUB_POSTGRES_DB:-tickethub}
+      POSTGRES_USER: ${TICKETHUB_POSTGRES_USER:-tickethub}
+      POSTGRES_PASSWORD: ${TICKETHUB_POSTGRES_PASSWORD}
     volumes:
       - ticket-hub-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -23,12 +19,14 @@ services:
 
   ticket-hub:
     build: .
+    image: ticket-hub:local
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       TICKETHUB_DB_DRIVER: postgres
-      TICKETHUB_DATABASE_URL: "host=postgres port=5432 dbname=tickethub user=tickethub password=tickethub-dev"
+      TICKETHUB_DATABASE_URL: "host=postgres port=5432 dbname=${TICKETHUB_POSTGRES_DB:-tickethub} user=${TICKETHUB_POSTGRES_USER:-tickethub} password=${TICKETHUB_POSTGRES_PASSWORD}"
+      TICKETHUB_POSTGRES_PASSWORD: ${TICKETHUB_POSTGRES_PASSWORD}
       TICKETHUB_AUTO_MIGRATE: "true"
       # A fresh instance ships with no accounts at all (D2: administrator-
       # created accounts only, no public registration) -- seeding is off by
@@ -38,7 +36,7 @@ services:
       # "you@example.com" "Your Name" "a sufficiently long password" --admin`.
       TICKETHUB_SEED_DEMO: "false"
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${TICKETHUB_HTTP_PORT:-8080}:8080"
     volumes:
       - ticket-hub-attachments:/data
     healthcheck:
@@ -47,6 +45,35 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+
+  # Opt in with `docker compose --profile outbox up -d`. This worker performs
+  # one bounded outbox batch per interval; the HTTP server itself never makes
+  # outbound webhook or SMTP calls.
+  outbox:
+    image: ticket-hub:local
+    profiles: ["outbox"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TICKETHUB_DB_DRIVER: postgres
+      TICKETHUB_DATABASE_URL: "host=postgres port=5432 dbname=${TICKETHUB_POSTGRES_DB:-tickethub} user=${TICKETHUB_POSTGRES_USER:-tickethub} password=${TICKETHUB_POSTGRES_PASSWORD}"
+      TICKETHUB_POSTGRES_PASSWORD: ${TICKETHUB_POSTGRES_PASSWORD}
+      TICKETHUB_WEB_ROOT: /opt/ticket-hub/share/ticket-hub/web
+      TICKETHUB_MIGRATIONS_ROOT: /opt/ticket-hub/share/ticket-hub/migrations
+      TICKETHUB_ATTACHMENTS_DIR: /data/attachments
+      TICKETHUB_SMTP_HOST: ${TICKETHUB_SMTP_HOST:-}
+      TICKETHUB_SMTP_PORT: ${TICKETHUB_SMTP_PORT:-587}
+      TICKETHUB_SMTP_USERNAME: ${TICKETHUB_SMTP_USERNAME:-}
+      TICKETHUB_SMTP_PASSWORD: ${TICKETHUB_SMTP_PASSWORD:-}
+      TICKETHUB_SMTP_FROM: ${TICKETHUB_SMTP_FROM:-}
+      TICKETHUB_SMTP_USE_TLS: ${TICKETHUB_SMTP_USE_TLS:-true}
+      TICKETHUB_OUTBOX_INTERVAL_SECONDS: ${TICKETHUB_OUTBOX_INTERVAL_SECONDS:-60}
+    volumes:
+      - ticket-hub-attachments:/data
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["test -n \"$${TICKETHUB_POSTGRES_PASSWORD}\" && test \"$${TICKETHUB_POSTGRES_PASSWORD}\" != replace-with-a-long-random-secret || { echo 'Set TICKETHUB_POSTGRES_PASSWORD to a real secret.' >&2; exit 64; }; while true; do ticket-hub-cli process-outbox; sleep \"$${TICKETHUB_OUTBOX_INTERVAL_SECONDS}\"; done"]
+    restart: unless-stopped
 
 volumes:
   ticket-hub-postgres:

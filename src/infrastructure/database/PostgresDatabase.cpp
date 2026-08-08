@@ -1550,7 +1550,7 @@ WHERE i.deleted_at IS NULL
   AND ($7::text IS NULL OR EXISTS (
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
-  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
+  AND ($8::text IS NULL OR i.search_vector @@ websearch_to_tsquery('simple', $8))
   AND ($9::text IS NULL OR comp.name ILIKE $9)
 )SQL" + (filter.sortByRank ? "ORDER BY i.rank_order, i.ticket_number\n" : "ORDER BY i.updated_at DESC, i.ticket_key DESC\n") + R"SQL(
 LIMIT 200
@@ -1564,7 +1564,7 @@ LIMIT 200
                               filter.assigneeEmail,
                               filter.dueBefore,
                               filter.label,
-                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt,
+                              filter.search,
                               filter.componentName},
                              "List tickets");
     std::vector<Domain::Ticket> tickets;
@@ -1588,7 +1588,7 @@ WHERE i.deleted_at IS NULL
   AND ($7::text IS NULL OR EXISTS (
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
-  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
+  AND ($8::text IS NULL OR i.search_vector @@ websearch_to_tsquery('simple', $8))
   AND ($9::text IS NULL OR comp.name ILIKE $9)
 )SQL" + (filter.sortByRank ? "ORDER BY i.rank_order, i.ticket_number\n" : "ORDER BY i.updated_at DESC, i.ticket_key DESC\n") + R"SQL(
 LIMIT $10::int OFFSET $11::int
@@ -1602,7 +1602,7 @@ LIMIT $10::int OFFSET $11::int
                               filter.assigneeEmail,
                               filter.dueBefore,
                               filter.label,
-                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt,
+                              filter.search,
                               filter.componentName,
                               std::optional<std::string>(std::to_string(limit)),
                               std::optional<std::string>(std::to_string(offset))},
@@ -1636,7 +1636,7 @@ WHERE i.deleted_at IS NULL
   AND ($7::text IS NULL OR EXISTS (
         SELECT 1 FROM ticket_labels il2 JOIN labels l2 ON l2.id = il2.label_id
         WHERE il2.ticket_id = i.id AND l2.name ILIKE $7))
-  AND ($8::text IS NULL OR i.summary ILIKE $8 OR i.description ILIKE $8 OR i.ticket_key ILIKE $8)
+  AND ($8::text IS NULL OR i.search_vector @@ websearch_to_tsquery('simple', $8))
   AND ($9::text IS NULL OR comp.name ILIKE $9)
 )SQL";
     auto result = execParams(connection.get(),
@@ -1648,7 +1648,7 @@ WHERE i.deleted_at IS NULL
                               filter.assigneeEmail,
                               filter.dueBefore,
                               filter.label,
-                              filter.search ? std::optional<std::string>("%" + *filter.search + "%") : std::nullopt,
+                              filter.search,
                               filter.componentName},
                              "Count tickets");
     if (PQntuples(result.get()) == 0) {
@@ -3235,6 +3235,95 @@ WHERE id = $1
                {deliveryId, error, std::to_string(Domain::MaxDeliveryAttempts),
                 std::to_string(Domain::DeliveryRetryDelayMinutes)},
                "Record email delivery failure");
+}
+
+Domain::OutboxSummary PostgresDatabase::outboxSummary() {
+    auto connection = connect(connectionString_);
+    auto result = exec(connection.get(), R"SQL(
+SELECT channel, status, COUNT(*)
+FROM (
+    SELECT 'webhook'::text AS channel, status FROM webhook_deliveries
+    UNION ALL
+    SELECT 'email'::text AS channel, status FROM email_deliveries
+) AS outbox
+GROUP BY channel, status
+)SQL", "Summarize outbox deliveries");
+    Domain::OutboxSummary summary;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        auto& channel = value(result.get(), row, 0) == "webhook" ? summary.webhooks : summary.email;
+        const std::string status = value(result.get(), row, 1);
+        const int count = static_cast<int>(int64Value(result.get(), row, 2));
+        if (status == "pending") {
+            channel.pending = count;
+        } else if (status == "delivered") {
+            channel.delivered = count;
+        } else if (status == "failed") {
+            channel.failed = count;
+        }
+    }
+    return summary;
+}
+
+std::vector<Domain::OutboxDelivery> PostgresDatabase::listOutboxDeliveries(const int limit, const int offset) {
+    auto connection = connect(connectionString_);
+    auto result = execParams(connection.get(), R"SQL(
+SELECT channel, id, destination, subject_or_event, status, attempt_count,
+       next_attempt_at, last_error, created_at, completed_at
+FROM (
+    SELECT 'webhook'::text AS channel, d.id, w.target_url AS destination,
+           d.event_type AS subject_or_event, d.status, d.attempt_count,
+           d.next_attempt_at::text, d.last_error, d.created_at::text, d.delivered_at::text AS completed_at
+    FROM webhook_deliveries d
+    JOIN webhook_subscriptions w ON w.id = d.subscription_id
+    UNION ALL
+    SELECT 'email'::text AS channel, d.id, u.email AS destination,
+           d.subject AS subject_or_event, d.status, d.attempt_count,
+           d.next_attempt_at::text, d.last_error, d.created_at::text, d.sent_at::text AS completed_at
+    FROM email_deliveries d
+    JOIN users u ON u.id = d.recipient_user_id
+) AS outbox
+ORDER BY created_at DESC
+LIMIT $1::int OFFSET $2::int
+)SQL", {std::to_string(limit), std::to_string(offset)}, "List outbox deliveries");
+    std::vector<Domain::OutboxDelivery> deliveries;
+    for (int row = 0; row < PQntuples(result.get()); ++row) {
+        Domain::OutboxDelivery delivery;
+        delivery.channel = value(result.get(), row, 0);
+        delivery.id = value(result.get(), row, 1);
+        delivery.destination = value(result.get(), row, 2);
+        delivery.subjectOrEvent = value(result.get(), row, 3);
+        delivery.status = value(result.get(), row, 4);
+        delivery.attemptCount = intValue(result.get(), row, 5);
+        delivery.nextAttemptAt = value(result.get(), row, 6);
+        delivery.lastError = optionalValue(result.get(), row, 7);
+        delivery.createdAt = value(result.get(), row, 8);
+        delivery.completedAt = optionalValue(result.get(), row, 9);
+        deliveries.push_back(std::move(delivery));
+    }
+    return deliveries;
+}
+
+bool PostgresDatabase::retryOutboxDelivery(const std::string& channel, const std::string& deliveryId) {
+    auto connection = connect(connectionString_);
+    if (channel == "webhook") {
+        auto result = execParams(connection.get(), R"SQL(
+UPDATE webhook_deliveries
+SET status = 'pending', attempt_count = 0, next_attempt_at = CURRENT_TIMESTAMP,
+    last_error = NULL, delivered_at = NULL
+WHERE id = $1 AND status = 'failed'
+)SQL", {deliveryId}, "Retry failed webhook delivery");
+        return std::string(PQcmdTuples(result.get())) != "0";
+    }
+    if (channel == "email") {
+        auto result = execParams(connection.get(), R"SQL(
+UPDATE email_deliveries
+SET status = 'pending', attempt_count = 0, next_attempt_at = CURRENT_TIMESTAMP,
+    last_error = NULL, sent_at = NULL
+WHERE id = $1 AND status = 'failed'
+)SQL", {deliveryId}, "Retry failed email delivery");
+        return std::string(PQcmdTuples(result.get())) != "0";
+    }
+    return false;
 }
 
 std::optional<Domain::IdempotencyRecord> PostgresDatabase::findIdempotencyRecord(

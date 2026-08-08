@@ -1,4 +1,5 @@
-'use strict';
+import { storyPointsOptionsMarkup as storyPointsOptionsMarkupModule } from './story-points.js';
+import { createTicketDrawerControls } from './ticket-drawer-controls.js';
 
 const STATUSES = [
   { key: 'backlog', name: 'Backlog', category: 'todo' },
@@ -127,6 +128,9 @@ function initialState() {
     // forever, so unlike a single ticket's comment/worklog list it has no
     // natural upper bound.
     auditPage: 1,
+    // Durable delivery audit (webhooks/email) is also installation-wide and
+    // unbounded. Keep its page independent from the audit-log page.
+    outboxPage: 1,
     currentTicket: null,
     principal: null,
     // Cached user directory (D80) -- powers @mention autocomplete. Fetched
@@ -158,163 +162,19 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-// A small, conventional Jira-style scale keeps estimates comparable across
-// tickets. Its parenthesized examples are deliberately approximate: points
-// describe relative effort, not a delivery promise. The API continues to
-// accept a number for compatibility with existing integrations and historic
-// data, but the web UI only offers these fixed values to new edits and tickets.
-const STORY_POINT_OPTIONS = [
-  { value: 0, label: '0 (no effort)' },
-  { value: 0.25, label: '0.25 (quarter a day)' },
-  { value: 0.5, label: '0.5 (half a day)' },
-  { value: 1, label: '1 (about one day)' },
-  { value: 2, label: '2 (about two days)' },
-  { value: 3, label: '3 (about three days)' },
-  { value: 5, label: '5 (about one week)' },
-  { value: 8, label: '8 (about two weeks)' },
-  { value: 13, label: '13 (about three weeks)' },
-  { value: 20, label: '20 (about one month)' },
-  { value: 40, label: '40 (about two months)' },
-  { value: 100, label: '100 (split the ticket)' }
-];
-
 function storyPointsOptionsMarkup(selectedValue) {
-  const selected = selectedValue === null || selectedValue === undefined ? '' : String(selectedValue);
-  const isStandardValue = STORY_POINT_OPTIONS.some(option => String(option.value) === selected);
-  const legacyOption = selected && !isStandardValue
-    ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (existing value)</option>`
-    : '';
-  return `<option value="" ${selected ? '' : 'selected'}>Not estimated</option>${legacyOption}${STORY_POINT_OPTIONS.map(option =>
-    `<option value="${option.value}" ${String(option.value) === selected ? 'selected' : ''}>${option.label}</option>`).join('')}`;
+  return storyPointsOptionsMarkupModule(selectedValue, escapeHtml);
 }
 
-const TICKET_DRAWER_WIDTH_STORAGE_KEY = 'ticket-hub.ticket-drawer-width';
-const DEFAULT_TICKET_DRAWER_WIDTH = 720;
-const MIN_TICKET_DRAWER_WIDTH = 480;
-let ticketDrawerFullscreen = false;
-
-function maximumTicketDrawerWidth() {
-  return Math.max(MIN_TICKET_DRAWER_WIDTH, Math.floor(window.innerWidth * 0.94));
-}
-
-function setTicketDrawerWidth(width, persist = false) {
-  const normalized = Math.max(MIN_TICKET_DRAWER_WIDTH, Math.min(maximumTicketDrawerWidth(), Math.round(width)));
-  document.documentElement.style.setProperty('--ticket-drawer-width', `${normalized}px`);
-  if (persist) {
-    try {
-      localStorage.setItem(TICKET_DRAWER_WIDTH_STORAGE_KEY, String(normalized));
-    } catch {
-      // The drawer remains resizable when storage is disabled; only the
-      // cross-session preference is unavailable.
-    }
-  }
-  return normalized;
-}
-
-function restoreTicketDrawerWidth() {
-  try {
-    const saved = Number(localStorage.getItem(TICKET_DRAWER_WIDTH_STORAGE_KEY));
-    setTicketDrawerWidth(Number.isFinite(saved) && saved > 0 ? saved : DEFAULT_TICKET_DRAWER_WIDTH);
-  } catch {
-    setTicketDrawerWidth(DEFAULT_TICKET_DRAWER_WIDTH);
-  }
-}
-
-function ticketDrawerHeaderMarkup(title) {
-  const expandLabel = ticketDrawerFullscreen ? 'Exit full screen' : 'Expand to full screen';
-  return `
-    <div class="drawer-resize-handle" id="drawer-resize-handle" role="separator" aria-orientation="vertical" aria-controls="ticket-drawer" aria-label="Resize ticket detail" tabindex="0" title="Drag or use arrow keys to resize"></div>
-    <div class="drawer-header">
-      <span class="ticket-key">${escapeHtml(title)}</span>
-      <div class="drawer-header-controls">
-        <button type="button" class="icon-button" id="toggle-drawer-fullscreen" aria-label="${expandLabel}" title="${expandLabel}">${ticketDrawerFullscreen ? '↙' : '⛶'}</button>
-        <button type="button" class="icon-button" id="close-drawer" aria-label="Close">×</button>
-      </div>
-    </div>`;
-}
-
-function updateTicketDrawerControls() {
-  ticketDrawer.classList.toggle('ticket-drawer--fullscreen', ticketDrawerFullscreen);
-  const resizeHandle = ticketDrawer.querySelector('#drawer-resize-handle');
-  if (resizeHandle) {
-    const canResize = !ticketDrawerFullscreen && window.innerWidth > 760;
-    const width = Math.round(ticketDrawer.getBoundingClientRect().width);
-    resizeHandle.tabIndex = canResize ? 0 : -1;
-    resizeHandle.setAttribute('aria-disabled', String(!canResize));
-    resizeHandle.setAttribute('aria-valuemin', String(MIN_TICKET_DRAWER_WIDTH));
-    resizeHandle.setAttribute('aria-valuemax', String(maximumTicketDrawerWidth()));
-    resizeHandle.setAttribute('aria-valuenow', String(width));
-    resizeHandle.setAttribute('aria-valuetext', `${width} pixels wide`);
-  }
-  const fullscreenButton = ticketDrawer.querySelector('#toggle-drawer-fullscreen');
-  if (fullscreenButton) {
-    const label = ticketDrawerFullscreen ? 'Exit full screen' : 'Expand to full screen';
-    fullscreenButton.textContent = ticketDrawerFullscreen ? '↙' : '⛶';
-    fullscreenButton.setAttribute('aria-label', label);
-    fullscreenButton.title = label;
-  }
-}
-
-function setTicketDrawerFullscreen(fullscreen) {
-  ticketDrawerFullscreen = fullscreen;
-  updateTicketDrawerControls();
-}
-
-function beginTicketDrawerResize(event) {
-  if (event.button !== 0 || ticketDrawerFullscreen || window.innerWidth <= 760) return;
-  event.preventDefault();
-  const resizeHandle = event.currentTarget;
-  const pointerId = event.pointerId;
-  const startX = event.clientX;
-  const startWidth = ticketDrawer.getBoundingClientRect().width;
-  document.body.classList.add('drawer-resizing');
-  resizeHandle.setPointerCapture(pointerId);
-
-  const onPointerMove = moveEvent => {
-    if (moveEvent.pointerId !== pointerId) return;
-    setTicketDrawerWidth(startWidth + startX - moveEvent.clientX);
-    updateTicketDrawerControls();
-  };
-  const finishResize = endEvent => {
-    if (endEvent.pointerId !== pointerId) return;
-    document.body.classList.remove('drawer-resizing');
-    if (resizeHandle.hasPointerCapture(pointerId)) resizeHandle.releasePointerCapture(pointerId);
-    resizeHandle.removeEventListener('pointermove', onPointerMove);
-    resizeHandle.removeEventListener('pointerup', finishResize);
-    resizeHandle.removeEventListener('pointercancel', finishResize);
-    setTicketDrawerWidth(ticketDrawer.getBoundingClientRect().width, true);
-    updateTicketDrawerControls();
-  };
-  resizeHandle.addEventListener('pointermove', onPointerMove);
-  resizeHandle.addEventListener('pointerup', finishResize);
-  resizeHandle.addEventListener('pointercancel', finishResize);
-}
-
-function bindTicketDrawerControls() {
-  const resizeHandle = ticketDrawer.querySelector('#drawer-resize-handle');
-  resizeHandle?.addEventListener('pointerdown', beginTicketDrawerResize);
-  resizeHandle?.addEventListener('keydown', event => {
-    if (ticketDrawerFullscreen || window.innerWidth <= 760) return;
-    const step = event.shiftKey ? 80 : 32;
-    const currentWidth = ticketDrawer.getBoundingClientRect().width;
-    let nextWidth = null;
-    if (event.key === 'ArrowLeft') nextWidth = currentWidth + step;
-    if (event.key === 'ArrowRight') nextWidth = currentWidth - step;
-    if (event.key === 'Home') nextWidth = MIN_TICKET_DRAWER_WIDTH;
-    if (event.key === 'End') nextWidth = maximumTicketDrawerWidth();
-    if (nextWidth === null) return;
-    event.preventDefault();
-    setTicketDrawerWidth(nextWidth, true);
-    updateTicketDrawerControls();
-  });
-  ticketDrawer.querySelector('#toggle-drawer-fullscreen')?.addEventListener('click', () => {
-    setTicketDrawerFullscreen(!ticketDrawerFullscreen);
-  });
-  updateTicketDrawerControls();
-}
-
-restoreTicketDrawerWidth();
-window.addEventListener('resize', updateTicketDrawerControls);
+// Drawer resizing/fullscreen behavior is isolated from the ticket-data
+// renderer. app.js keeps only these narrow calls where it renders or closes
+// the drawer, while the interaction state lives in ticket-drawer-controls.
+const ticketDrawerControls = createTicketDrawerControls(ticketDrawer, escapeHtml);
+const ticketDrawerHeaderMarkup = ticketDrawerControls.headerMarkup;
+const bindTicketDrawerControls = ticketDrawerControls.bind;
+const setTicketDrawerFullscreen = ticketDrawerControls.setFullscreen;
+const ticketDrawerFullscreen = () => ticketDrawerControls.isFullscreen();
+ticketDrawerControls.install();
 
 // --- Markdown rendering (D16) ---
 // A deliberately small subset of Markdown (bold/italic/inline code/links/
@@ -755,6 +615,7 @@ function showLoginScreen() {
   document.querySelector('#nav-audit').classList.add('hidden');
   document.querySelector('#nav-attachment-bin').classList.add('hidden');
   document.querySelector('#nav-webhooks').classList.add('hidden');
+  document.querySelector('#nav-outbox').classList.add('hidden');
   document.querySelector('#nav-users').classList.add('hidden');
   appShell.classList.add('hidden');
   loginScreen.classList.remove('hidden');
@@ -779,6 +640,7 @@ function renderCurrentUser() {
   // Webhooks (D39/D41): global-admin-only, same installation-level
   // administration tier as the audit log/attachment recycle bin.
   document.querySelector('#nav-webhooks').classList.toggle('hidden', !principal.isAdmin);
+  document.querySelector('#nav-outbox').classList.toggle('hidden', !principal.isAdmin);
   // User management (D2/D53/D57): same tier again -- there is still no
   // self-registration, so account creation/deactivation/password reset is
   // administrator-only.
@@ -1180,6 +1042,75 @@ async function renderAuditLog() {
     state.auditPage = state.auditPage + 1;
     renderAuditLog().catch(showError);
   });
+}
+
+const OutboxPageSize = 50;
+
+function outboxSummaryCard(label, summary) {
+  return `<div class="stat-card"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value">${summary.total}</div><div class="stat-meta">${summary.pending} queued · ${summary.delivered} delivered · ${summary.failed} failed</div></div>`;
+}
+
+// The server deliberately returns delivery metadata and failure text but no
+// webhook secrets or frozen outbound payloads. Retry is offered only for a
+// terminal failure; a pending row is already owned by the scheduler and
+// retrying a delivered row would duplicate an external side effect.
+async function renderOutbox() {
+  content.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  const [summary, page] = await Promise.all([
+    api('/api/v1/admin/outbox/summary'),
+    api(`/api/v1/admin/outbox/deliveries?page=${state.outboxPage}&pageSize=${OutboxPageSize}`)
+  ]);
+  const totalPages = Math.max(page.totalPages, 1);
+  content.innerHTML = `
+    ${pageHeader('Outbox', 'Durable webhook and email delivery. Enable the optional outbox worker or schedule ticket-hub-cli process-outbox to send pending rows.', 'Administration')}
+    <div class="stats-grid">
+      ${outboxSummaryCard('Webhook deliveries', summary.webhooks)}
+      ${outboxSummaryCard('Email deliveries', summary.email)}
+      <div class="stat-card"><div class="stat-label">All deliveries</div><div class="stat-value">${summary.total}</div><div class="stat-meta">A terminal failure can be deliberately reset and retried.</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h2>Recent deliveries</h2><span class="eyebrow">${page.totalItems} total</span></div>
+      <div style="overflow-x:auto">
+        <table class="ticket-table">
+          <thead><tr><th>When</th><th>Channel</th><th>Destination</th><th>Event / subject</th><th>Status</th><th>Attempts</th><th>Details</th><th>Actions</th></tr></thead>
+          <tbody>${page.items.length ? page.items.map(delivery => `
+            <tr>
+              <td class="ticket-timestamp">${escapeHtml(relativeDate(delivery.createdAt))}</td>
+              <td><span class="label-chip">${escapeHtml(delivery.channel)}</span></td>
+              <td style="max-width:260px;overflow-wrap:anywhere">${escapeHtml(delivery.destination)}</td>
+              <td>${escapeHtml(delivery.subjectOrEvent)}</td>
+              <td><span class="label-chip">${escapeHtml(delivery.status)}</span></td>
+              <td>${delivery.attemptCount}</td>
+              <td style="max-width:320px;overflow-wrap:anywhere" title="${escapeHtml(delivery.lastError || '')}">${delivery.lastError ? escapeHtml(delivery.lastError) : (delivery.status === 'pending' ? `Next: ${escapeHtml(relativeDate(delivery.nextAttemptAt))}` : '—')}</td>
+              <td>${delivery.status === 'failed' ? `<button type="button" class="secondary-button" data-retry-outbox="${escapeHtml(delivery.channel)}:${escapeHtml(delivery.id)}">Retry</button>` : '—'}</td>
+            </tr>`).join('') : '<tr><td colspan="8"><div class="empty-state">No deliveries have been queued yet.</div></td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination-bar">
+        <span>${page.totalItems} deliver${page.totalItems === 1 ? 'y' : 'ies'} — page ${page.page} of ${totalPages}</span>
+        <div>
+          <button type="button" class="secondary-button" id="outbox-prev" ${page.page <= 1 ? 'disabled' : ''}>← Previous</button>
+          <button type="button" class="secondary-button" id="outbox-next" ${page.page >= totalPages ? 'disabled' : ''}>Next →</button>
+        </div>
+      </div>
+    </div>`;
+  document.querySelector('#outbox-prev').addEventListener('click', () => {
+    state.outboxPage = Math.max(1, state.outboxPage - 1);
+    renderOutbox().catch(showError);
+  });
+  document.querySelector('#outbox-next').addEventListener('click', () => {
+    state.outboxPage += 1;
+    renderOutbox().catch(showError);
+  });
+  document.querySelectorAll('[data-retry-outbox]').forEach(button => button.addEventListener('click', async () => {
+    const [channel, id] = button.dataset.retryOutbox.split(':');
+    try {
+      await api(`/api/v1/admin/outbox/deliveries/${encodeURIComponent(channel)}/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+      showToast('Delivery reset to pending');
+      await renderOutbox();
+    } catch (error) { showToast(error.message); }
+  }));
 }
 
 const WEBHOOK_EVENT_TYPES = [
@@ -2855,6 +2786,7 @@ async function renderCurrentView() {
     else if (state.view === 'audit') await renderAuditLog();
     else if (state.view === 'attachment-bin') await renderAttachmentRecycleBin();
     else if (state.view === 'webhooks') await renderWebhooks();
+    else if (state.view === 'outbox') await renderOutbox();
     else if (state.view === 'users') await renderUsersAdmin();
     else await renderProjects();
   } catch (error) {
@@ -3933,7 +3865,7 @@ window.addEventListener('popstate', () => {
 
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
-    if (ticketDrawerFullscreen) {
+    if (ticketDrawerFullscreen()) {
       event.preventDefault();
       setTicketDrawerFullscreen(false);
       return;

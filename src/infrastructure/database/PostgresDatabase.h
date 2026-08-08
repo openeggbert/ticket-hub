@@ -201,6 +201,9 @@ public:
     std::vector<Domain::EmailDelivery> listPendingEmailDeliveries(int limit) override;
     void recordEmailDeliveryResult(const std::string& deliveryId, bool success,
                                    const std::optional<std::string>& error) override;
+    Domain::OutboxSummary outboxSummary() override;
+    std::vector<Domain::OutboxDelivery> listOutboxDeliveries(int limit, int offset) override;
+    bool retryOutboxDelivery(const std::string& channel, const std::string& deliveryId) override;
 
     std::optional<Domain::IdempotencyRecord> findIdempotencyRecord(
         const std::string& userId, const std::string& idempotencyKey) override;

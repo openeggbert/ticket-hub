@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — Production readiness, durable delivery operations, and scalable search
+
+- **Build and CI:** added CMake presets, declared Argon2/curl in `vcpkg.json`, C++ SQLite/all-adapter CI,
+  browser/axe coverage, CodeQL, dependency review, SBOM generation, and container scanning.
+- **Deployment:** production Compose now requires a real database secret, keeps PostgreSQL private and HTTP
+  loopback-only, documents reverse-proxy body limits/TLS, and has a separate development override. An
+  optional bounded Compose outbox worker invokes `process-outbox` on a fixed interval.
+- **Outbox administration:** global administrators can inspect queued/delivered/failed webhook and email
+  rows and deliberately reset a terminal failed row to pending. Payloads and webhook signing secrets are
+  never exposed through this operational view.
+- **Search and modularity:** migration 021 adds native SQLite FTS5 and PostgreSQL full-text ticket search;
+  the estimation scale and ticket-drawer controls are now native frontend modules instead of app.js-only
+  state.
+- **Recovery:** backups now include a version/migration/file-integrity manifest, `verify-backup` validates
+  it, and restore requires `--yes --maintenance` before replacing both database and attachment data.
+
 ## Unreleased — Fixed Story Points picker and adaptable ticket drawer
 
 - **Story Points**: create and edit now use the fixed Jira-style values `0`, `0.25`, `0.5`, `1`, `2`, `3`, `5`,

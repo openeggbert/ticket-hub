@@ -1,0 +1,64 @@
+name: Security release checks
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+
+  codeql:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: cpp
+          build-mode: manual
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libargon2-dev libsqlite3-dev libpq-dev libcurl4-openssl-dev
+      - name: Build C++ database adapters for analysis
+        run: |
+          cmake --preset all-adapters
+          cmake --build --preset all-adapters --parallel
+      - uses: github/codeql-action/analyze@v3
+
+  sbom-and-container-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: ticket-hub.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ticket-hub-spdx-sbom
+          path: ticket-hub.spdx.json
+      - name: Build release image
+        run: docker build --tag ticket-hub:security-scan .
+      - name: Scan release image
+        uses: aquasecurity/trivy-action@0.32.0
+        with:
+          image-ref: ticket-hub:security-scan
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL

@@ -775,6 +775,38 @@ struct EmailDelivery {
     int attemptCount{};
 };
 
+// Sanitized operational view of a durable delivery. This deliberately has no
+// webhook signing secret or frozen webhook/email body: a global administrator
+// needs enough context to diagnose a failure, but an observability page must
+// not become a second secret/payload-disclosure surface.
+struct OutboxDelivery {
+    std::string channel; // "webhook" or "email"
+    std::string id;
+    std::string destination;
+    std::string subjectOrEvent;
+    std::string status;
+    int attemptCount{};
+    std::string nextAttemptAt;
+    std::optional<std::string> lastError;
+    std::string createdAt;
+    std::optional<std::string> completedAt;
+};
+
+struct OutboxChannelSummary {
+    int pending{};
+    int delivered{};
+    int failed{};
+
+    int total() const { return pending + delivered + failed; }
+};
+
+struct OutboxSummary {
+    OutboxChannelSummary webhooks;
+    OutboxChannelSummary email;
+
+    int total() const { return webhooks.total() + email.total(); }
+};
+
 // --- REST write idempotency keys (D128, deferred-after-V1, user-requested) ---
 // Scoped per (userId, key) -- see IDatabase::findIdempotencyRecord. Only the
 // small set of POST routes proven to risk a duplicate *record* on retry

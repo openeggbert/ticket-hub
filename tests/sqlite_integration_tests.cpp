@@ -212,7 +212,10 @@ int main() {
             TicketFilter descriptionSearch;
             descriptionSearch.search = "SQLite integration test";
             require(containsTicket(database.listTickets(descriptionSearch), created.key),
-                   "search now matches the ticket description, not just summary/key");
+                   "native full-text search matches the ticket description, not just summary/key");
+            descriptionSearch.search = "SQLite, integration! test?";
+            require(containsTicket(database.listTickets(descriptionSearch), created.key),
+                   "native SQLite FTS search safely accepts ordinary punctuation");
 
             TicketFilter combined;
             combined.projectKey = "TH";
@@ -903,6 +906,26 @@ int main() {
                         "SELECT COUNT(*) FROM webhook_deliveries WHERE id = '" + failingDeliveryId
                         + "' AND status = 'failed'") == 1,
                    "the exhausted delivery is marked permanently failed, not silently dropped");
+
+            const auto summaryBeforeRetry = database.outboxSummary();
+            require(summaryBeforeRetry.webhooks.delivered == 1 && summaryBeforeRetry.webhooks.failed == 1,
+                   "outbox summary distinguishes delivered and terminal webhook failures");
+            const auto operationalDeliveries = database.listOutboxDeliveries(10, 0);
+            const auto listedFailure = std::find_if(operationalDeliveries.begin(), operationalDeliveries.end(),
+                                                    [&failingDeliveryId](const auto& delivery) {
+                                                        return delivery.id == failingDeliveryId;
+                                                    });
+            require(listedFailure != operationalDeliveries.end() && listedFailure->channel == "webhook"
+                        && listedFailure->lastError.has_value() && *listedFailure->lastError == "connection refused",
+                   "operational delivery list exposes channel and failure text without payload/secret data");
+            require(database.retryOutboxDelivery("webhook", failingDeliveryId),
+                   "a terminal webhook failure can be deliberately reset for retry");
+            require(!database.retryOutboxDelivery("webhook", failingDeliveryId),
+                   "a pending delivery cannot be accidentally retried a second time");
+            const auto retriedWebhook = database.listPendingWebhookDeliveries(10);
+            require(retriedWebhook.size() == 1 && retriedWebhook[0].id == failingDeliveryId
+                        && retriedWebhook[0].attemptCount == 0,
+                   "manual retry resets the failed delivery to a fresh pending attempt");
 
             require(database.deleteWebhookSubscription(subscription.id), "deleteWebhookSubscription removes it");
             require(!database.deleteWebhookSubscription(subscription.id),

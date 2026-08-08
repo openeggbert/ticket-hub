@@ -503,6 +503,15 @@ public:
     virtual void recordEmailDeliveryResult(const std::string& deliveryId, bool success,
                                            const std::optional<std::string>& error) = 0;
 
+    // Global outbox operations used only by the administrator diagnostics
+    // page. They expose delivery metadata and errors, never signing secrets
+    // or frozen bodies. A manual retry resets a terminal failed row to a
+    // fresh pending attempt; delivered and already-pending rows are left
+    // untouched to keep retries deliberate and idempotent.
+    virtual Domain::OutboxSummary outboxSummary() = 0;
+    virtual std::vector<Domain::OutboxDelivery> listOutboxDeliveries(int limit, int offset) = 0;
+    virtual bool retryOutboxDelivery(const std::string& channel, const std::string& deliveryId) = 0;
+
     // --- REST write idempotency keys (D128, deferred-after-V1, user-requested) ---
     // Scoped per (userId, idempotencyKey), not globally -- two different
     // users coincidentally choosing the same key value never collide. Only

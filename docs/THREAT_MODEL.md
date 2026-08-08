@@ -24,9 +24,12 @@ entry for exactly how each finding below was verified.
     writes at Member, and project/comment/attachment administration at Admin.
   - **Global administrator** -- bypasses every project-role check; the only actor who can create users,
     manage the recycle bins, configure the anonymous-read toggle, and view the audit log.
-- **Out of scope for V1** (see `docs/REMOVED_AND_DEFERRED_FEATURES.md`, not re-litigated here): OIDC,
-  self-registration, per-field permission schemes, webhooks, email, and everything else on that list. A
-  threat that only exists because of a removed feature is not modeled.
+- **Scope note**: this historical V1 review predates the explicitly-approved
+  post-V1 custom fields, webhooks, outbound email and idempotency work. The
+  original findings remain valid for V1; current integration behavior and
+  residual risks are documented in `docs/SCOPE.md`, `docs/DEPLOYMENT.md`, and
+  the post-V1 section of `docs/REMOVED_AND_DEFERRED_FEATURES.md`. OIDC,
+  self-registration and per-field permission schemes remain out of scope.
 
 ## Method
 

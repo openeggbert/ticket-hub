@@ -1,0 +1,19 @@
+# Development-only override. Never use this file for an internet-facing
+# installation: it intentionally provides an easy local database password
+# and publishes PostgreSQL on loopback for database tools.
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: tickethub-dev
+    ports:
+      - "127.0.0.1:5432:5432"
+  ticket-hub:
+    environment:
+      TICKETHUB_DATABASE_URL: "host=postgres port=5432 dbname=tickethub user=tickethub password=tickethub-dev"
+      TICKETHUB_POSTGRES_PASSWORD: tickethub-dev
+    ports:
+      - "127.0.0.1:8080:8080"
+  outbox:
+    environment:
+      TICKETHUB_DATABASE_URL: "host=postgres port=5432 dbname=tickethub user=tickethub password=tickethub-dev"
+      TICKETHUB_POSTGRES_PASSWORD: tickethub-dev

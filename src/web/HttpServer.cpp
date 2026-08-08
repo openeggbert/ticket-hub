@@ -90,6 +90,15 @@ void runHttpServer(const Config::AppConfig& config,
     CROW_ROUTE(app, "/app.js")([root = config.webRoot] {
         return staticResponse(root + "/app.js", "text/javascript; charset=utf-8");
     });
+    // Native ES modules keep the vanilla frontend decomposable without a
+    // bundler. Assets remain explicit rather than exposing a generic
+    // filesystem route, preserving the static-path traversal boundary.
+    CROW_ROUTE(app, "/story-points.js")([root = config.webRoot] {
+        return staticResponse(root + "/story-points.js", "text/javascript; charset=utf-8");
+    });
+    CROW_ROUTE(app, "/ticket-drawer-controls.js")([root = config.webRoot] {
+        return staticResponse(root + "/ticket-drawer-controls.js", "text/javascript; charset=utf-8");
+    });
     CROW_ROUTE(app, "/styles.css")([root = config.webRoot] {
         return staticResponse(root + "/styles.css", "text/css; charset=utf-8");
     });

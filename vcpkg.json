@@ -4,7 +4,9 @@
   "version-string": "0.2.0",
   "description": "A Jira-like issue tracker built with C++, Crow and vanilla web technologies.",
   "dependencies": [
+    "argon2",
     "crow",
+    "curl",
     "libpq",
     "sqlite3"
   ]
