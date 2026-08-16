@@ -180,6 +180,17 @@ an incremental maintenance activity, recorded in `PLAN.md`. The current SQLite s
 compiled from this checkout and manually exercised against an isolated demo database; its page and both
 new native modules were confirmed reachable before the local preview was stopped.
 
+**Post-V1, batch 22 (done, 2026-08-16):** build/config fix, user-requested ("web a migrations bude
+ocekavat v pracovnim adresari nikoliv nekde v nejake pevne ceste") -- `ticket-hub-core` no longer compiles
+the build machine's source checkout path into the binary. Removed the `TICKETHUB_SOURCE_DIR` compile
+definition from the `ticket-hub-core` CMake target (test targets keep their own copy, used only to locate
+fixture files under the checkout, unrelated to runtime behavior) and changed `AppConfig::fromEnvironment`'s
+defaults for `TICKETHUB_WEB_ROOT`/`TICKETHUB_MIGRATIONS_ROOT`/`TICKETHUB_ATTACHMENTS_DIR` from a
+compiled-in absolute path to the relative paths `./web`/`./migrations`/`./data/attachments`, resolved
+against the process's current working directory at every startup. README.md's config table and `Config.h`
+updated to match; no behavior change for the Docker/Compose path, which already set these variables
+explicitly. See "The roadmap is now complete" below for detail.
+
 Current roadmap: **reduced-scope V1** — see `REDUCED_SCOPE_SPECIFICATION.md` and
 `docs/REDUCED_SCOPE_ROADMAP.md`. `SPECIFICATION.md` and `docs/ROADMAP.md` are kept as the long-term
 aspirational baseline but are **not** the current build target.

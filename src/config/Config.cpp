@@ -5,10 +5,6 @@
 #include <cstdlib>
 #include <stdexcept>
 
-#ifndef TICKETHUB_SOURCE_DIR
-#define TICKETHUB_SOURCE_DIR "."
-#endif
-
 namespace TicketHub::Config {
 namespace {
 
@@ -47,9 +43,9 @@ AppConfig AppConfig::fromEnvironment() {
     config.bindAddress = envOr("TICKETHUB_BIND_ADDRESS", config.bindAddress);
     config.autoMigrate = envBool("TICKETHUB_AUTO_MIGRATE", config.autoMigrate);
     config.seedDemo = envBool("TICKETHUB_SEED_DEMO", config.seedDemo);
-    config.webRoot = envOr("TICKETHUB_WEB_ROOT", std::string(TICKETHUB_SOURCE_DIR) + "/web");
-    config.migrationsRoot = envOr("TICKETHUB_MIGRATIONS_ROOT", std::string(TICKETHUB_SOURCE_DIR) + "/migrations");
-    config.attachmentsRoot = envOr("TICKETHUB_ATTACHMENTS_DIR", std::string(TICKETHUB_SOURCE_DIR) + "/data/attachments");
+    config.webRoot = envOr("TICKETHUB_WEB_ROOT", "./web");
+    config.migrationsRoot = envOr("TICKETHUB_MIGRATIONS_ROOT", "./migrations");
+    config.attachmentsRoot = envOr("TICKETHUB_ATTACHMENTS_DIR", "./data/attachments");
 
     const auto portText = envOr("TICKETHUB_PORT", std::to_string(config.port));
     const int parsedPort = std::stoi(portText);

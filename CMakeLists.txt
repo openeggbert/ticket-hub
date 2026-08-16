@@ -48,9 +48,6 @@ endif()
 
 add_library(ticket-hub-core STATIC ${TICKETHUB_CORE_SOURCES})
 target_include_directories(ticket-hub-core PUBLIC src)
-target_compile_definitions(ticket-hub-core PRIVATE
-    TICKETHUB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-)
 
 if(TICKETHUB_WITH_SQLITE)
     target_compile_definitions(ticket-hub-core PUBLIC TICKETHUB_WITH_SQLITE=1)

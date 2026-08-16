@@ -13,12 +13,18 @@ struct AppConfig {
     std::uint16_t port{8080};
     bool autoMigrate{true};
     bool seedDemo{true};
+    // webRoot/migrationsRoot/attachmentsRoot default relative to the process's
+    // current working directory (./web, ./migrations, ./data/attachments), not
+    // a compiled-in path -- so both the dev build (run from the repo root) and
+    // an installed tree (run from the `cmake --install` prefix) pick up the
+    // right files just by cd-ing there first. Override with
+    // TICKETHUB_WEB_ROOT/TICKETHUB_MIGRATIONS_ROOT/TICKETHUB_ATTACHMENTS_DIR
+    // when running from elsewhere (e.g. a real deployment's persistent,
+    // backed-up attachments volume).
     std::string webRoot;
     std::string migrationsRoot;
     // Local filesystem attachment storage (D15, hardwired -- no S3/pluggable
-    // backend). Defaults under the source tree for development; a real
-    // deployment should point this at a persistent, backed-up volume via
-    // TICKETHUB_ATTACHMENTS_DIR.
+    // backend).
     std::string attachmentsRoot;
 
     // Outbound email (D52, deferred-after-V1): SMTP only, configured like

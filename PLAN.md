@@ -330,6 +330,14 @@ then stopped cleanly.
   Jira-style picker (`0`, `0.25`, `0.5`, `1`, `2`, `3`, `5`, `8`, `13`, `20`, `40`, `100`) with a concise
   "relative effort, not hours" explanation on create/edit; the ticket drawer can be resized by drag or
   keyboard, persists its normal width in `localStorage`, and has a full-screen toggle. Frontend-only.
+- **Post-V1, batch 21.** Production-readiness and scale-up work (CI/CMake presets, hardened Compose,
+  outbox worker/admin UI, backup manifests, FTS5/full-text search, first ES-module split) -- see "Approved
+  reliability and scale-up work" above for the full checklist.
+- **Post-V1, batch 22.** Build/config fix, user-requested: `TICKETHUB_WEB_ROOT`/`TICKETHUB_MIGRATIONS_ROOT`/
+  `TICKETHUB_ATTACHMENTS_DIR` now default relative to the process's current working directory
+  (`./web`/`./migrations`/`./data/attachments`) instead of a path compiled into the binary at build time
+  (`TICKETHUB_SOURCE_DIR` removed from the `ticket-hub-core` CMake target). No migration, no behavior
+  change for Docker/Compose (already sets these variables explicitly).
 
 ## Queued next
 

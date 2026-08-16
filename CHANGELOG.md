@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Working-directory-relative web/migrations defaults
+
+- **Build/config:** `ticket-hub-core` no longer bakes the build machine's source checkout path into the
+  binary (`TICKETHUB_SOURCE_DIR` compile definition removed from the core library). `TICKETHUB_WEB_ROOT`,
+  `TICKETHUB_MIGRATIONS_ROOT`, and `TICKETHUB_ATTACHMENTS_DIR` now default to `./web`, `./migrations`, and
+  `./data/attachments` -- relative to the process's current working directory -- instead of a path fixed
+  at compile time. Run the binary from the directory that has `web/`/`migrations/` next to it (repo root
+  for a dev build, or the `cmake --install` prefix for an installed tree), or set the variables explicitly.
+  No behavior change for existing deployments that already set these variables (Docker/Compose already did).
+
 ## Unreleased — Production readiness, durable delivery operations, and scalable search
 
 - **Build and CI:** added CMake presets, declared Argon2/curl in `vcpkg.json`, C++ SQLite/all-adapter CI,

@@ -282,7 +282,7 @@ TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli restore ./backups/2026-08
 TICKETHUB_DB_DRIVER=sqlite ./build-core/ticket-hub-cli process-outbox
 ```
 
-`diagnostics` redacts the PostgreSQL connection string. Installed deployments should set `TICKETHUB_MIGRATIONS_ROOT` to the installed migration directory when it differs from the compiled development default.
+`diagnostics` redacts the PostgreSQL connection string. `TICKETHUB_MIGRATIONS_ROOT` (like `TICKETHUB_WEB_ROOT`/`TICKETHUB_ATTACHMENTS_DIR`) defaults to a path relative to the current working directory, so run the binary from the directory that has `migrations/`/`web/` next to it (the repo root for a dev build, or the `cmake --install` prefix for an installed tree) -- or set the variable explicitly if you run it from elsewhere.
 
 `backup`/`restore` (D106-D108, Phase 7) are offline/maintenance-window operations -- stop the server first;
 neither command checks whether it is still running. `backup <output-directory>` copies the attachments
@@ -395,9 +395,9 @@ build and run normally in any environment with ordinary Docker Hub network acces
 | `TICKETHUB_PORT` | `8080` | HTTP port |
 | `TICKETHUB_AUTO_MIGRATE` | `true` | discover/apply schema migrations |
 | `TICKETHUB_SEED_DEMO` | `true` | apply idempotent demo data |
-| `TICKETHUB_WEB_ROOT` | source `web/` | static web root |
-| `TICKETHUB_MIGRATIONS_ROOT` | source `migrations/` | backend migration root |
-| `TICKETHUB_ATTACHMENTS_DIR` | source `data/attachments/` | local filesystem attachment storage root (D15) -- point this at a persistent, backed-up volume in a real deployment |
+| `TICKETHUB_WEB_ROOT` | `./web` (cwd-relative) | static web root |
+| `TICKETHUB_MIGRATIONS_ROOT` | `./migrations` (cwd-relative) | backend migration root |
+| `TICKETHUB_ATTACHMENTS_DIR` | `./data/attachments` (cwd-relative) | local filesystem attachment storage root (D15) -- point this at a persistent, backed-up volume in a real deployment |
 | `TICKETHUB_SMTP_HOST` | unset | SMTP server host for outbound email (D52); unset disables email delivery entirely -- `process-outbox` skips the email pass with a log message rather than failing |
 | `TICKETHUB_SMTP_PORT` | `587` | SMTP port |
 | `TICKETHUB_SMTP_USERNAME` | unset | SMTP auth username, if the server requires it |
