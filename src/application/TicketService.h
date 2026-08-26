@@ -1,6 +1,8 @@
 #pragma once
 
 #include "domain/Models.h"
+
+#include <cstdint>
 #include "infrastructure/database/IDatabase.h"
 #include "infrastructure/storage/LocalAttachmentStorage.h"
 
@@ -19,9 +21,15 @@ public:
     // TICKETHUB_ATTACHMENTS_DIR explicitly. Tests that don't exercise
     // attachments can ignore it; ones that do construct with their own
     // throwaway directory.
+    // `attachmentsMaxTotalBytes` is the installation-wide storage ceiling
+    // (security audit 2026-08-26, finding M4); 0 disables the check. It
+    // defaults to 0 here rather than to the production default so existing
+    // tests that construct a TicketService directly are unaffected -- the
+    // real value always comes from AppConfig at the entry point.
     explicit TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database,
                            std::string attachmentsRoot = "./data/attachments",
-                           bool emailDeliveryEnabled = false);
+                           bool emailDeliveryEnabled = false,
+                           std::int64_t attachmentsMaxTotalBytes = 0);
 
     std::string backendName() const;
 
@@ -412,6 +420,7 @@ private:
     // Set once at construction from whether TICKETHUB_SMTP_HOST is
     // configured (D52) -- see maybeEnqueueEmail's doc comment below.
     bool emailDeliveryEnabled_ = false;
+    std::int64_t attachmentsMaxTotalBytes_ = 0;
 
     void requireProjectRole(const Domain::Principal& actor, const std::string& projectKey, int minimumRank) const;
     void requireGlobalAdmin(const Domain::Principal& actor) const;

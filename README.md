@@ -320,7 +320,13 @@ TICKETHUB_SQLITE_PATH=./ticket-hub.db \
 ./build/ticket-hub
 ```
 
-Open `http://127.0.0.1:8080`.
+Open `http://127.0.0.1:8080`. This starts with **no accounts at all**; create the first administrator
+with `ticket-hub-cli create-user "you@example.com" "Your Name" "a sufficiently long password" --admin`.
+
+For local development only, add `TICKETHUB_SEED_DEMO=true` to get the demo projects and the
+`demo@ticket-hub.local` / `demo12345` logins used throughout this README. That account is a *global
+administrator* and its password is published in `migrations/*/002_seed_demo.sql`, so the server refuses
+to start with seeding enabled unless `TICKETHUB_BIND_ADDRESS` is a loopback address.
 
 SQLite has the same planned user-facing feature set, but only one Ticket Hub server process and limited worker concurrency.
 
@@ -361,7 +367,10 @@ docker compose exec ticket-hub ticket-hub-cli create-user "you@example.com" "You
 ```
 
 Or set `TICKETHUB_SEED_DEMO=true` for the `ticket-hub` service in `docker-compose.yml` to get the same
-demo data/logins used throughout this README instead. The `ticket-hub-attachments` named volume
+demo data/logins used throughout this README instead -- **local development only**, since that seed
+creates a global administrator whose password is published in this repository. The container binds
+`0.0.0.0` inside its own network namespace, which the start-up guard cannot distinguish from a public
+bind, so this also needs `TICKETHUB_ALLOW_UNSAFE_DEMO_SEED: "true"` on the same service. The `ticket-hub-attachments` named volume
 (mounted at `/data` in the container, `TICKETHUB_ATTACHMENTS_DIR=/data/attachments`) and
 `ticket-hub-postgres` volume persist data across `docker compose down`/`up` cycles;
 `docker compose down -v` removes both.
@@ -394,10 +403,12 @@ build and run normally in any environment with ordinary Docker Hub network acces
 | `TICKETHUB_BIND_ADDRESS` | `127.0.0.1` | HTTP bind address |
 | `TICKETHUB_PORT` | `8080` | HTTP port |
 | `TICKETHUB_AUTO_MIGRATE` | `true` | discover/apply schema migrations |
-| `TICKETHUB_SEED_DEMO` | `true` | apply idempotent demo data |
+| `TICKETHUB_SEED_DEMO` | `false` | apply idempotent demo data. **Creates a global administrator with a password published in this repository** -- the server refuses to start if this is `true` while `TICKETHUB_BIND_ADDRESS` is not a loopback address |
+| `TICKETHUB_ALLOW_UNSAFE_DEMO_SEED` | `false` | acknowledge and bypass the guard above. Only for a container that binds `0.0.0.0` internally while publishing its port to the host loopback |
 | `TICKETHUB_WEB_ROOT` | `./web` (cwd-relative) | static web root |
 | `TICKETHUB_MIGRATIONS_ROOT` | `./migrations` (cwd-relative) | backend migration root |
 | `TICKETHUB_ATTACHMENTS_DIR` | `./data/attachments` (cwd-relative) | local filesystem attachment storage root (D15) -- point this at a persistent, backed-up volume in a real deployment |
+| `TICKETHUB_ATTACHMENTS_MAX_TOTAL_BYTES` | `10737418240` (10 GiB) | installation-wide ceiling on stored attachment bytes; `0` disables the check. Recycle-bin attachments count, since their files stay on disk until a permanent delete |
 | `TICKETHUB_SMTP_HOST` | unset | SMTP server host for outbound email (D52); unset disables email delivery entirely -- `process-outbox` skips the email pass with a log message rather than failing |
 | `TICKETHUB_SMTP_PORT` | `587` | SMTP port |
 | `TICKETHUB_SMTP_USERNAME` | unset | SMTP auth username, if the server requires it |

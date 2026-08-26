@@ -1,5 +1,24 @@
 # Ticket Hub next work
 
+**2026-08-26 — security audit remediation (done).** An external security audit of the network-facing
+surface reported 16 findings (2 critical, 3 high, 5 medium, 6 low); four were reproduced against a
+running server before any fix. All 16 are fixed, with three new test suites and four extended ones
+(11 suites, all passing). Per-finding detail is in `CHANGELOG.md`, the analysis and three corrections to
+the earlier self-review are in `docs/THREAT_MODEL.md`, and exactly what was verified how -- including
+what was *not* verified (PostgreSQL adapter, Playwright suite) -- is in `docs/VERIFICATION.md`.
+
+Two things need operator action on upgrade, not further development:
+
+1. An installation that ever ran with `TICKETHUB_SEED_DEMO=true` still has the three `@ticket-hub.local`
+   accounts, one of them a global administrator with a published password. Changing the default does not
+   delete existing rows.
+2. A reverse-proxy request body limit is now a hard prerequisite (`docs/DEPLOYMENT.md`), because Crow
+   buffers a whole request before any application check runs.
+
+There is otherwise still no further work queued. Follow-up worth considering, but **not** started without
+an explicit product conversation per `CLAUDE.md`: running the same fixes against a real PostgreSQL
+instance, and re-running the Playwright suite in an environment that has Node.
+
 Current version: 0.2.0. Phases 1-5 (Milestones 1-2) are complete at every layer (core, tests, server, and
 UI) -- see below for detail. **Milestone 3 (Phases 6 and 7) is now fully complete**: the entire REST API
 hardening/export list (PATs, active sessions, rate limits, `/api/v1` versioning, CSV export, request/

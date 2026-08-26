@@ -2,6 +2,8 @@
 #include "domain/Errors.h"
 #include "infrastructure/database/SqliteDatabase.h"
 
+#include <sqlite3.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
@@ -20,6 +22,25 @@ void require(const bool condition, const std::string& message) {
         std::cerr << "FAILED: " << message << '\n';
         std::exit(1);
     }
+}
+
+// Backdates a login lock so the "the window has elapsed" case is testable in
+// milliseconds instead of 15 real minutes. Done by reaching into the SQLite
+// file directly rather than adding a test-only method to `IDatabase`, which
+// would put a production-interface hole in every adapter for the benefit of
+// one test.
+void expireLoginLock(const std::string& databasePath, const std::string& userId) {
+    sqlite3* handle = nullptr;
+    require(sqlite3_open(databasePath.c_str(), &handle) == SQLITE_OK, "test helper can open the database");
+    const std::string sql =
+        "UPDATE local_credentials SET locked_until = datetime('now', '-1 minute') WHERE user_id = '" + userId + "'";
+    char* error = nullptr;
+    const int result = sqlite3_exec(handle, sql.c_str(), nullptr, nullptr, &error);
+    if (error != nullptr) {
+        sqlite3_free(error);
+    }
+    sqlite3_close(handle);
+    require(result == SQLITE_OK, "test helper can backdate locked_until");
 }
 
 } // namespace
@@ -298,6 +319,119 @@ int main() {
     }
 
     // --- Simple append-only admin/security audit log (D23) ---
+    // --- Self-service password change (security audit 2026-08-26, M1) ---
+    {
+        CreateUserRequest request;
+        request.email = "changer@example.com";
+        request.displayName = "Pat Changer";
+        request.password = "original-password-1";
+        const auto user = auth.createUser(request);
+
+        auto first = auth.login(LoginRequest{"changer@example.com", "original-password-1"});
+        auto second = auth.login(LoginRequest{"changer@example.com", "original-password-1"});
+        const auto principal = auth.validateSession(second.sessionToken);
+        require(principal.has_value(), "the second session validates before the password change");
+        require(auth.listActiveSessions(user.id).size() == 2, "the user now holds two sessions");
+
+        // A wrong current password must not change anything, even though the
+        // caller already holds a valid session: a borrowed session token
+        // cannot be escalated into permanent account ownership.
+        bool rejected = false;
+        try {
+            auth.changeOwnPassword(*principal, "not-the-password", "brand-new-password-2",
+                                   second.session.id);
+        } catch (const AuthenticationFailed&) {
+            rejected = true;
+        }
+        require(rejected, "changing a password with the wrong current password is rejected");
+        require(auth.validateSession(first.sessionToken).has_value(),
+                "a rejected change leaves other sessions alone");
+
+        // A weak new password is rejected by the same rules as account creation.
+        bool weakRejected = false;
+        try {
+            auth.changeOwnPassword(*principal, "original-password-1", "short", second.session.id);
+        } catch (const std::invalid_argument&) {
+            weakRejected = true;
+        }
+        require(weakRejected, "a new password below the minimum length is rejected");
+
+        bool sameRejected = false;
+        try {
+            auth.changeOwnPassword(*principal, "original-password-1", "original-password-1",
+                                   second.session.id);
+        } catch (const std::invalid_argument&) {
+            sameRejected = true;
+        }
+        require(sameRejected, "reusing the current password as the new password is rejected");
+
+        auth.changeOwnPassword(*principal, "original-password-1", "brand-new-password-2",
+                               second.session.id);
+
+        bool oldPasswordRejected = false;
+        try {
+            auth.login(LoginRequest{"changer@example.com", "original-password-1"});
+        } catch (const AuthenticationFailed&) {
+            oldPasswordRejected = true;
+        }
+        require(oldPasswordRejected, "the old password no longer authenticates");
+
+        auto reloggedIn = auth.login(LoginRequest{"changer@example.com", "brand-new-password-2"});
+        require(!reloggedIn.sessionToken.empty(), "the new password authenticates");
+
+        // D53's "session invalidation after password change": every other
+        // session is dropped, the caller's own survives.
+        require(!auth.validateSession(first.sessionToken).has_value(),
+                "the user's other session is invalidated by the password change");
+        require(auth.validateSession(second.sessionToken).has_value(),
+                "the session that performed the change stays signed in");
+
+        const auto events = database->listAuditEvents(500);
+        require(std::any_of(events.begin(), events.end(),
+                            [&user](const auto& e) {
+                                return e.category == "identity" && e.action == "user.password_changed" &&
+                                       e.actor.has_value() && e.actor->id == user.id;
+                            }),
+               "a self-service password change records an identity/user.password_changed event");
+    }
+
+    // --- Login lockout expires instead of latching (security audit, H3) ---
+    {
+        CreateUserRequest request;
+        request.email = "lockout@example.com";
+        request.displayName = "Lee Lockout";
+        request.password = "lockout-password-1";
+        const auto user = auth.createUser(request);
+
+        for (int attempt = 0; attempt < IDatabase::MaxFailedLoginAttempts; ++attempt) {
+            try {
+                auth.login(LoginRequest{"lockout@example.com", "wrong-password"});
+            } catch (const AuthenticationFailed&) {
+                // expected
+            }
+        }
+        require(database->isLoginLocked(user.id), "the account locks after MaxFailedLoginAttempts");
+
+        // Simulate the lock window elapsing. Before the H3 fix,
+        // failed_login_count stayed at the maximum forever, so the very next
+        // wrong password re-locked the account -- one wrong guess every 15
+        // minutes kept a named account locked out indefinitely, with no
+        // self-service reset to recover through.
+        expireLoginLock(databasePath.string(), user.id);
+        require(!database->isLoginLocked(user.id), "the lock is no longer active once its window has passed");
+
+        try {
+            auth.login(LoginRequest{"lockout@example.com", "wrong-password"});
+        } catch (const AuthenticationFailed&) {
+            // expected
+        }
+        require(!database->isLoginLocked(user.id),
+                "a single wrong password after the lock expired does NOT immediately re-lock (H3)");
+
+        auto session = auth.login(LoginRequest{"lockout@example.com", "lockout-password-1"});
+        require(!session.sessionToken.empty(), "the correct password works once the lock has expired");
+    }
+
     // Every login-failed/login-blocked/user-created event from the blocks
     // above should already have been recorded by this point.
     {

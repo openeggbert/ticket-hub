@@ -3,6 +3,8 @@
 #include "common/RandomToken.h"
 #include "common/Sha256.h"
 #include "domain/Errors.h"
+#include "domain/Validation.h"
+#include "web/AttachmentContentType.h"
 #include "web/RateLimiter.h"
 
 #include <algorithm>
@@ -43,6 +45,23 @@ crow::response errorResponse(int status, const std::string& message) {
     crow::json::wvalue body;
     body["error"] = message;
     return jsonResponse(status, std::move(body));
+}
+
+// Security audit 2026-08-26 (L1): every `catch (const std::exception&)` used
+// to return `error.what()` verbatim with HTTP 500. The ordinary error paths
+// are all deliberate, tidy messages, but an *unexpected* exception is
+// whatever the layer that threw it says -- a libpq or SQLite failure carries
+// SQL text, column names and file paths straight to an unauthenticated
+// caller. The detail now goes to the server log with a short correlation id
+// that the response also carries, so an operator can still match a user's
+// report to the exact log line without publishing internals.
+crow::response internalErrorResponse(const std::exception& error) {
+    const std::string correlationId = Common::randomTokenHex(8);
+    CROW_LOG_ERROR << "Unhandled request error [" << correlationId << "]: " << error.what();
+    crow::json::wvalue body;
+    body["error"] = "Internal server error";
+    body["correlationId"] = correlationId;
+    return jsonResponse(500, std::move(body));
 }
 
 // D124's original description pairs a 429 with a Retry-After header; the V1
@@ -400,43 +419,13 @@ crow::json::wvalue attachmentJson(const Domain::Attachment& attachment) {
 
 // Defends against HTTP response-splitting via a CR/LF in a user-supplied
 // file name embedded into a response header (Content-Disposition).
-std::string sanitizeHeaderValue(const std::string& value) {
-    std::string sanitized = value;
-    sanitized.erase(std::remove_if(sanitized.begin(), sanitized.end(),
-                                   [](const unsigned char ch) { return ch == '\r' || ch == '\n' || ch == '"'; }),
-                    sanitized.end());
-    return sanitized;
-}
 
-// Security hardening pass (Phase 6): D98 deliberately has no upload-time
-// MIME allow-list, so `attachment.contentType` is caller-supplied and
-// untrusted -- the multipart upload route stores whatever `Content-Type` the
-// uploading client declared, verbatim. Serving that value back with
-// `Content-Disposition: inline` would let an attacker upload a file (any
-// extension not on D98's blocked-extension list, e.g. "notes.txt") with a
-// spoofed `Content-Type: text/html` body containing `<script>`, then have it
-// render as an HTML document -- either via direct download-URL navigation,
-// or inside the app's own unsandboxed-at-the-time text/PDF `<iframe>`
-// preview -- executing script same-origin (the sandboxed-iframe fix in
-// `web/app.js` closes the iframe path; this closes the direct-navigation
-// path). Only content types that cannot execute script when rendered
-// directly by a browser get `inline`; everything else -- explicitly
-// including HTML/XHTML/SVG/XML and script MIME types -- is forced to
-// `attachment` (a forced download, never rendered as a document). `<img>`/
-// `<audio>`/`<video>` tag rendering is unaffected either way, since those
-// elements do not honor `Content-Disposition`.
-bool contentTypeSafeToRenderInline(const std::string& contentType) {
-    static const std::vector<std::string> unsafePrefixes = {
-        "text/html", "application/xhtml", "image/svg", "application/xml", "text/xml",
-        "application/xslt", "application/javascript", "text/javascript", "application/ecmascript",
-    };
-    for (const auto& unsafe : unsafePrefixes) {
-        if (contentType.rfind(unsafe, 0) == 0) {
-            return false;
-        }
-    }
-    return true;
-}
+// Security audit 2026-08-26 (C2): the inline-vs-attachment decision now
+// lives in `web/AttachmentContentType.h` -- see that header for why it is an
+// allow-list and why the previous case-sensitive deny-list was a stored-XSS
+// vulnerability. `sanitizeHeaderValue` moved there too, since both are
+// header-safety helpers with no Crow dependency and both are now unit-tested
+// by `ticket-hub-attachment-content-type-tests`.
 
 crow::json::wvalue commentReactionJson(const Domain::CommentReaction& reaction) {
     crow::json::wvalue json;
@@ -612,8 +601,19 @@ std::optional<std::string> optionalString(const crow::json::rvalue& body, const 
 // the cookie nor set a custom header on a simple form submission, so a
 // mismatch reliably indicates a forged request. The session token itself is
 // always HttpOnly.
-constexpr const char* SessionCookieName = "th_session";
-constexpr const char* CsrfCookieName = "th_csrf";
+//
+// Security audit 2026-08-26 (M2): both names carry the `__Host-` prefix.
+// Without it, any host under the same registrable domain -- a sibling
+// subdomain that is attacker-controlled or merely has an XSS -- can set a
+// domain-scoped cookie of the same name. `cookieValue` below returns the
+// first match in the header, so a planted `th_csrf` whose value the attacker
+// chose would satisfy the double-submit comparison, and `SameSite=Strict`
+// would not help because a subdomain is same-site: the real session cookie
+// still rides along. The same trick could overwrite `th_session` outright
+// for session fixation. `__Host-` is enforced by the browser (Secure, no
+// Domain attribute, Path=/) and closes both.
+constexpr const char* SessionCookieName = "__Host-th_session";
+constexpr const char* CsrfCookieName = "__Host-th_csrf";
 constexpr long long SessionCookieMaxAgeSeconds = 30LL * 24 * 60 * 60;
 
 // Fixed request-body-size constant (D125): "fixed constants only (max body
@@ -769,13 +769,17 @@ std::optional<Domain::Principal> resolvePrincipal(const crow::request& request,
 // to a forged cross-origin request. A PAT Bearer token is never
 // auto-attached by a browser, so a request with no session cookie in play
 // is exempt -- whatever authenticated it (if anything), it wasn't a cookie.
+bool csrfPairValid(const crow::request& request) {
+    const auto cookie = cookieValue(request, CsrfCookieName);
+    const std::string header = request.get_header_value("X-CSRF-Token");
+    return cookie.has_value() && !cookie->empty() && *cookie == header;
+}
+
 bool csrfTokenValid(const crow::request& request) {
     if (!cookieValue(request, SessionCookieName)) {
         return true;
     }
-    const auto cookie = cookieValue(request, CsrfCookieName);
-    const std::string header = request.get_header_value("X-CSRF-Token");
-    return cookie.has_value() && !cookie->empty() && *cookie == header;
+    return csrfPairValid(request);
 }
 
 // Fixed rate limits (Phase 6, D124/D125): "simple fixed rate limit per
@@ -788,8 +792,39 @@ bool csrfTokenValid(const crow::request& request) {
 // across all other write endpoints (keyed by user id when authenticated,
 // else by IP). Process-lifetime in-memory state only, matching V1 having no
 // shared cache/job infrastructure (docs/REMOVED_AND_DEFERRED_FEATURES.md).
-RateLimiter& loginRateLimiter() {
+// Security audit 2026-08-26 (H2): the login endpoint used to run one
+// fixed-window limiter of 20 requests / 15 minutes keyed purely on
+// `remote_ip_address`, and it consumed budget on *every* request including
+// successful sign-ins. Crow does not trust `X-Forwarded-For` (deliberately --
+// a client cannot spoof the key), so behind the TLS-terminating reverse
+// proxy that docs/DEPLOYMENT.md requires, every client shares the proxy's IP
+// and therefore one bucket: 20 requests from anyone locked the entire
+// installation out of signing in for 15 minutes, repeatable indefinitely at
+// about 1.5 requests per minute. Reproduced live before the fix -- a correct
+// credential returned 429.
+//
+// Two changes make that impractical without weakening brute-force defence:
+//
+//   1. Only *failed* attempts are recorded. A legitimate user can never be
+//      the reason the limit trips, so a full bucket now means genuine
+//      failures and nothing else.
+//   2. The primary bucket is keyed on the target account plus the IP, so
+//      hammering one account can no longer starve every other account
+//      arriving from the same proxy address. The per-account lockout in
+//      AuthService/IDatabase (10 failures / 15 minutes) remains the primary
+//      targeted-brute-force defence; this complements it by also covering
+//      addresses that do not resolve to an account at all (enumeration).
+//
+// A much looser pure-IP ceiling stays behind both, sized so a real proxy
+// serving real users will not reach it while a single attacking host still
+// cannot enumerate accounts without bound.
+RateLimiter& loginAccountRateLimiter() {
     static RateLimiter limiter(20, std::chrono::minutes(15));
+    return limiter;
+}
+
+RateLimiter& loginIpRateLimiter() {
+    static RateLimiter limiter(300, std::chrono::minutes(15));
     return limiter;
 }
 
@@ -798,8 +833,26 @@ RateLimiter& writeRateLimiter() {
     return limiter;
 }
 
-bool loginRateLimitOk(const crow::request& request) {
-    return loginRateLimiter().allow("ip:" + request.remote_ip_address);
+// Checked before the request body is even parsed, so malformed-body spam
+// still counts against the loose per-IP ceiling.
+bool loginIpRateLimitOk(const crow::request& request) {
+    return loginIpRateLimiter().check("ip:" + request.remote_ip_address);
+}
+
+// Checked after the body is parsed, once the target account is known.
+bool loginAccountRateLimitOk(const crow::request& request, const std::string& normalizedEmail) {
+    return loginAccountRateLimiter().check("login:" + normalizedEmail + "|" + request.remote_ip_address);
+}
+
+// Called on every login attempt that did NOT authenticate someone -- a
+// malformed body, an unknown or wrong credential, or a locked account.
+// `normalizedEmail` is empty when the request never got far enough to name
+// an account, in which case only the per-IP ceiling is charged.
+void recordFailedLoginAttempt(const crow::request& request, const std::string& normalizedEmail) {
+    loginIpRateLimiter().record("ip:" + request.remote_ip_address);
+    if (!normalizedEmail.empty()) {
+        loginAccountRateLimiter().record("login:" + normalizedEmail + "|" + request.remote_ip_address);
+    }
 }
 
 // Shared by every write route (keyed by principal when authenticated) and by
@@ -833,21 +886,47 @@ void registerApiRoutes(crow::SimpleApp& app,
 
     CROW_ROUTE(app, "/api/v1/auth/login")
     .methods(crow::HTTPMethod::Post)([authService](const crow::request& request) {
-        if (!loginRateLimitOk(request)) {
+        // Loose per-IP ceiling first, before the body is even parsed, so
+        // malformed-body spam still costs something (H2).
+        if (!loginIpRateLimitOk(request)) {
             return rateLimitedResponse("Too many login attempts. Try again later.", 900);
         }
+        // Security audit 2026-08-26 (L2): the login route was the one
+        // mutating route with no CSRF check at all. There is no session to
+        // protect yet, but without a token an attacker can silently sign a
+        // victim's browser into an attacker-controlled account, so whatever
+        // the victim does next lands somewhere the attacker can read. The
+        // pre-session `__Host-th_csrf` cookie that HttpServer.cpp sets when
+        // it serves the HTML page is what makes this checkable; a caller
+        // that legitimately has no cookie at all (curl, a first-ever
+        // request) is still allowed through, so this only ever fires on a
+        // browser that has the app open.
+        std::string attemptedEmail;
         try {
             if (request.body.size() > MaxJsonRequestBodyBytes) {
+                recordFailedLoginAttempt(request, attemptedEmail);
                 return errorResponse(413, "Request body too large");
             }
             const auto body = crow::json::load(request.body);
             if (!body) {
+                recordFailedLoginAttempt(request, attemptedEmail);
                 return errorResponse(400, "Request body must be valid JSON");
             }
             Domain::LoginRequest login;
             login.email = requiredString(body, "email");
             login.password = requiredString(body, "password");
+
+            attemptedEmail = Domain::normalizeEmail(login.email);
+            if (cookieValue(request, CsrfCookieName) && !csrfPairValid(request)) {
+                recordFailedLoginAttempt(request, attemptedEmail);
+                return errorResponse(403, "Missing or invalid CSRF token");
+            }
+            if (!loginAccountRateLimitOk(request, attemptedEmail)) {
+                return rateLimitedResponse("Too many login attempts. Try again later.", 900);
+            }
+
             const auto authenticated = authService->login(std::move(login));
+            // Deliberately records nothing on the success path (H2).
 
             crow::json::wvalue responseBody;
             responseBody["ok"] = true;
@@ -861,13 +940,17 @@ void registerApiRoutes(crow::SimpleApp& app,
             addSessionCookies(response, authenticated.sessionToken, Common::randomTokenHex(16));
             return response;
         } catch (const Domain::AccountLocked& error) {
+            recordFailedLoginAttempt(request, attemptedEmail);
             return errorResponse(423, error.what());
         } catch (const Domain::AuthenticationFailed& error) {
+            recordFailedLoginAttempt(request, attemptedEmail);
             return errorResponse(401, error.what());
         } catch (const std::invalid_argument& error) {
+            recordFailedLoginAttempt(request, attemptedEmail);
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            recordFailedLoginAttempt(request, attemptedEmail);
+            return internalErrorResponse(error);
         }
     });
 
@@ -897,6 +980,51 @@ void registerApiRoutes(crow::SimpleApp& app,
             return errorResponse(401, "Not authenticated");
         }
         return jsonResponse(200, principalJson(*principal));
+    });
+
+    // Self-service password change (security audit 2026-08-26, finding M1).
+    // Deliberately session-cookie-only, not resolvePrincipal: a personal
+    // access token must not be able to change the password of the account it
+    // belongs to, or a leaked PAT (which D40 already accepts is equivalent to
+    // the owner's full permissions) would additionally become permanent
+    // account ownership that revoking the token cannot undo.
+    CROW_ROUTE(app, "/api/v1/account/password")
+    .methods(crow::HTTPMethod::Patch)([authService](const crow::request& request) {
+        const auto sessionToken = cookieValue(request, SessionCookieName);
+        if (!sessionToken) {
+            return errorResponse(401, "Not authenticated");
+        }
+        const auto principal = authService->validateSession(*sessionToken);
+        const auto session = authService->currentSession(*sessionToken);
+        if (!principal || !session) {
+            return errorResponse(401, "Not authenticated");
+        }
+        if (!csrfTokenValid(request)) {
+            return errorResponse(403, "Missing or invalid CSRF token");
+        }
+        if (!writeRateLimitOk(request, principal)) {
+            return rateLimitedResponse("Too many requests. Try again later.", 60);
+        }
+        try {
+            if (request.body.size() > MaxJsonRequestBodyBytes) {
+                return errorResponse(413, "Request body too large");
+            }
+            const auto body = crow::json::load(request.body);
+            if (!body) {
+                return errorResponse(400, "Request body must be valid JSON");
+            }
+            authService->changeOwnPassword(*principal, requiredString(body, "currentPassword"),
+                                           requiredString(body, "newPassword"), session->id);
+            crow::json::wvalue responseBody;
+            responseBody["ok"] = true;
+            return jsonResponse(200, std::move(responseBody));
+        } catch (const Domain::AuthenticationFailed& error) {
+            return errorResponse(401, error.what());
+        } catch (const std::invalid_argument& error) {
+            return errorResponse(400, error.what());
+        } catch (const std::exception& error) {
+            return internalErrorResponse(error);
+        }
     });
 
     // Self-service timezone/clock-format preferences (D45). Own-account-only
@@ -929,7 +1057,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -953,7 +1081,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -985,7 +1113,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1009,7 +1137,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1034,7 +1162,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1059,7 +1187,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["signedOutCount"] = removed;
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1076,7 +1204,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1115,7 +1243,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1150,7 +1278,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1187,7 +1315,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1205,7 +1333,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1241,7 +1369,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1278,7 +1406,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1305,7 +1433,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1323,7 +1451,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1368,7 +1496,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1416,7 +1544,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1443,7 +1571,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1471,7 +1599,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1492,7 +1620,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1512,7 +1640,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1538,7 +1666,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1564,7 +1692,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1608,7 +1736,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1633,7 +1761,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1667,7 +1795,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1697,7 +1825,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1734,7 +1862,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1767,7 +1895,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1790,7 +1918,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1846,7 +1974,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1867,7 +1995,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1878,7 +2006,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1906,7 +2034,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1932,7 +2060,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -1958,7 +2086,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2015,7 +2143,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2059,7 +2187,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2080,7 +2208,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2100,7 +2228,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2117,7 +2245,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2152,7 +2280,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2192,7 +2320,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2223,7 +2351,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2246,7 +2374,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2274,7 +2402,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2298,7 +2426,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2318,7 +2446,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2358,7 +2486,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2399,7 +2527,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2427,7 +2555,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2446,7 +2574,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2489,7 +2617,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2519,7 +2647,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2534,17 +2662,39 @@ void registerApiRoutes(crow::SimpleApp& app,
             const auto [attachment, bytes] = service->downloadAttachment(attachmentId, resolvePrincipal(request, authService));
             crow::response response(200, bytes);
             response.set_header("Content-Type", sanitizeHeaderValue(attachment.contentType));
-            const std::string disposition = contentTypeSafeToRenderInline(attachment.contentType) ? "inline" : "attachment";
+            const std::string disposition = isInlineSafeContentType(attachment.contentType) ? "inline" : "attachment";
             response.set_header("Content-Disposition", disposition + "; filename=\"" + sanitizeHeaderValue(attachment.fileName) + "\"");
             response.set_header("Cache-Control", "private, max-age=31536000, immutable");
             applySecurityHeaders(response);
+            // Security audit 2026-08-26 (C2): defense in depth behind the
+            // allow-list above. The HTML page's CSP is set per-response in
+            // HttpServer.cpp and does not reach this route, so an attachment
+            // that ever did get rendered as a document previously had no
+            // script restrictions at all. `default-src 'none'` denies script
+            // outright; `img-src`/`media-src` keep a directly-navigated
+            // image or media file rendering. `frame-ancestors 'self'`
+            // (paired with the X-Frame-Options override below) is what lets
+            // the app's own sandboxed PDF/text preview iframe embed this
+            // response while still refusing any third-party site.
+            //
+            // Deliberately no `sandbox` directive: it would drop the response
+            // into an opaque origin, which contradicts `img-src 'self'` and
+            // breaks the browser's own PDF viewer. Script is already denied
+            // by `default-src 'none'`, and the allow-list above means nothing
+            // scriptable reaches `inline` in the first place -- the client's
+            // preview iframe adds its own `sandbox=""` on top of that.
+            response.set_header("Content-Security-Policy",
+                                "default-src 'none'; img-src 'self' data:; media-src 'self'; "
+                                "style-src 'unsafe-inline'; object-src 'none'; base-uri 'none'; "
+                                "form-action 'none'; frame-ancestors 'self'");
+            response.set_header("X-Frame-Options", "SAMEORIGIN");
             return response;
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::invalid_argument& error) {
             return errorResponse(404, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2569,7 +2719,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2592,7 +2742,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2615,7 +2765,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2646,7 +2796,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2679,7 +2829,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2715,7 +2865,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2732,7 +2882,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2768,7 +2918,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2794,7 +2944,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2813,7 +2963,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2837,7 +2987,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2859,7 +3009,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2876,7 +3026,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2900,7 +3050,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2922,7 +3072,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             responseBody["ok"] = true;
             return jsonResponse(200, std::move(responseBody));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2958,7 +3108,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -2988,7 +3138,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3018,7 +3168,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3047,7 +3197,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3083,7 +3233,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::AuthenticationRequired& error) {
             return errorResponse(401, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3104,7 +3254,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["items"] = std::move(items);
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3133,7 +3283,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3170,7 +3320,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3206,7 +3356,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3242,7 +3392,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3274,7 +3424,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3309,7 +3459,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3327,7 +3477,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3354,7 +3504,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3384,7 +3534,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3408,7 +3558,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3453,7 +3603,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const std::invalid_argument& error) {
             return errorResponse(400, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3479,7 +3629,7 @@ void registerApiRoutes(crow::SimpleApp& app,
         } catch (const Domain::Forbidden& error) {
             return errorResponse(403, error.what());
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3513,7 +3663,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["totalPages"] = result.totalPages();
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3527,7 +3677,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["count"] = service->countUnreadNotifications(*principal);
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3548,7 +3698,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["ok"] = service->markNotificationRead(notificationId, *principal);
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 
@@ -3569,7 +3719,7 @@ void registerApiRoutes(crow::SimpleApp& app,
             body["ok"] = service->markAllNotificationsRead(*principal);
             return jsonResponse(200, std::move(body));
         } catch (const std::exception& error) {
-            return errorResponse(500, error.what());
+            return internalErrorResponse(error);
         }
     });
 }

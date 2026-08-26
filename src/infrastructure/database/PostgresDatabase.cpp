@@ -506,6 +506,68 @@ std::string shellQuote(const std::string& value) {
     return quoted;
 }
 
+// Security audit 2026-08-26 (L5): a libpq connection string may carry
+// `password=...`, and `std::system` puts the whole command line into
+// /proc/<pid>/cmdline, where every other local user can read it via `ps`.
+// This splits the password out so only the password-free remainder reaches
+// the command line; `runWithPgPassword` below hands the secret to the child
+// through PGPASSWORD instead, which is not world-readable.
+//
+// Deliberately simple parsing that matches how this project's own
+// documentation and docker-compose.yml write the string (`key=value`
+// separated by spaces, no quoting). If a password ever does contain a space
+// or a quote, the keyword is left in place and the behaviour is exactly what
+// it was before -- no worse, just not improved.
+struct SplitConnectionString {
+    std::string withoutPassword;
+    std::string password;
+};
+
+SplitConnectionString splitPassword(const std::string& connectionString) {
+    SplitConnectionString split;
+    std::istringstream stream(connectionString);
+    std::string token;
+    std::vector<std::string> kept;
+    while (stream >> token) {
+        if (token.rfind("password=", 0) == 0 && split.password.empty()) {
+            split.password = token.substr(std::string("password=").size());
+            continue;
+        }
+        kept.push_back(token);
+    }
+    if (split.password.empty()) {
+        return {connectionString, {}};
+    }
+    for (std::size_t index = 0; index < kept.size(); ++index) {
+        if (index != 0) {
+            split.withoutPassword += ' ';
+        }
+        split.withoutPassword += kept[index];
+    }
+    return split;
+}
+
+// Runs `command` with PGPASSWORD set to `password` (when non-empty),
+// restoring the previous value afterwards so the setting never leaks into
+// anything else this process does later.
+int runWithPgPassword(const std::string& command, const std::string& password) {
+    if (password.empty()) {
+        return std::system(command.c_str());
+    }
+    const char* previousRaw = std::getenv("PGPASSWORD");
+    const bool hadPrevious = previousRaw != nullptr;
+    const std::string previous = hadPrevious ? std::string(previousRaw) : std::string();
+
+    setenv("PGPASSWORD", password.c_str(), 1);
+    const int result = std::system(command.c_str());
+    if (hadPrevious) {
+        setenv("PGPASSWORD", previous.c_str(), 1);
+    } else {
+        unsetenv("PGPASSWORD");
+    }
+    return result;
+}
+
 } // namespace
 
 PostgresDatabase::PostgresDatabase(std::string connectionString,
@@ -593,9 +655,10 @@ void PostgresDatabase::seedDemoData() {
 void PostgresDatabase::backup(const std::string& directory) {
     std::filesystem::create_directories(directory);
     const auto outputPath = (std::filesystem::path(directory) / "database.sql").string();
-    const std::string command = "pg_dump --clean --if-exists " + shellQuote(connectionString_)
+    const auto split = splitPassword(connectionString_);
+    const std::string command = "pg_dump --clean --if-exists " + shellQuote(split.withoutPassword)
         + " -f " + shellQuote(outputPath);
-    if (std::system(command.c_str()) != 0) {
+    if (runWithPgPassword(command, split.password) != 0) {
         throw std::runtime_error("pg_dump failed -- see stderr above for detail");
     }
 }
@@ -609,9 +672,10 @@ void PostgresDatabase::restore(const std::string& directory) {
     if (!std::filesystem::exists(inputPath)) {
         throw std::runtime_error("database.sql not found in backup directory: " + directory);
     }
-    const std::string command = "psql -v ON_ERROR_STOP=1 " + shellQuote(connectionString_)
+    const auto split = splitPassword(connectionString_);
+    const std::string command = "psql -v ON_ERROR_STOP=1 " + shellQuote(split.withoutPassword)
         + " -f " + shellQuote(inputPath.string());
-    if (std::system(command.c_str()) != 0) {
+    if (runWithPgPassword(command, split.password) != 0) {
         throw std::runtime_error("psql restore failed -- see stderr above for detail");
     }
 }
@@ -757,8 +821,24 @@ int PostgresDatabase::deleteAllSessionsForUser(const std::string& userId) {
     return std::stoi(PQcmdTuples(result.get()));
 }
 
+// Security audit 2026-08-26 (H3): clear an *expired* lock before counting
+// this attempt. `resetFailedLogin` only runs on a successful sign-in, so
+// without this the counter stayed at MaxFailedLoginAttempts forever once an
+// account had been locked once -- every subsequent wrong password satisfied
+// `failed_login_count + 1 >= max` and re-locked for another 15 minutes. An
+// attacker who knew an email address could therefore keep an account locked
+// out indefinitely at roughly four requests an hour, and with no
+// self-service reset (D53 has admin-performed reset only) the last global
+// administrator could be locked out of their own installation. Expiring the
+// lock now genuinely expires it.
 void PostgresDatabase::recordFailedLogin(const std::string& userId) {
     auto connection = connect(connectionString_);
+    execParams(connection.get(), R"SQL(
+UPDATE local_credentials
+SET failed_login_count = 0, locked_until = NULL
+WHERE user_id = $1 AND locked_until IS NOT NULL AND locked_until <= CURRENT_TIMESTAMP
+)SQL",
+               {userId}, "Clear expired login lock");
     execParams(connection.get(), R"SQL(
 UPDATE local_credentials
 SET failed_login_count = failed_login_count + 1,
@@ -2958,6 +3038,16 @@ std::vector<Domain::Attachment> PostgresDatabase::listAttachments(const std::str
         attachments.push_back(readAttachment(result.get(), row));
     }
     return attachments;
+}
+
+std::int64_t PostgresDatabase::totalAttachmentBytes() {
+    auto connection = connect(connectionString_);
+    auto result = exec(connection.get(), "SELECT COALESCE(SUM(byte_size), 0) FROM attachments",
+                       "Total attachment bytes");
+    if (PQntuples(result.get()) == 0) {
+        return 0;
+    }
+    return std::stoll(PQgetvalue(result.get(), 0, 0));
 }
 
 std::optional<Domain::Attachment> PostgresDatabase::findAttachmentById(const std::string& attachmentId) {

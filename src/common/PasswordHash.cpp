@@ -20,11 +20,16 @@ constexpr std::size_t SaltLength = 16;
 constexpr std::size_t HashLength = 32;
 
 std::vector<std::uint8_t> randomSalt() {
-    thread_local std::mt19937_64 engine(std::random_device{}());
+    // Security audit 2026-08-26 (M3): an Argon2id salt only needs to be
+    // unique, not unpredictable, so seeding a Mersenne Twister here was less
+    // serious than the same pattern in Uuid.cpp -- but there is no reason to
+    // keep a predictable generator anywhere near password hashing when
+    // std::random_device costs nothing at this call rate.
+    std::random_device source;
     std::uniform_int_distribution<int> distribution(0, 255);
     std::vector<std::uint8_t> salt(SaltLength);
     for (auto& byte : salt) {
-        byte = static_cast<std::uint8_t>(distribution(engine));
+        byte = static_cast<std::uint8_t>(distribution(source));
     }
     return salt;
 }

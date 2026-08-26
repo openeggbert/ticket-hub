@@ -1,5 +1,70 @@
 # Verification record
 
+## 2026-08-26 — Security audit remediation
+
+### What changed
+
+Fixes for all 16 findings of an external security audit of the network-facing surface (2 critical, 3 high,
+5 medium, 6 low). See the `CHANGELOG.md` entry of the same date for the per-finding list and
+`docs/THREAT_MODEL.md` for the analysis.
+
+### Verification
+
+**Automated.** `ctest --output-on-failure` -- 11/11 suites pass in all three built configurations (default
+server build, `sqlite` preset, `all-adapters` preset), including three new ones
+(`ticket-hub-config-tests`, `ticket-hub-attachment-content-type-tests`,
+`ticket-hub-network-address-tests`) and four extended ones (rate limiter, crypto, identity,
+authorization). The frontend was parsed with SpiderMonkey via `gjs` (`Reflect.parse`, module target):
+`web/app.js`, `web/story-points.js` and `web/ticket-drawer-controls.js` all parse cleanly.
+
+**Live, against a running server** (SQLite, throwaway database, `127.0.0.1:18080`):
+
+- **C1** -- a default start (`TICKETHUB_DB_DRIVER=sqlite`, nothing else set) creates no accounts:
+  `demo@ticket-hub.local` / `demo12345` returns `401`. With `TICKETHUB_SEED_DEMO=true` and
+  `TICKETHUB_BIND_ADDRESS=0.0.0.0` the process refuses to start and prints the reason; adding
+  `TICKETHUB_ALLOW_UNSAFE_DEMO_SEED=true` lets it start and serve `200` on `/api/health`.
+- **C2** -- the same 51-byte HTML payload uploaded as `TEXT/HTML`, `Text/Html;charset=utf-8`,
+  `image/SVG+XML`, `text/html` and `application/xhtml+xml` now all return
+  `Content-Disposition: attachment`; `text/plain` and `application/pdf` still return `inline`. Navigating
+  headless Chromium directly to the `TEXT/HTML` attachment produces no script execution and an empty DOM
+  (before the fix the same navigation logged `executed at http://127.0.0.1:18080`).
+- **Attachment previews** -- a same-origin `<iframe>` pointing at an inline `text/plain` attachment now
+  loads and its `contentDocument` contains the attachment body. A control iframe pointing at
+  `/api/health`, which still carries the unchanged `X-Frame-Options: DENY`, is refused -- confirming that
+  `DENY` had been blocking the D99 preview iframes all along.
+- **H2** -- 30 failed logins against one address trip at attempt 21 (`429`), while the demo administrator
+  signs in normally (`200`) from the same IP; 25 consecutive *successful* logins all return `200`,
+  confirming the success path consumes no budget.
+- **H3/M1** -- exercised as integration tests rather than live, since the lock window is 15 real minutes:
+  `expireLoginLock` backdates `locked_until` directly in the SQLite file (a test helper, deliberately not
+  a method on `IDatabase`), after which a single wrong password no longer re-locks the account and the
+  correct password works.
+- **M2, L2, M1 in a real browser** -- headless Chromium against the app origin: the pre-session
+  `__Host-th_csrf` cookie is present and readable on first load (32 chars); `__Host-th_session` is set on
+  login and is *not* visible to JavaScript; `GET /api/v1/auth/me` returns `200`; a CSRF-protected write
+  returns `200` with the header and `403` without it; login with a wrong `X-CSRF-Token` returns `403` and
+  with the correct one `200`, rotating the cookie; a self-service password change returns `200` and leaves
+  the calling session signed in. This is the check that mattered for `__Host-` -- curl ignores cookie
+  prefix rules, so only a browser proves the rename did not break sign-in.
+- **Negative probes, unchanged from the audit** -- SQL injection through filter parameters, path traversal
+  on the static and attachment routes, and error-message disclosure all still return clean results.
+
+### Known limitations
+
+- The PostgreSQL adapter **compiles** but was **not run**: this environment has no PostgreSQL server. Both
+  adapters received logically equivalent changes (`recordFailedLogin`'s expired-lock clear,
+  `totalAttachmentBytes`, and the `PGPASSWORD` split, the last of which exists only in the PostgreSQL
+  adapter). All three supported configurations were built and tested: the default server build, the
+  `sqlite` preset (11/11), and the `all-adapters` preset (11/11), the last confirming
+  `PostgresDatabase.cpp.o` builds warning-free against libpq 17.11 headers. Only the SQLite adapter's
+  behaviour was executed.
+- The Playwright browser suite was **not** run -- `node`/`node_modules` are unavailable here. Browser
+  verification was done by driving headless Chromium directly, as described above.
+- H1 has no in-process fix and therefore no test: the reverse-proxy body limit is the only mitigation, and
+  it is now documented as a hard prerequisite in `docs/DEPLOYMENT.md`.
+- M5 resolves the webhook target at creation time only, so it does not defend against DNS rebinding. The
+  unit tests cover URL parsing and IP-range classification offline; no test performs a real DNS lookup.
+
 ## 2026-08-08 — Fixed Story Points picker and adaptable ticket detail drawer, user-requested
 
 ### What changed

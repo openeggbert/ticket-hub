@@ -445,6 +445,14 @@ public:
     // "sortable list" is a client-side concern (name/size/date/author/type),
     // not a server-side ordering option.
     virtual std::vector<Domain::Attachment> listAttachments(const std::string& ticketKey) = 0;
+
+    // Total bytes of every attachment row that still has a file on disk,
+    // for the installation-wide storage ceiling (security audit 2026-08-26,
+    // finding M4). Soft-deleted (recycle-bin) attachments are deliberately
+    // counted: their files are only removed on permanent delete, so they
+    // occupy the volume exactly like live ones and must not be a way to
+    // exceed the ceiling.
+    virtual std::int64_t totalAttachmentBytes() = 0;
     virtual std::optional<Domain::Attachment> findAttachmentById(const std::string& attachmentId) = 0;
     // Mirrors the ticket/project/comment tombstone pattern exactly (D101).
     virtual bool softDeleteAttachment(const std::string& attachmentId, const std::string& actorUserId) = 0;

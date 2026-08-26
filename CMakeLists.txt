@@ -28,6 +28,7 @@ set(TICKETHUB_CORE_SOURCES
     src/common/PasswordHash.cpp
     src/common/RandomToken.cpp
     src/common/Sha256.cpp
+    src/common/NetworkAddress.cpp
     src/common/Uuid.cpp
     src/config/Config.cpp
     src/domain/Validation.cpp
@@ -109,6 +110,7 @@ if(TICKETHUB_BUILD_SERVER)
     add_executable(ticket-hub
         src/main.cpp
         src/web/Api.cpp
+        src/web/AttachmentContentType.cpp
         src/web/HttpServer.cpp
         src/web/JsonLogHandler.cpp
         src/web/RateLimiter.cpp
@@ -182,4 +184,21 @@ if(TICKETHUB_BUILD_TESTS)
     add_executable(ticket-hub-ratelimiter-tests tests/rate_limiter_tests.cpp src/web/RateLimiter.cpp)
     target_include_directories(ticket-hub-ratelimiter-tests PRIVATE src)
     add_test(NAME ticket-hub-ratelimiter-tests COMMAND ticket-hub-ratelimiter-tests)
+
+    # Same standalone arrangement as RateLimiter above: the attachment
+    # inline-vs-download decision (security audit 2026-08-26, finding C2) has
+    # no Crow dependency, so it is tested even when the server target is off.
+    add_executable(ticket-hub-attachment-content-type-tests
+        tests/attachment_content_type_tests.cpp src/web/AttachmentContentType.cpp)
+    target_include_directories(ticket-hub-attachment-content-type-tests PRIVATE src)
+    add_test(NAME ticket-hub-attachment-content-type-tests
+             COMMAND ticket-hub-attachment-content-type-tests)
+
+    add_executable(ticket-hub-network-address-tests tests/network_address_tests.cpp)
+    target_link_libraries(ticket-hub-network-address-tests PRIVATE ticket-hub-core)
+    add_test(NAME ticket-hub-network-address-tests COMMAND ticket-hub-network-address-tests)
+
+    add_executable(ticket-hub-config-tests tests/config_tests.cpp)
+    target_link_libraries(ticket-hub-config-tests PRIVATE ticket-hub-core)
+    add_test(NAME ticket-hub-config-tests COMMAND ticket-hub-config-tests)
 endif()

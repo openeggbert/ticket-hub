@@ -41,7 +41,36 @@ credential/secret handling, and rate-limiting bypasses. This was a static/code-r
 live HTTP reproduction of each finding (not a formal WCAG-style external audit, and not a fuzzing/dependency-
 CVE pass -- see "Not covered" below).
 
-## Findings fixed in this batch
+## 2026-08-26 external audit — superseding update
+
+A second, external review of the network-facing surface reported 16 findings. All are now fixed; see
+`CHANGELOG.md` and `docs/VERIFICATION.md` (both dated 2026-08-26). Three corrections to the 2026-08-02
+review below, which that review got wrong rather than merely not covering:
+
+- **"the download route's `Content-Disposition: inline` vs `attachment` split still correctly denies
+  HTML/XML/SVG MIME types inline rendering"** was false. The split existed and the intent was right, but
+  the comparison was case-sensitive against lowercase literals while MIME types are case-insensitive, so
+  `TEXT/HTML` was served `inline` and executed script in this application's origin. The deny-list is now
+  a case-insensitive allow-list in `web/AttachmentContentType.{h,cpp}` and the download response carries
+  its own CSP.
+- **"Admin account creation: there is no HTTP route for it at all"** is stale. `POST /api/v1/admin/users`
+  exists (D2/D53/D57) and is correctly global-admin-gated, but the sentence no longer describes the code.
+- **Rate limiting** was listed under "accepted residual risk" as merely *weakening* brute-force protection
+  behind a reverse proxy. It was worse than that: because the limiter also consumed budget on successful
+  sign-ins, 20 requests from any unauthenticated caller locked the entire installation out of signing in
+  for 15 minutes, repeatable indefinitely. Fixed (failures only, keyed on account + IP).
+
+Two further items the 2026-08-02 review did not consider at all, both now fixed: `TICKETHUB_SEED_DEMO`
+defaulted to `true`, so every start path except `docker-compose.yml` created a global administrator whose
+password is published in this repository; and `failed_login_count` was cleared only on a successful login,
+so an expired lockout re-latched on the next wrong password, permanently locking out any account whose
+email address an attacker knew -- with no self-service password reset to recover through.
+
+Finally, the review below did not notice that the attachment download route sent
+`X-Frame-Options: DENY`, which blocks same-origin framing as well, so the D99 PDF and text preview
+iframes could never have loaded. That is fixed as a side effect of the CSP work.
+
+## Findings fixed in the 2026-08-02 batch
 
 ### 1. Broken access control (IDOR) on comment, worklog, and attachment mutation routes -- **fixed**
 

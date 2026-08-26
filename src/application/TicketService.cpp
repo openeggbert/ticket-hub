@@ -1,5 +1,6 @@
 #include "application/TicketService.h"
 
+#include "common/NetworkAddress.h"
 #include "common/Sha256.h"
 #include "common/Uuid.h"
 #include "domain/Errors.h"
@@ -75,9 +76,9 @@ Domain::EditTicketRequest editRequestFrom(const Domain::Ticket& ticket) {
 } // namespace
 
 TicketService::TicketService(std::shared_ptr<Infrastructure::Database::IDatabase> database, std::string attachmentsRoot,
-                             const bool emailDeliveryEnabled)
+                             const bool emailDeliveryEnabled, const std::int64_t attachmentsMaxTotalBytes)
     : database_(std::move(database)), attachmentStorage_(std::move(attachmentsRoot)),
-      emailDeliveryEnabled_(emailDeliveryEnabled) {
+      emailDeliveryEnabled_(emailDeliveryEnabled), attachmentsMaxTotalBytes_(attachmentsMaxTotalBytes) {
     if (!database_) {
         throw std::invalid_argument("database must not be null");
     }
@@ -519,6 +520,21 @@ Domain::Attachment TicketService::uploadAttachment(const std::string& ticketKey,
     const auto errors = Domain::validateAttachmentUpload(fileName, static_cast<std::int64_t>(bytes.size()), existingCount);
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
+    }
+
+    // Installation-wide storage ceiling (security audit 2026-08-26, finding
+    // M4). The per-file (25MB) and per-ticket (20) limits above bound a
+    // single upload, but nothing bounds the number of tickets -- so without
+    // this any project Member could fill the volume, taking the database
+    // down with it. Checked after the per-file validation so an oversized
+    // file still gets its own specific error message.
+    if (attachmentsMaxTotalBytes_ > 0) {
+        const std::int64_t stored = database_->totalAttachmentBytes();
+        if (stored + static_cast<std::int64_t>(bytes.size()) > attachmentsMaxTotalBytes_) {
+            throw std::invalid_argument(
+                "This installation's attachment storage limit has been reached; ask an administrator to "
+                "free space or raise TICKETHUB_ATTACHMENTS_MAX_TOTAL_BYTES");
+        }
     }
 
     const std::string id = Common::uuidV4();
@@ -1236,6 +1252,20 @@ Domain::WebhookSubscription TicketService::createWebhookSubscription(Domain::Cre
     const auto errors = Domain::validateCreateWebhookSubscription(request);
     if (!errors.empty()) {
         throw std::invalid_argument(joinErrors(errors));
+    }
+    // Security audit 2026-08-26 (M5): refuse targets that resolve into this
+    // deployment's own network. Domain::validateCreateWebhookSubscription
+    // already restricts the scheme to http(s), which is a pure-text rule and
+    // belongs in the domain layer; deciding *where* a host resolves needs
+    // DNS, so it lives here rather than there.
+    const auto host = Common::hostFromHttpUrl(request.targetUrl);
+    if (!host) {
+        throw std::invalid_argument("targetUrl must contain a host name");
+    }
+    if (Common::resolvesToBlockedAddress(*host)) {
+        throw std::invalid_argument(
+            "targetUrl must resolve to a public address -- loopback, private, link-local and "
+            "cloud-metadata addresses are refused, and a host that cannot be resolved is refused too");
     }
     return database_->createWebhookSubscription(request, actor.userId);
 }

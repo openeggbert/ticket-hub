@@ -29,11 +29,15 @@ services:
       TICKETHUB_POSTGRES_PASSWORD: ${TICKETHUB_POSTGRES_PASSWORD}
       TICKETHUB_AUTO_MIGRATE: "true"
       # A fresh instance ships with no accounts at all (D2: administrator-
-      # created accounts only, no public registration) -- seeding is off by
-      # default for a real deployment. Set to "true" to get the same demo
-      # data/logins used throughout this README, or create the first admin
+      # created accounts only, no public registration). Create the first admin
       # with `docker compose exec ticket-hub ticket-hub-cli create-user
       # "you@example.com" "Your Name" "a sufficiently long password" --admin`.
+      #
+      # The demo seed creates a global administrator whose password is
+      # published in migrations/*/002_seed_demo.sql. For local development
+      # only, set this to "true" AND add TICKETHUB_ALLOW_UNSAFE_DEMO_SEED:
+      # "true" -- this container binds 0.0.0.0 inside its own namespace, which
+      # the start-up guard cannot tell apart from a public bind.
       TICKETHUB_SEED_DEMO: "false"
     ports:
       - "127.0.0.1:${TICKETHUB_HTTP_PORT:-8080}:8080"

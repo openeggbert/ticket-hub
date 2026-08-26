@@ -486,6 +486,10 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (command == "seed-demo") {
+            // Security audit 2026-08-26 (C1): the CLI is an operator tool, but
+            // seeding a published-password global administrator is still only
+            // ever safe on a loopback-bound installation.
+            config.requireSafeDemoSeeding();
             database->migrate();
             database->seedDemoData();
             std::cout << "Applied migrations and demo seed using " << database->backendName() << ".\n";

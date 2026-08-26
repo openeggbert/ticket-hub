@@ -178,6 +178,7 @@ public:
                                         std::int64_t byteSize,
                                         const std::string& sha256) override;
     std::vector<Domain::Attachment> listAttachments(const std::string& ticketKey) override;
+    std::int64_t totalAttachmentBytes() override;
     std::optional<Domain::Attachment> findAttachmentById(const std::string& attachmentId) override;
     bool softDeleteAttachment(const std::string& attachmentId, const std::string& actorUserId) override;
     bool restoreAttachment(const std::string& attachmentId) override;

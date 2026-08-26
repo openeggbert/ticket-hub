@@ -23,12 +23,26 @@ public:
     // is reached until the window rolls over.
     bool allow(const std::string& key);
 
+    // The same limit test as `allow`, but WITHOUT recording an attempt.
+    // Split out for the login route (security audit 2026-08-26, finding H2):
+    // that route must not consume budget for a *successful* sign-in, or a
+    // legitimate user becomes the reason the limit trips -- which is exactly
+    // what happened behind a reverse proxy, where every client shares the
+    // proxy's IP and therefore one bucket.
+    bool check(const std::string& key);
+
+    // Records one attempt against `key`, whether or not it is still under
+    // the limit. Pairs with `check` above.
+    void record(const std::string& key);
+
 private:
     struct Bucket {
         std::size_t count = 0;
         std::chrono::steady_clock::time_point windowStart{};
     };
 
+    bool bucketExpiredLocked(const Bucket& bucket, std::chrono::steady_clock::time_point now) const;
+    void maybeSweepLocked(std::chrono::steady_clock::time_point now);
     void sweepExpiredLocked(std::chrono::steady_clock::time_point now);
 
     std::mutex mutex_;

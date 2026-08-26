@@ -1,12 +1,14 @@
 #include "web/HttpServer.h"
 
 #include "common/FileUtil.h"
+#include "common/RandomToken.h"
 #include "web/Api.h"
 #include "web/JsonLogHandler.h"
 
 #include <crow.h>
 #include <exception>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 namespace TicketHub::Web {
@@ -56,6 +58,29 @@ void applyHtmlSecurityHeaders(crow::response& response) {
                         "frame-ancestors 'none'; form-action 'self'");
 }
 
+// Security audit 2026-08-26 (L2): issue a CSRF token to a browser that does
+// not have one yet, so `POST /api/v1/auth/login` can be double-submit
+// checked like every other mutating route. Without this there is nothing to
+// check before a session exists, and an attacker can silently sign a
+// victim's browser into an account they control.
+//
+// Only ever *adds* a token. A caller that already has one keeps it -- both so
+// a second tab cannot invalidate the first tab's in-flight requests, and
+// because a successful login replaces it with a freshly generated value
+// anyway (see addSessionCookies in Api.cpp).
+//
+// The name must match `CsrfCookieName` in Api.cpp; `__Host-` requires
+// exactly the Secure/Path=//no-Domain combination set here.
+void issueCsrfCookieIfAbsent(const crow::request& request, crow::response& response) {
+    if (request.get_header_value("Cookie").find("__Host-th_csrf=") != std::string::npos) {
+        return;
+    }
+    std::ostringstream cookie;
+    cookie << "__Host-th_csrf=" << Common::randomTokenHex(16)
+           << "; Path=/; Secure; SameSite=Strict; Max-Age=" << 30LL * 24 * 60 * 60;
+    response.add_header("Set-Cookie", cookie.str());
+}
+
 } // namespace
 
 void runHttpServer(const Config::AppConfig& config,
@@ -70,9 +95,10 @@ void runHttpServer(const Config::AppConfig& config,
     crow::SimpleApp app;
     registerApiRoutes(app, service, authService);
 
-    CROW_ROUTE(app, "/")([root = config.webRoot] {
+    CROW_ROUTE(app, "/")([root = config.webRoot](const crow::request& request) {
         auto response = staticResponse(root + "/index.html", "text/html; charset=utf-8");
         applyHtmlSecurityHeaders(response);
+        issueCsrfCookieIfAbsent(request, response);
         return response;
     });
     // Jira-style direct ticket links (e.g. /browse/TH-123): serves the exact
@@ -82,9 +108,10 @@ void runHttpServer(const Config::AppConfig& config,
     // opens straight to that ticket. The `<string>` segment is never used
     // server-side; the actual key lookup/authorization happens through the
     // existing GET /api/v1/tickets/{key} route, same as any other ticket open.
-    CROW_ROUTE(app, "/browse/<string>")([root = config.webRoot](const std::string&) {
+    CROW_ROUTE(app, "/browse/<string>")([root = config.webRoot](const crow::request& request, const std::string&) {
         auto response = staticResponse(root + "/index.html", "text/html; charset=utf-8");
         applyHtmlSecurityHeaders(response);
+        issueCsrfCookieIfAbsent(request, response);
         return response;
     });
     CROW_ROUTE(app, "/app.js")([root = config.webRoot] {

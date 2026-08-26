@@ -11,6 +11,10 @@
 int main() {
     try {
         const auto config = TicketHub::Config::AppConfig::fromEnvironment();
+        // Security audit 2026-08-26 (C1): refuse to start rather than seed a
+        // known-credential global administrator onto a publicly reachable
+        // bind address. Checked before the database is even opened.
+        config.requireSafeDemoSeeding();
         auto database = TicketHub::Infrastructure::Database::createDatabase(config);
         if (config.autoMigrate) {
             database->migrate();
@@ -19,8 +23,8 @@ int main() {
             database->seedDemoData();
         }
         database->deleteExpiredSessions();
-        auto service = std::make_shared<TicketHub::Application::TicketService>(database, config.attachmentsRoot,
-                                                                               !config.smtpHost.empty());
+        auto service = std::make_shared<TicketHub::Application::TicketService>(
+            database, config.attachmentsRoot, !config.smtpHost.empty(), config.attachmentsMaxTotalBytes);
         auto authService = std::make_shared<TicketHub::Application::AuthService>(database);
         TicketHub::Web::runHttpServer(config, service, authService);
         return 0;

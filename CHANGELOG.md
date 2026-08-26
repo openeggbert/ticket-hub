@@ -1,5 +1,76 @@
 # Changelog
 
+## Unreleased — Security audit remediation (2026-08-26)
+
+An external security audit of the network-facing surface reported 2 critical, 3 high, 5 medium and 6 low
+findings; four were reproduced against a running server before any fix. All of them are addressed here.
+See `docs/THREAT_MODEL.md` for the analysis and `docs/VERIFICATION.md` for exactly how each fix was
+verified.
+
+**Breaking / operator action required**
+
+- `TICKETHUB_SEED_DEMO` now defaults to **`false`** (C1). The demo seed creates
+  `demo@ticket-hub.local` as a *global administrator* whose password is published in
+  `migrations/*/002_seed_demo.sql`, and every start path except `docker-compose.yml` previously enabled
+  it by default. Ticket Hub now also refuses to start when seeding is enabled on a non-loopback bind
+  address; set `TICKETHUB_ALLOW_UNSAFE_DEMO_SEED=true` to acknowledge that deliberately (for a container
+  that binds `0.0.0.0` internally while publishing only to the host loopback). **Existing installations
+  that ever ran with seeding on must delete the three `@ticket-hub.local` accounts themselves** -- turning
+  the flag off does not remove rows that already exist.
+- Session and CSRF cookies are renamed to `__Host-th_session` / `__Host-th_csrf` (M2). Every existing
+  session is signed out on upgrade.
+- A reverse-proxy request body limit is now documented as a hard prerequisite, not a recommendation (H1).
+
+**Fixed**
+
+- **Stored XSS via attachment content type (C2).** The inline-vs-download decision compared an
+  attacker-controlled `Content-Type` against lowercase deny-list prefixes case-sensitively, but MIME types
+  are case-insensitive: `TEXT/HTML` matched nothing, was served `Content-Disposition: inline`, and
+  executed script in the application's own origin -- confirmed live in headless Chromium. Replaced with a
+  case-insensitive **allow-list** (`web/AttachmentContentType.{h,cpp}`, unit-tested standalone), and the
+  download response now carries its own `Content-Security-Policy: default-src 'none'` plus
+  `X-Frame-Options: SAMEORIGIN`. Reachable by any project Member; a global administrator opening the
+  attachment lost their session.
+- **Attachment previews were broken (found while fixing C2).** The download route sent
+  `X-Frame-Options: DENY`, which blocks *same-origin* framing too, so the D99 PDF and text preview iframes
+  could never load. Now `SAMEORIGIN` with `frame-ancestors 'self'`.
+- **Whole-installation login lockout (H2).** The login limiter was 20 requests / 15 minutes keyed purely
+  on the observed IP and consumed budget on successful sign-ins, so behind the required reverse proxy
+  20 requests from anyone locked every user out of signing in. Only *failed* attempts are recorded now,
+  the primary bucket is keyed on account + IP, and a loose per-IP ceiling sits behind it.
+- **Permanent targeted account lockout (H3).** `failed_login_count` was only cleared on a successful
+  login, so once an account had been locked, every later wrong password re-locked it -- indefinitely, at
+  four requests an hour. An expired lock now genuinely expires.
+- **No self-service password change (M1).** Added `PATCH /api/v1/account/password` and an Account-page
+  form: verifies the current password, applies the same strength rules as account creation, and signs out
+  every other session (D53's session-invalidation-after-password-change). Deliberately session-only, so a
+  leaked PAT cannot become permanent account ownership.
+- **Predictable UUIDs (M3).** `uuidV4` and the Argon2id salt generator drew from a `std::mt19937_64`
+  seeded with 32 bits; MT19937's state is reconstructible from its output, and every id it produced is
+  published through the API. Both now draw from `std::random_device`, as `RandomToken.cpp` already did.
+- **No storage quota (M4).** New `TICKETHUB_ATTACHMENTS_MAX_TOTAL_BYTES` (default 10 GiB, `0` disables)
+  caps installation-wide attachment bytes. Per-file and per-ticket limits bounded one upload, but nothing
+  bounded the number of tickets, so any Member could fill the volume. Recycle-bin attachments count.
+- **Webhook SSRF (M5).** Webhook targets that resolve to loopback, private, link-local (including
+  `169.254.169.254`), CGNAT, multicast or reserved ranges are refused at creation, as are hosts that
+  cannot be resolved. New `common/NetworkAddress.{h,cpp}`, unit-tested offline.
+- **Internal error disclosure (L1).** 94 handlers returned `error.what()` verbatim with HTTP 500, which
+  for a database failure means SQL text and file paths. They now log the detail with a short correlation
+  id and return that id with a generic message.
+- **Login CSRF (L2).** The login route was the only mutating route with no CSRF check. `GET /` and
+  `/browse/<key>` now issue a pre-session `__Host-th_csrf` cookie, and login enforces the double-submit
+  pair whenever a cookie is present.
+- **HSTS and server banner (L3/L4), database password on the command line (L5).** The first two are
+  documented as reverse-proxy responsibilities in `docs/DEPLOYMENT.md`. `pg_dump`/`psql` now receive the
+  password through `PGPASSWORD` instead of an argv the whole host can read via `ps`.
+
+**Tests**
+
+- New suites: `ticket-hub-config-tests`, `ticket-hub-attachment-content-type-tests`,
+  `ticket-hub-network-address-tests`. Extended: rate limiter (check/record split), crypto (UUID format,
+  uniqueness, cross-thread collisions), identity (password change, lockout expiry), authorization
+  (storage ceiling). 11 suites, all passing.
+
 ## Unreleased — Working-directory-relative web/migrations defaults
 
 - **Build/config:** `ticket-hub-core` no longer bakes the build machine's source checkout path into the

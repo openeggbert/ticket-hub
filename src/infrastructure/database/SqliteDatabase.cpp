@@ -834,8 +834,27 @@ int SqliteDatabase::deleteAllSessionsForUser(const std::string& userId) {
     return sqlite3_changes(database_);
 }
 
+// Security audit 2026-08-26 (H3): clear an *expired* lock before counting
+// this attempt. `resetFailedLogin` only runs on a successful sign-in, so
+// without this the counter stayed at MaxFailedLoginAttempts forever once an
+// account had been locked once -- every subsequent wrong password satisfied
+// `failed_login_count + 1 >= max` and re-locked for another 15 minutes. An
+// attacker who knew an email address could therefore keep an account locked
+// out indefinitely at roughly four requests an hour, and with no
+// self-service reset (D53 has admin-performed reset only) the last global
+// administrator could be locked out of their own installation. Expiring the
+// lock now genuinely expires it.
 void SqliteDatabase::recordFailedLogin(const std::string& userId) {
     std::scoped_lock lock(mutex_);
+    {
+        Statement expire(database_, R"SQL(
+UPDATE local_credentials
+SET failed_login_count = 0, locked_until = NULL
+WHERE user_id = ? AND locked_until IS NOT NULL AND locked_until <= CURRENT_TIMESTAMP
+)SQL");
+        expire.bind(1, userId);
+        expectDone(database_, expire, "Clear expired login lock");
+    }
     Statement statement(database_, R"SQL(
 UPDATE local_credentials
 SET failed_login_count = failed_login_count + 1,
@@ -3164,6 +3183,15 @@ std::vector<Domain::Attachment> SqliteDatabase::listAttachments(const std::strin
         attachments.push_back(readAttachment(statement.get()));
     }
     return attachments;
+}
+
+std::int64_t SqliteDatabase::totalAttachmentBytes() {
+    std::scoped_lock lock(mutex_);
+    Statement statement(database_, "SELECT COALESCE(SUM(byte_size), 0) FROM attachments");
+    if (statement.step() != SQLITE_ROW) {
+        return 0;
+    }
+    return sqlite3_column_int64(statement.get(), 0);
 }
 
 std::optional<Domain::Attachment> SqliteDatabase::findAttachmentById(const std::string& attachmentId) {

@@ -184,6 +184,36 @@ std::optional<Domain::Principal> AuthService::validatePersonalAccessToken(const 
     return toPrincipal(*user);
 }
 
+void AuthService::changeOwnPassword(const Domain::Principal& actor,
+                                    const std::string& currentPassword,
+                                    const std::string& newPassword,
+                                    const std::string& keepSessionId) {
+    const auto storedHash = database_->findPasswordHash(actor.userId);
+    if (!storedHash || !Common::verifyPassword(*storedHash, currentPassword)) {
+        // Same message and same exception type as a failed login: a caller
+        // who guesses wrong learns nothing beyond "that was not it".
+        throw Domain::AuthenticationFailed("Current password is incorrect");
+    }
+    if (newPassword == currentPassword) {
+        throw std::invalid_argument("New password must be different from the current password");
+    }
+    const auto errors = Domain::validatePassword(newPassword, actor.email, actor.displayName);
+    if (!errors.empty()) {
+        throwValidationErrors(errors);
+    }
+
+    database_->setPasswordHash(actor.userId, Common::hashPassword(newPassword));
+    // Clear any failed-login lockout: someone who just proved they know the
+    // current password should not stay locked out by earlier wrong guesses.
+    database_->resetFailedLogin(actor.userId);
+    // D53's "session invalidation after password change" -- every other
+    // session is dropped, so a password change genuinely evicts anyone else
+    // holding a stolen session token. The caller's own session survives.
+    database_->deleteOtherSessionsForUser(actor.userId, keepSessionId);
+    database_->recordAuditEvent("identity", "user.password_changed", actor.userId, std::string("user"),
+                                actor.userId, std::nullopt);
+}
+
 std::optional<Domain::Session> AuthService::currentSession(const std::string& sessionToken) {
     if (sessionToken.empty()) {
         return std::nullopt;

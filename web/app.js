@@ -539,7 +539,7 @@ function sortAttachments(attachments, sortBy) {
 async function uploadAttachmentFile(ticketKey, file) {
   const formData = new FormData();
   formData.append('file', file);
-  const csrfToken = getCookie('th_csrf');
+  const csrfToken = getCookie('__Host-th_csrf');
   const response = await fetch(`/api/v1/tickets/${encodeURIComponent(ticketKey)}/attachments`, {
     method: 'POST',
     headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
@@ -572,7 +572,7 @@ async function api(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (method !== 'GET' && method !== 'HEAD') {
-    const csrfToken = getCookie('th_csrf');
+    const csrfToken = getCookie('__Host-th_csrf');
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   }
   // `headers` must be spread AFTER `...options`, not before: `options` can
@@ -1388,6 +1388,19 @@ async function renderAccountView() {
       </form>
       <div id="preferences-error" class="form-error hidden"></div>
     </div>
+    <div class="panel">
+      <div class="panel-header"><h2>Password</h2></div>
+      <form class="form-grid" id="password-form">
+        <label>Current password<input name="currentPassword" type="password" required autocomplete="current-password"></label>
+        <label>New password<input name="newPassword" type="password" required minlength="10" autocomplete="new-password" placeholder="At least 10 characters"></label>
+        <label>Confirm new password<input name="confirmPassword" type="password" required minlength="10" autocomplete="new-password"></label>
+        <div class="wide modal-footer" style="padding:0">
+          <button type="submit" class="primary-button">Change password</button>
+        </div>
+      </form>
+      <div id="password-error" class="form-error hidden"></div>
+      <p class="eyebrow">Changing your password signs out every other device.</p>
+    </div>
     ${reveal ? `
     <div class="panel token-reveal-panel">
       <strong>Copy your new token now -- it will not be shown again.</strong>
@@ -1459,6 +1472,36 @@ async function renderAccountView() {
     } catch (error) {
       errorBox.textContent = error.message;
       errorBox.classList.remove('hidden');
+    }
+  });
+  document.querySelector('#password-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.target;
+    const errorBox = document.querySelector('#password-error');
+    errorBox.classList.add('hidden');
+    // Checked here as well as by the server so the mismatch case never costs
+    // a request; the server is still the authority on strength rules.
+    if (form.elements.newPassword.value !== form.elements.confirmPassword.value) {
+      errorBox.textContent = 'The two new passwords do not match.';
+      errorBox.classList.remove('hidden');
+      return;
+    }
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      await api('/api/v1/account/password', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          currentPassword: form.elements.currentPassword.value,
+          newPassword: form.elements.newPassword.value
+        })
+      });
+      showToast('Password changed -- other devices have been signed out');
+      await renderAccountView();
+    } catch (error) {
+      errorBox.textContent = error.message;
+      errorBox.classList.remove('hidden');
+      submit.disabled = false;
     }
   });
   document.querySelector('#new-token-button').addEventListener('click', () => {

@@ -61,6 +61,27 @@ public:
     // deliberately keeps currentSessionId active -- the request making the
     // call should never lock its own caller out -- and returns the number
     // of sessions removed.
+    // Self-service password change (security audit 2026-08-26, finding M1).
+    // Until this existed there was no way for a user to rotate their own
+    // password at all: an administrator set it at account creation or via
+    // adminResetPassword, and that value stayed in place forever. D53 keeps
+    // "session invalidation after password change" in V1 scope and only
+    // removed the *email-based* reset (Decisions 2/52), so this closes a gap
+    // rather than adding deferred scope.
+    //
+    // Throws Domain::AuthenticationFailed if `currentPassword` is wrong --
+    // knowing a session token is not enough to change the password behind
+    // it, so a borrowed session cannot be turned into permanent account
+    // ownership. Throws std::invalid_argument if the new password fails the
+    // same strength rules as account creation, or if it equals the current
+    // one. Every other session for the user is invalidated on success;
+    // `keepSessionId` (the caller's own session) survives so the request
+    // does not log out the person making it.
+    void changeOwnPassword(const Domain::Principal& actor,
+                           const std::string& currentPassword,
+                           const std::string& newPassword,
+                           const std::string& keepSessionId);
+
     std::optional<Domain::Session> currentSession(const std::string& sessionToken);
     std::vector<Domain::Session> listActiveSessions(const std::string& userId);
     int signOutOtherSessions(const std::string& userId, const std::string& currentSessionId);

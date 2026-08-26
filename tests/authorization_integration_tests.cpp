@@ -514,6 +514,47 @@ int main() {
         }
         require(blockedExtensionRejected, "a blocked/dangerous file extension is rejected");
 
+        // --- Installation-wide storage ceiling (security audit 2026-08-26,
+        // finding M4). The per-file and per-ticket limits above bound one
+        // upload, but nothing bounded the number of tickets, so any project
+        // Member could fill the volume. A second TicketService over the same
+        // database, configured with a deliberately tiny ceiling, exercises
+        // the check without writing 10 GiB. ---
+        {
+            const std::int64_t alreadyStored = database->totalAttachmentBytes();
+            require(alreadyStored > 0, "the uploads above are counted toward stored bytes");
+
+            TicketService capped(database, attachmentsRoot.string(), false, alreadyStored + 10);
+            const auto fitting = capped.uploadAttachment("TH-1", "tiny.txt", "text/plain", "0123456789", alex);
+            require(!fitting.id.empty(), "an upload that exactly fills the remaining allowance succeeds");
+
+            bool overQuotaRejected = false;
+            try {
+                capped.uploadAttachment("TH-1", "one-more.txt", "text/plain", "x", alex);
+            } catch (const std::invalid_argument&) {
+                overQuotaRejected = true;
+            }
+            require(overQuotaRejected, "an upload past the installation storage ceiling is rejected (M4)");
+
+            // A soft-deleted attachment still occupies the volume until it is
+            // permanently deleted, so it must keep counting -- otherwise the
+            // recycle bin would be a way around the ceiling.
+            require(capped.deleteAttachment("TH-1", fitting.id, alex), "soft-delete the quota test file");
+            bool stillRejected = false;
+            try {
+                capped.uploadAttachment("TH-1", "one-more.txt", "text/plain", "x", alex);
+            } catch (const std::invalid_argument&) {
+                stillRejected = true;
+            }
+            require(stillRejected, "recycle-bin attachments still count toward the storage ceiling");
+
+            // 0 means "no ceiling", which is what every existing test uses.
+            TicketService uncapped(database, attachmentsRoot.string(), false, 0);
+            const auto unlimited = uncapped.uploadAttachment("TH-1", "unlimited.txt", "text/plain", "x", alex);
+            require(!unlimited.id.empty(), "a ceiling of 0 disables the check");
+            require(uncapped.deleteAttachment("TH-1", unlimited.id, alex), "clean up the uncapped test file");
+        }
+
         // --- Recycle bin: global-administrator-only (D101/D102) ---
         const auto thirdUpload = tickets.uploadAttachment("TH-1", "keep.txt", "text/plain", "keep me", alex);
         require(tickets.deleteAttachment("TH-1", thirdUpload.id, alex), "soft-delete for the recycle bin test");

@@ -2,10 +2,14 @@
 #include "common/PasswordHash.h"
 #include "common/RandomToken.h"
 #include "common/Sha256.h"
+#include "common/Uuid.h"
 
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -61,5 +65,70 @@ int main() {
     require(hashPassword("correct horse battery staple") != hash, "identical passwords hash differently (random salt)");
 
     std::cout << "Crypto tests passed\n";
+    // --- UUID generation (security audit 2026-08-26, finding M3) ---
+    // uuidV4 used to seed a thread_local Mersenne Twister from one
+    // std::random_device draw. MT19937's state is reconstructible from its
+    // output, and every id it produced is published through the API, so the
+    // ids were predictable to anyone who collected enough of them. These
+    // tests cannot prove randomness quality -- they pin the format and the
+    // uniqueness property, including across threads, which is where a
+    // per-thread seeded generator is most likely to collide.
+    {
+        const auto uuid = TicketHub::Common::uuidV4();
+        require(uuid.size() == 36, "a UUID is 36 characters");
+        require(uuid[8] == '-' && uuid[13] == '-' && uuid[18] == '-' && uuid[23] == '-',
+                "a UUID has hyphens in the canonical positions");
+        require(uuid[14] == '4', "a UUID declares version 4");
+        require(uuid[19] == '8' || uuid[19] == '9' || uuid[19] == 'a' || uuid[19] == 'b',
+                "a UUID declares the RFC 4122 variant");
+        for (std::size_t index = 0; index < uuid.size(); ++index) {
+            if (index == 8 || index == 13 || index == 18 || index == 23) {
+                continue;
+            }
+            const char character = uuid[index];
+            require((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f'),
+                    "a UUID contains only lowercase hex digits and hyphens");
+        }
+    }
+
+    {
+        std::set<std::string> seen;
+        for (int index = 0; index < 2000; ++index) {
+            require(seen.insert(TicketHub::Common::uuidV4()).second, "uuidV4 does not repeat itself");
+        }
+    }
+
+    {
+        // Four threads, each generating ids concurrently. A generator seeded
+        // per thread from a narrow seed space is exactly what would collide
+        // here; drawing from std::random_device directly does not.
+        constexpr int ThreadCount = 4;
+        constexpr int PerThread = 500;
+        std::vector<std::vector<std::string>> perThread(ThreadCount);
+        std::vector<std::thread> threads;
+        for (int index = 0; index < ThreadCount; ++index) {
+            threads.emplace_back([&perThread, index] {
+                for (int n = 0; n < PerThread; ++n) {
+                    perThread[static_cast<std::size_t>(index)].push_back(TicketHub::Common::uuidV4());
+                }
+            });
+        }
+        for (auto& thread : threads) {
+            thread.join();
+        }
+        std::set<std::string> seen;
+        for (const auto& batch : perThread) {
+            for (const auto& uuid : batch) {
+                require(seen.insert(uuid).second, "uuidV4 does not collide across threads");
+            }
+        }
+        require(seen.size() == ThreadCount * PerThread, "every generated UUID is distinct");
+    }
+
+    // Argon2id salts are drawn the same way now; two hashes of the same
+    // password must therefore differ.
+    require(hashPassword("the-same-password") != hashPassword("the-same-password"),
+            "each password hash uses a fresh salt");
+
     return 0;
 }

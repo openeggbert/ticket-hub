@@ -11,11 +11,21 @@
 namespace TicketHub::Common {
 
 std::string uuidV4() {
-    thread_local std::mt19937_64 engine(std::random_device{}());
+    // Security audit 2026-08-26 (M3): this used to seed a thread_local
+    // std::mt19937_64 from a single std::random_device draw. Mersenne
+    // Twister's internal state is fully reconstructible from its own output,
+    // and every UUID this function produces is published through the API --
+    // ticket, comment, attachment, user and webhook-subscription ids -- so
+    // enough observed ids let a caller predict every future id from that
+    // thread. Attachment ids are additionally used as filesystem storage
+    // keys. Draw from std::random_device directly instead, exactly as
+    // RandomToken.cpp already does for session and PAT secrets; UUIDs are
+    // generated rarely enough that the extra calls cost nothing.
+    std::random_device source;
     std::uniform_int_distribution<std::uint32_t> distribution(0, 255);
     std::array<std::uint8_t, 16> bytes{};
     for (auto& byte : bytes) {
-        byte = static_cast<std::uint8_t>(distribution(engine));
+        byte = static_cast<std::uint8_t>(distribution(source));
     }
     bytes[6] = static_cast<std::uint8_t>((bytes[6] & 0x0FU) | 0x40U);
     bytes[8] = static_cast<std::uint8_t>((bytes[8] & 0x3FU) | 0x80U);

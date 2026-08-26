@@ -43,9 +43,16 @@ AppConfig AppConfig::fromEnvironment() {
     config.bindAddress = envOr("TICKETHUB_BIND_ADDRESS", config.bindAddress);
     config.autoMigrate = envBool("TICKETHUB_AUTO_MIGRATE", config.autoMigrate);
     config.seedDemo = envBool("TICKETHUB_SEED_DEMO", config.seedDemo);
+    config.allowUnsafeDemoSeed = envBool("TICKETHUB_ALLOW_UNSAFE_DEMO_SEED", config.allowUnsafeDemoSeed);
     config.webRoot = envOr("TICKETHUB_WEB_ROOT", "./web");
     config.migrationsRoot = envOr("TICKETHUB_MIGRATIONS_ROOT", "./migrations");
     config.attachmentsRoot = envOr("TICKETHUB_ATTACHMENTS_DIR", "./data/attachments");
+    const auto maxTotalText =
+        envOr("TICKETHUB_ATTACHMENTS_MAX_TOTAL_BYTES", std::to_string(config.attachmentsMaxTotalBytes));
+    config.attachmentsMaxTotalBytes = std::stoll(maxTotalText);
+    if (config.attachmentsMaxTotalBytes < 0) {
+        throw std::invalid_argument("TICKETHUB_ATTACHMENTS_MAX_TOTAL_BYTES must not be negative");
+    }
 
     const auto portText = envOr("TICKETHUB_PORT", std::to_string(config.port));
     const int parsedPort = std::stoi(portText);
@@ -67,6 +74,29 @@ AppConfig AppConfig::fromEnvironment() {
     config.smtpPort = static_cast<std::uint16_t>(parsedSmtpPort);
 
     return config;
+}
+
+bool AppConfig::bindsToLoopbackOnly() const {
+    // Deliberately a small, explicit set rather than a general parser: these
+    // are the only spellings `TICKETHUB_BIND_ADDRESS` realistically takes for
+    // a loopback-only bind, and anything unrecognized is treated as
+    // publicly reachable (fail closed).
+    return bindAddress == "127.0.0.1" || bindAddress == "localhost" || bindAddress == "::1" ||
+           bindAddress.rfind("127.", 0) == 0;
+}
+
+void AppConfig::requireSafeDemoSeeding() const {
+    if (!seedDemo || bindsToLoopbackOnly() || allowUnsafeDemoSeed) {
+        return;
+    }
+    throw std::runtime_error(
+        "Refusing to start: TICKETHUB_SEED_DEMO is enabled while TICKETHUB_BIND_ADDRESS is \""
+        + bindAddress
+        + "\". The demo seed creates a global administrator (demo@ticket-hub.local) whose password is "
+          "published in migrations/*/002_seed_demo.sql, so it must never run on a publicly reachable "
+          "bind address. Set TICKETHUB_SEED_DEMO=false, or bind to 127.0.0.1 for local development. If "
+          "this process is in a container whose port is published only to the host's loopback, set "
+          "TICKETHUB_ALLOW_UNSAFE_DEMO_SEED=true to acknowledge the risk explicitly.");
 }
 
 } // namespace TicketHub::Config
