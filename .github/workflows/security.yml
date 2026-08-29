@@ -48,7 +48,7 @@ jobs:
           path: .
           format: spdx-json
           output-file: ticket-hub.spdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ticket-hub-spdx-sbom
           path: ticket-hub.spdx.json
